@@ -1,0 +1,52 @@
+import { NextRequest, NextResponse } from "next/server";
+import { requireCreator } from "@/lib/authz";
+import { uploadPublicObject } from "@/lib/storage";
+
+export const maxDuration = 60;
+
+const MAX_BYTES = 8 * 1024 * 1024; // 8MB
+const ALLOWED = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+]);
+
+export async function POST(req: NextRequest) {
+  try {
+    const auth = await requireCreator();
+    if (auth.response) return auth.response;
+
+    const form = await req.formData();
+    const file = form.get("file");
+    if (!(file instanceof File)) {
+      return NextResponse.json({ error: "file is required" }, { status: 400 });
+    }
+    if (!ALLOWED.has(file.type)) {
+      return NextResponse.json(
+        { error: "Only JPEG, PNG, or WebP images are allowed" },
+        { status: 400 }
+      );
+    }
+    if (file.size > MAX_BYTES) {
+      return NextResponse.json(
+        { error: "Image must be 8MB or smaller" },
+        { status: 400 }
+      );
+    }
+
+    const buffer = await file.arrayBuffer();
+    const ext =
+      file.type.includes("png")
+        ? "png"
+        : file.type.includes("webp")
+          ? "webp"
+          : "jpg";
+    const path = `references/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const url = await uploadPublicObject(path, buffer, file.type);
+    return NextResponse.json({ url, path });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}

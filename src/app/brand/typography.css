@@ -1,0 +1,90 @@
+/* Self-hosted brand fonts — files are in /fonts, no Google CDN. */
+
+@font-face {
+  font-family: "Aref Ruqaa";
+  src:
+    url("/fonts/Aref-Ruqaa/Aref-Ruqaa-Bold.woff2") format("woff2"),
+    url("/fonts/Aref-Ruqaa/Aref-Ruqaa-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  src:
+    url("/fonts/Unbounded/Unbounded-Regular.woff2") format("woff2"),
+    url("/fonts/Unbounded/Unbounded-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  src:
+    url("/fonts/Unbounded/Unbounded-Bold.woff2") format("woff2"),
+    url("/fonts/Unbounded/Unbounded-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  src:
+    url("/fonts/Unbounded/Unbounded-Black.woff2") format("woff2"),
+    url("/fonts/Unbounded/Unbounded-Black.ttf") format("truetype");
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --font-mark: "Aref Ruqaa", serif;
+  --font-system: "Unbounded", sans-serif;
+}
+
+.athar-display {
+  font-family: var(--font-system);
+  font-weight: 900;
+  font-size: 64px;
+  line-height: 1;
+  letter-spacing: -0.5px;
+}
+
+.athar-headline {
+  font-family: var(--font-system);
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.athar-body {
+  font-family: var(--font-system);
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.athar-label {
+  font-family: var(--font-system);
+  font-weight: 900;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.athar-nav {
+  font-family: var(--font-system);
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.athar-arabic-mark {
+  font-family: var(--font-mark);
+  font-weight: 700;
+  direction: rtl;
+}
