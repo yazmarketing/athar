@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
     }
 
     const includeArchived = req.nextUrl.searchParams.get("archived") === "true";
-    const brandKits = await listBrandKits(includeArchived);
+    const clientId = req.nextUrl.searchParams.get("clientId") || null;
+    const brandKits = await listBrandKits(includeArchived, clientId);
     return NextResponse.json({ brandKits });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Query failed";
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       name?: string;
       client?: string;
+      clientId?: string | null;
       brandTokens?: string;
       negativeAdditions?: string;
       projectId?: string | null;
@@ -47,6 +49,7 @@ export async function POST(req: NextRequest) {
     const brandKit = await createBrandKit({
       name,
       client: body.client,
+      clientId: body.clientId ?? null,
       brandTokens: body.brandTokens,
       negativeAdditions: body.negativeAdditions,
       projectId: body.projectId ?? null,

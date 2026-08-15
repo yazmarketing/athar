@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { arkCreateVideoTask, arkGenerateImage } from "@/lib/byteplus-server";
+import {
+  geminiGenerateImage,
+  NANO_BANANA_MODEL,
+} from "@/lib/gemini-server";
 import { db } from "@/lib/db";
 import { getBrandKit } from "@/lib/brand-kits";
 import { createJob } from "@/lib/jobs";
@@ -37,6 +41,19 @@ function arkSizeFor(aspect: string, resolution: "1K" | "2K"): string {
   const table =
     resolution === "1K" ? ASPECT_TO_ARK_SIZE_1K : ASPECT_TO_ARK_SIZE_2K;
   return table[aspect] ?? (resolution === "1K" ? "1280x720" : "2560x1440");
+}
+
+/** Seedream image edits require ≥ ~3.686M pixels (e.g. 2560×1440). */
+const EDIT_MIN_PIXELS = 3_686_400;
+
+/** Scale a "WxH" size up (keeping aspect, multiples of 16) to meet a floor. */
+function ensureMinPixels(size: string, minPixels: number): string {
+  const [w, h] = size.split("x").map(Number);
+  if (!w || !h || w * h >= minPixels) return size;
+  const scale = Math.sqrt(minPixels / (w * h));
+  const nw = Math.ceil((w * scale) / 16) * 16;
+  const nh = Math.ceil((h * scale) / 16) * 16;
+  return `${nw}x${nh}`;
 }
 
 /** Seedance ratio — map uncommon aspects to closest supported. */
@@ -78,7 +95,11 @@ async function generateImage(
   } = {
     model: model.slug,
     prompt: finalPrompt,
-    size: arkSizeFor(aspect, sizeRes),
+    // Edits (reference present) must clear Seedream's pixel floor.
+    size:
+      referenceUrls.length > 0
+        ? ensureMinPixels(arkSizeFor(aspect, sizeRes), EDIT_MIN_PIXELS)
+        : arkSizeFor(aspect, sizeRes),
     seed,
   };
   if (referenceUrls.length > 0) {
@@ -341,20 +362,50 @@ export async function POST(req: NextRequest) {
   const pool = db();
   const records = [];
 
+  const useNano = mode === "t2i" && body.imageModel === "nano-banana";
+  const nanoModel: ModelEndpoint = {
+    provider: "google",
+    slug: NANO_BANANA_MODEL,
+    costPerUnit: 0.039,
+    unit: "image",
+    maxDuration: 0,
+    supportsReference: true,
+    supportsAudio: false,
+  };
+
   for (let i = 0; i < numOutputs; i++) {
     const seed = baseSeed + i;
     let generated;
     try {
-      generated = await generateWithFallback(
-        primary,
-        fallbacks,
-        finalPrompt,
-        negativePrompt,
-        aspect,
-        seed,
-        referenceUrls,
-        resolution
-      );
+      if (useNano) {
+        const { dataUri } = await geminiGenerateImage({
+          prompt: finalPrompt,
+          imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
+        });
+        generated = {
+          output: {
+            url: dataUri,
+            seed,
+            requestId: null,
+            payload: { provider: "google", model: NANO_BANANA_MODEL },
+            kind: "image" as const,
+            durationS: null,
+          },
+          usedModel: nanoModel,
+          fallbackNote: null as string | null,
+        };
+      } else {
+        generated = await generateWithFallback(
+          primary,
+          fallbacks,
+          finalPrompt,
+          negativePrompt,
+          aspect,
+          seed,
+          referenceUrls,
+          resolution
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
       if (records.length === 0) {

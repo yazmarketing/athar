@@ -75,3 +75,21 @@ export async function listAudit(limit = 50): Promise<AuditEntry[]> {
   );
   return rows;
 }
+
+/** Audit rows within an optional [from, to] window (ISO timestamps). */
+export async function listAuditRange(opts: {
+  from?: string | null;
+  to?: string | null;
+  limit?: number;
+}): Promise<AuditEntry[]> {
+  await ensureAuditTable();
+  const { rows } = await db().query<AuditEntry>(
+    `select * from audit_log
+     where ($1::timestamptz is null or created_at >= $1::timestamptz)
+       and ($2::timestamptz is null or created_at <= $2::timestamptz)
+     order by created_at desc
+     limit $3`,
+    [opts.from ?? null, opts.to ?? null, Math.min(opts.limit ?? 5000, 10000)]
+  );
+  return rows;
+}

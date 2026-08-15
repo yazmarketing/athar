@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { GenerationPlaceholderCard } from "@/components/generation-progress";
 import {
   estimateCost,
   listModelOptions,
@@ -146,7 +147,7 @@ export function ImageChat({
           {
             id: "sys",
             role: "system",
-            text: "Assistant can create, edit, attach references, and run tools. Describe a change or pick a chip below.",
+            text: "This is the Assistant — describe a change and it edits the current image, then keep iterating. For brand-new images, the Image Generator gives you looks, best-of-N and Smart mode.",
           },
           {
             id: "base",
@@ -160,7 +161,7 @@ export function ImageChat({
           {
             id: "sys",
             role: "system",
-            text: "Write a prompt, or pick a still from Library.",
+            text: "Pick a still from Library to edit and refine it — or start a fresh one by describing it. Use the Image Generator for polished, best-of-N new images.",
           },
         ]
   );
@@ -185,7 +186,7 @@ export function ImageChat({
         {
           id: "sys",
           role: "system",
-          text: "Assistant can create, edit, attach references, and run tools. Describe a change or pick a chip below.",
+          text: "This is the Assistant — describe a change and it edits the current image, then keep iterating. For brand-new images, the Image Generator gives you looks, best-of-N and Smart mode.",
         },
         {
           id: "base",
@@ -202,7 +203,7 @@ export function ImageChat({
         {
           id: "sys",
           role: "system",
-          text: "Write a prompt, or pick a still from Library.",
+          text: "Pick a still from Library to edit and refine it — or start a fresh one by describing it. Use the Image Generator for polished, best-of-N new images.",
         },
       ]);
     }
@@ -404,7 +405,7 @@ export function ImageChat({
           <div className="min-w-0 flex-1">
             <h2 className="athar-headline">Assistant</h2>
             <p className="truncate text-[11px] text-muted-foreground">
-              Create, edit, and run tools in chat
+              Refine an image by chatting — edit &amp; iterate step by step
             </p>
           </div>
           {libraryImages.length > 0 && (
@@ -524,9 +525,11 @@ export function ImageChat({
             </div>
           ))}
           {generating && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="size-3.5 animate-spin" />
-              Working with {selectedModelLabel}…
+            <div className="w-full max-w-[280px] space-y-1.5">
+              <GenerationPlaceholderCard kind="image" aspect={aspect} />
+              <p className="px-1 text-[11px] text-muted-foreground">
+                Working with {selectedModelLabel}…
+              </p>
             </div>
           )}
           <div ref={bottomRef} />

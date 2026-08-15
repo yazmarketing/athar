@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     }
     const mineOnly = req.nextUrl.searchParams.get("createdBy") === "me";
 
-    const where: string[] = [];
+    const where: string[] = ["deleted_at is null"];
     const values: unknown[] = [];
     if (projectId) {
       values.push(projectId);

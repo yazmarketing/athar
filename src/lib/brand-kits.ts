@@ -19,20 +19,26 @@ export async function ensureBrandKitsTable() {
     )
   `);
   await db().query(`
+    alter table public.brand_kits add column if not exists client_id uuid
+      references public.clients (id) on delete set null
+  `);
+  await db().query(`
     create index if not exists brand_kits_created_at_idx
       on public.brand_kits (created_at desc)
   `);
 }
 
 export async function listBrandKits(
-  includeArchived = false
+  includeArchived = false,
+  clientId?: string | null
 ): Promise<BrandKitRecord[]> {
   await ensureBrandKitsTable();
   const { rows } = await db().query<BrandKitRecord>(
     `select * from brand_kits
      where ($1::boolean or archived_at is null)
+       and ($2::uuid is null or client_id = $2::uuid)
      order by created_at desc`,
-    [includeArchived]
+    [includeArchived, clientId ?? null]
   );
   return rows;
 }
@@ -49,6 +55,7 @@ export async function getBrandKit(id: string): Promise<BrandKitRecord | null> {
 export async function createBrandKit(input: {
   name: string;
   client?: string | null;
+  clientId?: string | null;
   brandTokens?: string;
   negativeAdditions?: string;
   referenceUrls?: string[];
@@ -61,13 +68,14 @@ export async function createBrandKit(input: {
 
   const { rows } = await db().query<BrandKitRecord>(
     `insert into brand_kits
-       (name, client, brand_tokens, negative_additions, reference_urls,
-        project_id, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7)
+       (name, client, client_id, brand_tokens, negative_additions,
+        reference_urls, project_id, created_by)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
      returning *`,
     [
       name,
       input.client?.trim() || null,
+      input.clientId ?? null,
       input.brandTokens?.trim() ?? "",
       input.negativeAdditions?.trim() ?? "",
       input.referenceUrls ?? [],

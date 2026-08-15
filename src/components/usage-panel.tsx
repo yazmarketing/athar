@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import { Download, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -36,10 +36,113 @@ function usd(v: number) {
   return `$${v.toFixed(2)}`;
 }
 
+/** Map raw audit action codes to plain-English verbs. */
+const AUDIT_VERBS: Record<string, string> = {
+  generation_delete: "deleted",
+  asset_create: "added to the asset library",
+  job_retry: "retried the render for",
+  user_update: "updated the account",
+  qc_pass: "passed QC on",
+  qc_revise: "sent back for revision",
+  qc_reject: "rejected",
+  client_ready: "marked client-ready",
+};
+
+/** Friendly nouns for the thing acted on. */
+const AUDIT_SUBJECTS: Record<string, string> = {
+  generation: "image",
+  video: "video",
+  asset: "asset",
+  user: "user",
+  job: "render",
+};
+
+function describeAudit(a: AuditRow): { who: string; what: string } {
+  const who = a.user_email ?? "Someone";
+  const verb = AUDIT_VERBS[a.action] ?? a.action.replace(/_/g, " ");
+  const noun = AUDIT_SUBJECTS[a.subject_type] ?? a.subject_type;
+  const ref = a.subject_id ? ` ${a.subject_id.slice(0, 8)}…` : "";
+  return { who, what: `${verb} ${noun}${ref}`.trim() };
+}
+
+/** Format an ISO timestamp in Dubai time (GST, GMT+4). */
+function dubaiTime(iso: string): string {
+  return (
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Dubai",
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date(iso)) + " GST"
+  );
+}
+
 /** Internal spend dashboard (spec Phase 9) — cost saved per generation. */
 export function UsagePanel() {
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [auditFrom, setAuditFrom] = useState("");
+  const [auditTo, setAuditTo] = useState("");
+  const [exporting, setExporting] = useState(false);
+
+  async function exportAudit() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams();
+      if (auditFrom) params.set("from", new Date(auditFrom).toISOString());
+      if (auditTo) {
+        // Include the whole "to" day.
+        const end = new Date(auditTo);
+        end.setHours(23, 59, 59, 999);
+        params.set("to", end.toISOString());
+      }
+      const res = await fetch(`/api/audit?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Export failed");
+      const rows = json.audit as AuditRow[];
+      const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+      const header = "Time (GST),User,Action,Type,Subject ID\n";
+      const body = rows
+        .map((a) =>
+          [
+            esc(dubaiTime(a.created_at)),
+            esc(a.user_email ?? ""),
+            esc(a.action),
+            esc(a.subject_type),
+            esc(a.subject_id ?? ""),
+          ].join(",")
+        )
+        .join("\n");
+      const blob = new Blob([header + body], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `athar-audit-${auditFrom || "all"}_${auditTo || "now"}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${rows.length} audit rows`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  const auditInRange = (iso: string) => {
+    const t = new Date(iso).getTime();
+    if (auditFrom && t < new Date(auditFrom).getTime()) return false;
+    if (auditTo) {
+      const end = new Date(auditTo);
+      end.setHours(23, 59, 59, 999);
+      if (t > end.getTime()) return false;
+    }
+    return true;
+  };
 
   const load = async () => {
     setLoading(true);
@@ -175,37 +278,92 @@ export function UsagePanel() {
 
       {/* Audit trail */}
       <section>
-        <h3 className="mb-3 flex items-center gap-2 text-sm font-medium">
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
           <ShieldAlert className="size-4 text-gold" />
-          Audit trail — recent sensitive actions
+          Audit trail — sensitive actions
         </h3>
-        {data.audit.length === 0 ? (
+        <p className="mb-3 text-xs text-muted-foreground">
+          Who did what, and when. Times in Dubai (GST, GMT+4). Filter a date
+          range and export to CSV.
+        </p>
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          <label className="flex flex-col gap-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+            From
+            <input
+              type="date"
+              value={auditFrom}
+              onChange={(e) => setAuditFrom(e.target.value)}
+              className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+            To
+            <input
+              type="date"
+              value={auditTo}
+              onChange={(e) => setAuditTo(e.target.value)}
+              className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-foreground"
+            />
+          </label>
+          {(auditFrom || auditTo) && (
+            <button
+              type="button"
+              onClick={() => {
+                setAuditFrom("");
+                setAuditTo("");
+              }}
+              className="pb-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Clear
+            </button>
+          )}
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => void exportAudit()}
+            disabled={exporting}
+            className="inline-flex items-center gap-1.5 rounded-full bg-gold px-3.5 py-1.5 text-xs font-medium text-primary-foreground transition hover:bg-gold/90 disabled:opacity-60"
+          >
+            {exporting ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Download className="size-3.5" />
+            )}
+            Export CSV
+          </button>
+        </div>
+        {data.audit.filter((a) => auditInRange(a.created_at)).length === 0 ? (
           <p className="rounded-2xl bg-card px-4 py-6 text-sm text-muted-foreground ring-1 ring-border">
             No audited actions yet. Deletes, QC decisions, and client-ready
             changes are recorded here.
           </p>
         ) : (
           <div className="overflow-hidden rounded-2xl ring-1 ring-border">
-            {data.audit.map((a, i) => (
-              <div
-                key={a.id}
-                className={cn(
-                  "flex items-center gap-3 bg-card px-4 py-2.5 text-xs",
-                  i > 0 && "border-t border-border"
-                )}
-              >
-                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-                  {a.action}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {a.user_email ?? "unknown"} · {a.subject_type}{" "}
-                  {a.subject_id ? `${a.subject_id.slice(0, 8)}…` : ""}
-                </span>
-                <span className="shrink-0 text-muted-foreground/70">
-                  {new Date(a.created_at).toLocaleString()}
-                </span>
-              </div>
-            ))}
+            {data.audit
+              .filter((a) => auditInRange(a.created_at))
+              .map((a, i) => {
+              const { who, what } = describeAudit(a);
+              return (
+                <div
+                  key={a.id}
+                  className={cn(
+                    "flex items-center gap-3 bg-card px-4 py-2.5 text-xs",
+                    i > 0 && "border-t border-border"
+                  )}
+                >
+                  <span className="min-w-0 flex-1 truncate text-foreground">
+                    <span className="font-medium">{who}</span>{" "}
+                    <span className="text-muted-foreground">{what}</span>
+                  </span>
+                  <span
+                    className="shrink-0 text-muted-foreground/70"
+                    title={new Date(a.created_at).toISOString()}
+                  >
+                    {dubaiTime(a.created_at)}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

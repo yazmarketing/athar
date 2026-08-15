@@ -6,6 +6,7 @@ export type AppUser = {
   email: string;
   name: string | null;
   role: "admin" | "creator" | "viewer";
+  team?: string | null;
 };
 
 function normalizeEmail(email: string) {
@@ -128,26 +129,30 @@ export async function registerUser(
 /** Upsert user on sign-in; returns DB row id for session stamping. */
 export async function upsertUser(
   email: string,
-  name?: string | null
+  name?: string | null,
+  team?: string | null
 ): Promise<AppUser> {
   await ensureUsersTable();
+  await db().query(`alter table public.users add column if not exists team text`);
   const normalized = normalizeEmail(email);
   const adminEmail = process.env.AUTH_ADMIN_EMAIL?.trim().toLowerCase();
   const pool = db();
 
   const { rows } = await pool.query<AppUser>(
-    `insert into public.users (email, name, role, last_login_at)
-     values ($1, $2, $3, now())
+    `insert into public.users (email, name, role, team, last_login_at)
+     values ($1, $2, $3, $4, now())
      on conflict (email) do update set
        name = coalesce(excluded.name, users.name),
+       team = coalesce(excluded.team, users.team),
        -- Promote the configured admin email on sign-in (never demote others)
        role = case when excluded.role = 'admin' then 'admin' else users.role end,
        last_login_at = now()
-     returning id, email, name, role`,
+     returning id, email, name, role, team`,
     [
       normalized,
       name?.trim() || null,
       adminEmail && normalized === adminEmail ? "admin" : "creator",
+      team?.trim() || null,
     ]
   );
 

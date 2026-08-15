@@ -30,6 +30,8 @@ type Props = {
   onActiveBrandKitChange: (id: string | null) => void;
   brandKits: BrandKitRecord[];
   onBrandKitsChange: (kits: BrandKitRecord[]) => void;
+  /** Scope the list + new kits to this client (null = all clients). */
+  clientId?: string | null;
   className?: string;
 };
 
@@ -38,6 +40,7 @@ export function BrandKitPicker({
   onActiveBrandKitChange,
   brandKits,
   onBrandKitsChange,
+  clientId,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -55,7 +58,8 @@ export function BrandKitPicker({
 
   const loadBrandKits = useCallback(async () => {
     try {
-      const res = await fetch("/api/brand-kits");
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+      const res = await fetch(`/api/brand-kits${qs}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       onBrandKitsChange(json.brandKits as BrandKitRecord[]);
@@ -64,7 +68,7 @@ export function BrandKitPicker({
         err instanceof Error ? err.message : "Load failed"
       );
     }
-  }, [onBrandKitsChange]);
+  }, [onBrandKitsChange, clientId]);
 
   useEffect(() => {
     void loadBrandKits();
@@ -122,6 +126,7 @@ export function BrandKitPicker({
         body: JSON.stringify({
           name: name.trim(),
           client: client.trim() || undefined,
+          clientId: clientId ?? undefined,
           brandTokens: brandTokens.trim(),
           negativeAdditions: negativeAdditions.trim() || undefined,
         }),

@@ -5,7 +5,6 @@ import { db } from "@/lib/db";
 import { ensureFavoriteColumn } from "@/lib/generations-store";
 import { projectExists } from "@/lib/projects";
 
-const QC_STATUSES = ["pass", "revise", "reject"] as const;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -31,29 +30,16 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const body = (await req.json()) as {
       is_favorite?: boolean;
       project_id?: string | null;
-      qc_status?: string | null;
       client_ready?: boolean;
     };
 
     const hasFavorite = typeof body.is_favorite === "boolean";
     const hasProject = body.project_id !== undefined;
-    const hasQc = body.qc_status !== undefined;
     const hasClientReady = typeof body.client_ready === "boolean";
 
-    if (!hasFavorite && !hasProject && !hasQc && !hasClientReady) {
+    if (!hasFavorite && !hasProject && !hasClientReady) {
       return NextResponse.json(
         { error: "No supported fields to update" },
-        { status: 400 }
-      );
-    }
-
-    if (
-      hasQc &&
-      body.qc_status !== null &&
-      !QC_STATUSES.includes(body.qc_status as (typeof QC_STATUSES)[number])
-    ) {
-      return NextResponse.json(
-        { error: "qc_status must be pass, revise, reject, or null" },
         { status: 400 }
       );
     }
@@ -82,12 +68,6 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       sets.push(`project_id = $${i++}`);
       values.push(body.project_id);
     }
-    if (hasQc) {
-      sets.push(`qc_status = $${i++}`);
-      values.push(body.qc_status);
-      sets.push(`approved_by = $${i++}`);
-      values.push(body.qc_status === "pass" ? sessionUser.id : null);
-    }
     if (hasClientReady) {
       sets.push(`client_ready = $${i++}`);
       values.push(body.client_ready);
@@ -106,17 +86,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    if (hasQc || hasClientReady) {
+    if (hasClientReady) {
       await logAudit({
         userId: sessionUser.id,
         userEmail: sessionUser.email,
-        action: hasQc ? "qc_status_change" : "client_ready_change",
+        action: "client_ready_change",
         subjectType: "generation",
         subjectId: id,
-        meta: {
-          qc_status: hasQc ? body.qc_status : undefined,
-          client_ready: hasClientReady ? body.client_ready : undefined,
-        },
+        meta: { client_ready: body.client_ready },
       });
     }
 
@@ -139,8 +116,11 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
 
+    // Soft-delete: the row stays so usage/cost aggregates are never affected;
+    // it's just hidden from the Library.
     const { rows } = await db().query(
-      `delete from generations where id = $1 returning id`,
+      `update generations set deleted_at = now()
+       where id = $1 and deleted_at is null returning id`,
       [id]
     );
 

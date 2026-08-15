@@ -11,7 +11,6 @@ import {
   Loader2,
   MessageSquarePlus,
   Send,
-  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -26,7 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { QcControls } from "@/components/qc-controls";
 import type { GenerationRecord, ProjectRecord } from "@/lib/types";
 
 type GenerationComment = {
@@ -46,8 +44,6 @@ type Props = {
   onEditVideo?: (g: GenerationRecord, intent: "edit" | "extend") => void;
   /** Open the video generation this clip was edited/extended from */
   onOpenSourceVideo?: (generationId: string) => void;
-  onQcChange?: (g: GenerationRecord) => void;
-  onDelete?: (g: GenerationRecord) => Promise<void>;
   projects?: ProjectRecord[];
   onMoveToProject?: (
     g: GenerationRecord,
@@ -72,8 +68,6 @@ export function VideoDetail({
   onOpenSource,
   onEditVideo,
   onOpenSourceVideo,
-  onQcChange,
-  onDelete,
   projects = [],
   onMoveToProject,
 }: Props) {
@@ -167,31 +161,6 @@ export function VideoDetail({
     }
   };
 
-  const handleDelete = async () => {
-    if (busy) return;
-    const ok = window.confirm(
-      "Delete this video from Library? This cannot be undone."
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      if (onDelete) {
-        await onDelete(g);
-      } else {
-        const res = await fetch(`/api/generations/${g.id}`, {
-          method: "DELETE",
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Delete failed");
-      }
-      toast.success("Deleted");
-      onClose();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const handleProjectChange = async (value: string) => {
     if (!onMoveToProject) return;
@@ -332,9 +301,6 @@ export function VideoDetail({
                 className={favorited ? "text-gold hover:text-gold" : undefined}
               >
                 <Heart className={cn("size-4", favorited && "fill-current")} />
-              </IconBtn>
-              <IconBtn label="Delete" onClick={() => void handleDelete()}>
-                <Trash2 className="size-4" />
               </IconBtn>
               <IconBtn
                 label="Open in new tab"
@@ -502,7 +468,6 @@ export function VideoDetail({
                   </Select>
                 </div>
               )}
-              <QcControls generation={g} onUpdated={onQcChange} />
             </section>
 
             {/* Lighter type for the stacked action list (matches image detail) */}

@@ -21,11 +21,20 @@ export type PromptInputs = {
   brandTokens?: string;
   presetFragment?: string;
   negativeAdditions?: string;
+  /** Style preset id (see config/styles.ts) — chooses the look. */
+  styleId?: string;
+  /** Custom style tokens (from a per-client saved preset) — override styleId. */
+  styleTokens?: string;
+  styleNegative?: string;
+  /** Camera-move preset id (see config/camera.ts) — video motion. */
+  cameraId?: string;
 };
 
 export type GenerateRequest = {
   mode: Capability;
   tier: Tier;
+  /** Image provider/model override — "nano-banana" routes to Google Gemini. */
+  imageModel?: string;
   prompt: PromptInputs;
   aspect: AspectRatio;
   /** Image output resolution — ignored for video */
@@ -95,6 +104,7 @@ export type BrandKitRecord = {
   id: string;
   name: string;
   client: string | null;
+  client_id: string | null;
   brand_tokens: string;
   negative_additions: string;
   reference_urls: string[];
@@ -105,11 +115,54 @@ export type BrandKitRecord = {
   updated_at: string;
 };
 
+/** A client's saved style preset (Layer 6) — a named look for the dropdown. */
+export type StylePresetRecord = {
+  id: string;
+  client_id: string | null;
+  name: string;
+  positive: string;
+  negative: string;
+  created_by: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A reusable, versioned reference in a client's library (Layer 3). */
+export type ReferenceAssetRecord = {
+  id: string;
+  client_id: string | null;
+  project_id: string | null;
+  name: string;
+  kind: "character" | "product" | "brand" | "style" | "reference";
+  url: string;
+  notes: string;
+  version: number;
+  parent_id: string | null;
+  created_by: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Top-level entity: a client owns projects and brand kits. */
+export type ClientRecord = {
+  id: string;
+  name: string;
+  created_by: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  project_count?: number;
+  brand_kit_count?: number;
+};
+
 /** Mirrors the `projects` table. */
 export type ProjectRecord = {
   id: string;
   name: string;
   client: string | null;
+  client_id: string | null;
   created_by: string | null;
   archived_at: string | null;
   created_at: string;
@@ -146,6 +199,8 @@ export type GenerationRecord = {
   qc_score: number | null;
   approved_by: string | null;
   client_ready: boolean;
+  brand_flagged?: boolean | null;
+  brand_notes?: string | null;
   is_favorite?: boolean;
   created_at: string;
   completed_at: string | null;

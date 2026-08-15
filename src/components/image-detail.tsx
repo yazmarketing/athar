@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpToLine,
+  Boxes,
   Bookmark,
   ChevronDown,
   Clapperboard,
@@ -20,7 +21,6 @@ import {
   Send,
   Share2,
   Shuffle,
-  Trash2,
   Wand2,
   X,
 } from "lucide-react";
@@ -36,7 +36,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { QcControls } from "@/components/qc-controls";
 import type { GenerationRecord, ProjectRecord, PromptInputs } from "@/lib/types";
 import {
   Select,
@@ -76,10 +75,9 @@ type Props = {
   onCreateVideo?: (g: GenerationRecord) => void;
   onVary?: (g: GenerationRecord) => void;
   onUpscale?: (g: GenerationRecord) => void;
+  onSaveReference?: (g: GenerationRecord) => void;
   onRemoveBackground?: (g: GenerationRecord) => Promise<void>;
-  onQcChange?: (g: GenerationRecord) => void;
   onFavorite?: (g: GenerationRecord, isFavorite: boolean) => Promise<void>;
-  onDelete?: (g: GenerationRecord) => Promise<void>;
   projects?: ProjectRecord[];
   onMoveToProject?: (
     g: GenerationRecord,
@@ -152,10 +150,9 @@ export function ImageDetail({
   onCreateVideo,
   onVary,
   onUpscale,
+  onSaveReference,
   onRemoveBackground,
-  onQcChange,
   onFavorite,
-  onDelete,
   projects = [],
   onMoveToProject,
 }: Props) {
@@ -280,31 +277,6 @@ export function ImageDetail({
     }
   };
 
-  const handleDelete = async () => {
-    if (busy) return;
-    const ok = window.confirm(
-      "Delete this generation from Library? This cannot be undone."
-    );
-    if (!ok) return;
-    setBusy(true);
-    try {
-      if (onDelete) {
-        await onDelete(g);
-      } else {
-        const res = await fetch(`/api/generations/${g.id}`, {
-          method: "DELETE",
-        });
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Delete failed");
-      }
-      toast.success("Deleted");
-      onClose();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const submitComment = async () => {
     const text = commentDraft.trim();
@@ -495,12 +467,6 @@ export function ImageDetail({
                   className={cn("size-4", favorited && "fill-current")}
                 />
               </IconBtn>
-              <IconBtn
-                label="Delete"
-                onClick={() => void handleDelete()}
-              >
-                <Trash2 className="size-4" />
-              </IconBtn>
 
               <div className="relative ml-auto" ref={downloadMenuRef}>
                 <Button
@@ -615,7 +581,6 @@ export function ImageDetail({
                   </Select>
                 </div>
               )}
-              <QcControls generation={g} onUpdated={onQcChange} />
             </section>
 
             {/* Lighter type for the stacked action list — the global button
@@ -661,6 +626,16 @@ export function ImageDetail({
                 >
                   <ArrowUpToLine className="size-4" />
                   Upscale
+                </Button>
+              )}
+              {onSaveReference && (
+                <Button
+                  variant="outline"
+                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                  onClick={() => onSaveReference(g)}
+                >
+                  <Boxes className="size-4" />
+                  Save to library
                 </Button>
               )}
               {onRemoveBackground && (
@@ -750,7 +725,7 @@ export function ImageDetail({
                   <div className="mt-4 flex flex-wrap justify-center gap-2">
                     {[
                       "Client approved",
-                      "Needs revision",
+                      "Try a different angle",
                       "Use as reference",
                       "Too dark — brighten",
                     ].map((preset) => (

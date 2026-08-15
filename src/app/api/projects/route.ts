@@ -11,7 +11,8 @@ export async function GET(req: NextRequest) {
 
     const includeArchived =
       req.nextUrl.searchParams.get("archived") === "true";
-    const projects = await listProjects(includeArchived);
+    const clientId = req.nextUrl.searchParams.get("clientId") || null;
+    const projects = await listProjects(includeArchived, clientId);
     return NextResponse.json({ projects });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Query failed";
@@ -26,7 +27,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = (await req.json()) as { name?: string; client?: string };
+    const body = (await req.json()) as {
+      name?: string;
+      client?: string;
+      clientId?: string | null;
+    };
     const name = body.name?.trim();
     if (!name) {
       return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -35,7 +40,8 @@ export async function POST(req: NextRequest) {
     const project = await createProject(
       name,
       body.client?.trim() || null,
-      sessionUser.id
+      sessionUser.id,
+      body.clientId ?? null
     );
     return NextResponse.json({ project });
   } catch (err) {

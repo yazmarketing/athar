@@ -15,12 +15,19 @@ export async function ensureProjectsTable() {
     )
   `);
   await db().query(`
+    alter table public.projects add column if not exists client_id uuid
+      references public.clients (id) on delete set null
+  `);
+  await db().query(`
     create index if not exists projects_created_at_idx
       on public.projects (created_at desc)
   `);
 }
 
-export async function listProjects(includeArchived = false): Promise<ProjectRecord[]> {
+export async function listProjects(
+  includeArchived = false,
+  clientId?: string | null
+): Promise<ProjectRecord[]> {
   await ensureProjectsTable();
   const { rows } = await db().query<ProjectRecord>(
     `select p.*,
@@ -28,9 +35,10 @@ export async function listProjects(includeArchived = false): Promise<ProjectReco
      from projects p
      left join generations g on g.project_id = p.id
      where ($1::boolean or p.archived_at is null)
+       and ($2::uuid is null or p.client_id = $2::uuid)
      group by p.id
      order by p.created_at desc`,
-    [includeArchived]
+    [includeArchived, clientId ?? null]
   );
   return rows.map((r) => ({
     ...r,
@@ -57,17 +65,18 @@ export async function getProject(id: string): Promise<ProjectRecord | null> {
 export async function createProject(
   name: string,
   client: string | null,
-  createdBy: string | null
+  createdBy: string | null,
+  clientId?: string | null
 ): Promise<ProjectRecord> {
   await ensureProjectsTable();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Project name is required");
 
   const { rows } = await db().query<ProjectRecord>(
-    `insert into projects (name, client, created_by)
-     values ($1, $2, $3)
+    `insert into projects (name, client, created_by, client_id)
+     values ($1, $2, $3, $4)
      returning *`,
-    [trimmed, client?.trim() || null, createdBy]
+    [trimmed, client?.trim() || null, createdBy, clientId ?? null]
   );
   if (!rows[0]) throw new Error("Could not create project");
   return { ...rows[0], generation_count: 0 };

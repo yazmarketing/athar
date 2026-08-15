@@ -32,8 +32,9 @@ export async function GET() {
   const auth = await requireAdmin();
   if (auth.response) return auth.response;
 
+  await db().query(`alter table public.users add column if not exists team text`);
   const { rows } = await db().query(
-    `select id, email, name, role, active, created_at, last_login_at
+    `select id, email, name, role, team, active, created_at, last_login_at
      from public.users
      order by created_at asc`
   );
@@ -46,7 +47,12 @@ export async function PATCH(req: NextRequest) {
   if (auth.response) return auth.response;
   const admin = auth.user!;
 
-  let body: { userId?: string; role?: string; active?: boolean };
+  let body: {
+    userId?: string;
+    role?: string;
+    active?: boolean;
+    team?: string | null;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -75,6 +81,10 @@ export async function PATCH(req: NextRequest) {
     values.push(body.active);
     sets.push(`active = $${values.length}`);
   }
+  if (body.team !== undefined) {
+    values.push(body.team?.trim() || null);
+    sets.push(`team = $${values.length}`);
+  }
   if (sets.length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
@@ -83,7 +93,7 @@ export async function PATCH(req: NextRequest) {
   const { rows } = await db().query(
     `update public.users set ${sets.join(", ")}
      where id = $${values.length}
-     returning id, email, name, role, active, created_at, last_login_at`,
+     returning id, email, name, role, team, active, created_at, last_login_at`,
     values
   );
   if (!rows[0]) {

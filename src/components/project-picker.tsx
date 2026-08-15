@@ -29,6 +29,8 @@ type Props = {
   onActiveProjectChange: (id: string | null) => void;
   projects: ProjectRecord[];
   onProjectsChange: (projects: ProjectRecord[]) => void;
+  /** Scope the list + new projects to this client (null = all clients). */
+  clientId?: string | null;
   className?: string;
 };
 
@@ -37,6 +39,7 @@ export function ProjectPicker({
   onActiveProjectChange,
   projects,
   onProjectsChange,
+  clientId,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -46,14 +49,15 @@ export function ProjectPicker({
 
   const loadProjects = useCallback(async () => {
     try {
-      const res = await fetch("/api/projects");
+      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+      const res = await fetch(`/api/projects${qs}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       onProjectsChange(json.projects as ProjectRecord[]);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Load failed");
     }
-  }, [onProjectsChange]);
+  }, [onProjectsChange, clientId]);
 
   useEffect(() => {
     void loadProjects();
@@ -69,7 +73,11 @@ export function ProjectPicker({
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), client: client.trim() || undefined }),
+        body: JSON.stringify({
+          name: name.trim(),
+          client: client.trim() || undefined,
+          clientId: clientId ?? undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);

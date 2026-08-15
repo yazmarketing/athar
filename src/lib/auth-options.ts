@@ -20,6 +20,43 @@ const googleEnabled =
   Boolean(process.env.GOOGLE_CLIENT_ID?.trim()) &&
   Boolean(process.env.GOOGLE_CLIENT_SECRET?.trim());
 
+/**
+ * Read the signed-in member's Department (→ team) from the Google People API.
+ * Best-effort: returns null if the People API isn't enabled, the scope wasn't
+ * granted, or the profile has no department. Never throws.
+ */
+async function fetchGoogleDepartment(
+  accessToken: string | undefined
+): Promise<string | null> {
+  if (!accessToken) return null;
+  try {
+    // DOMAIN_PROFILE pulls the Workspace directory (admin-set Department),
+    // which the plain personal PROFILE source does not expose.
+    const res = await fetch(
+      "https://people.googleapis.com/v1/people/me" +
+        "?personFields=organizations" +
+        "&sources=READ_SOURCE_TYPE_PROFILE" +
+        "&sources=READ_SOURCE_TYPE_DOMAIN_PROFILE",
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as {
+      organizations?: { department?: string; name?: string }[];
+    };
+    // Prefer an entry that actually carries a department.
+    const orgs = json.organizations ?? [];
+    const withDept = orgs.find((o) => o.department?.trim());
+    return (
+      withDept?.department?.trim() ||
+      orgs[0]?.department?.trim() ||
+      orgs[0]?.name?.trim() ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 export const authOptions: NextAuthOptions = {
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
@@ -29,6 +66,16 @@ export const authOptions: NextAuthOptions = {
           GoogleProvider({
             clientId: process.env.GOOGLE_CLIENT_ID!,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+            authorization: {
+              params: {
+                // Read the member's org info (Department → team). Requires the
+                // People API enabled + the org scope granted on the Google app.
+                scope:
+                  "openid email profile https://www.googleapis.com/auth/directory.readonly",
+                prompt: "consent",
+                access_type: "offline",
+              },
+            },
           }),
         ]
       : []),
@@ -81,9 +128,12 @@ export const authOptions: NextAuthOptions = {
 
       if (account?.provider === "google") {
         try {
-          const row = await upsertUser(email, user.name);
+          // Pull the member's Department from Google Workspace → their team.
+          const team = await fetchGoogleDepartment(account.access_token);
+          const row = await upsertUser(email, user.name, team);
           user.id = row.id;
           user.role = row.role;
+          (user as { team?: string | null }).team = row.team ?? team ?? null;
         } catch {
           return false;
         }
@@ -95,6 +145,8 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.userId = user.id;
         token.role = (user as { role?: string }).role ?? "creator";
+        token.team = (user as { team?: string | null }).team ?? null;
+        if (user.image) token.picture = user.image;
       }
       return token;
     },
@@ -102,6 +154,8 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.userId as string;
         session.user.role = (token.role as string) ?? "creator";
+        session.user.team = (token.team as string | null) ?? null;
+        if (token.picture) session.user.image = token.picture as string;
       }
       return session;
     },

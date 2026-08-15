@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { arkChat } from "@/lib/byteplus-server";
+import { openaiChat, openaiConfigured, openaiModel } from "@/lib/openai-server";
 import type { PromptInputs } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -79,7 +80,10 @@ export async function POST(req: NextRequest) {
       .filter(Boolean)
       .join("\n");
 
-    const raw = await arkChat({
+    // Prefer OpenAI (Layer 1 copilot) when a key is set; otherwise fall back to
+    // the BytePlus chat model.
+    const chat = openaiConfigured() ? openaiChat : arkChat;
+    const raw = await chat({
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -107,10 +111,33 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       prompt: improved,
-      model: process.env.ARK_CHAT_MODEL ?? "seed-1-6-250915",
+      model: openaiConfigured()
+        ? openaiModel()
+        : (process.env.ARK_CHAT_MODEL ?? "seed-1-6-250915"),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Improve failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const raw = err instanceof Error ? err.message : "Improve failed";
+    // Turn opaque provider errors into something the studio team can act on.
+    const openaiIssue =
+      /OpenAI (401|403|404)|invalid_api_key|model_not_found|insufficient_quota|Missing OPENAI_API_KEY/i.test(
+        raw
+      );
+    const noChatModel =
+      /ModelNotOpen|does not exist or you do not have access|InvalidEndpointOrModel/i.test(
+        raw
+      );
+
+    let message = raw;
+    let status = 500;
+    if (openaiConfigured() && openaiIssue) {
+      message =
+        "AI prompt-improve failed — check the OpenAI key and model (OPENAI_API_KEY / OPENAI_CHAT_MODEL). If the key is valid, confirm your account has access to that model.";
+      status = 503;
+    } else if (!openaiConfigured() && noChatModel) {
+      message =
+        "AI prompt-improve is unavailable: no chat model is configured. Set OPENAI_API_KEY (recommended) or activate a BytePlus text model and set ARK_CHAT_MODEL.";
+      status = 503;
+    }
+    return NextResponse.json({ error: message }, { status });
   }
 }

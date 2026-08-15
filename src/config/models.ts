@@ -14,7 +14,7 @@
 
 export type Capability = "t2i" | "i2v" | "t2v" | "v2v";
 export type Tier = "draft" | "standard" | "hero";
-export type Provider = "byteplus";
+export type Provider = "byteplus" | "google";
 
 export type ModelEndpoint = {
   provider: Provider;

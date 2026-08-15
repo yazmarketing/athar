@@ -5,12 +5,15 @@ import { toast } from "sonner";
 import {
   ArrowUpToLine,
   BarChart3,
+  Boxes,
   Check,
   CheckSquare,
   ChevronDown,
   Clapperboard,
+  FolderKanban,
   Home,
   ImageIcon,
+  Images,
   Library,
   Loader2,
   Moon,
@@ -25,9 +28,11 @@ import {
   Sun,
   Plug,
   Wand2,
+  Workflow,
   X,
 } from "lucide-react";
 import { useTheme } from "next-themes";
+import { useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -62,15 +67,23 @@ import {
   type Capability,
   type Tier,
 } from "@/config/models";
+import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
+import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
 import type {
   AspectRatio,
   BrandKitRecord,
+  ClientRecord,
   GenerationJobRecord,
   GenerationRecord,
   ImageResolution,
   ProjectRecord,
   PromptInputs,
+  StylePresetRecord,
 } from "@/lib/types";
+import {
+  ACTIVE_CLIENT_STORAGE_KEY,
+  ClientPicker,
+} from "@/components/client-picker";
 import {
   ACTIVE_PROJECT_STORAGE_KEY,
   ProjectPicker,
@@ -79,7 +92,17 @@ import {
   ACTIVE_BRAND_KIT_STORAGE_KEY,
   BrandKitPicker,
 } from "@/components/brand-kit-picker";
+import { ReferenceLibrary } from "@/components/reference-library";
+import { Orchestrator } from "@/components/orchestrator";
+import { TeamManagement } from "@/components/team-management";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AtharLogo, ATHAR_LOCKUP_MIN_HEIGHT } from "@/components/athar-logo";
+import { YazMediaLogo } from "@/components/yaz-media-logo";
 import {
   NotificationsBell,
   type AppNotification,
@@ -96,7 +119,16 @@ const MAX_VIDEO_IMAGES = 9;
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
 
 type StudioMode = Extract<Capability, "t2i" | "t2v">;
-type View = "home" | "create" | "library" | "edit" | "vary" | "usage";
+type View =
+  | "home"
+  | "create"
+  | "library"
+  | "edit"
+  | "vary"
+  | "usage"
+  | "assets"
+  | "orchestrate"
+  | "team";
 
 function isVideo(g: GenerationRecord) {
   return (
@@ -116,6 +148,23 @@ export function Studio() {
   const [brandTokens, setBrandTokens] = useState("");
   const [negativeAdditions, setNegativeAdditions] = useState("");
   const [tier, setTier] = useState<Tier>("draft");
+  const [nanoSelected, setNanoSelected] = useState(false);
+  const [checkingModel, setCheckingModel] = useState(false);
+  const [modelSuggestion, setModelSuggestion] = useState<{
+    best: string;
+    label: string;
+    reason: string;
+    current: string;
+  } | null>(null);
+  const [style, setStyle] = useState<string>(DEFAULT_STYLE_ID);
+  const [camera, setCamera] = useState<string>(DEFAULT_CAMERA_ID);
+  const [clientStyles, setClientStyles] = useState<StylePresetRecord[]>([]);
+  const [smartMode, setSmartMode] = useState(false);
+  const [smartStage, setSmartStage] = useState<string | null>(null);
+  const [saveStyleOpen, setSaveStyleOpen] = useState(false);
+  const [saveStyleName, setSaveStyleName] = useState("");
+  const [saveStyleTokens, setSaveStyleTokens] = useState("");
+  const [savingStyle, setSavingStyle] = useState(false);
   const [aspect, setAspect] = useState<AspectRatio>("16:9");
   const [resolution, setResolution] = useState<ImageResolution>("2K");
   const [numOutputs, setNumOutputs] = useState(1);
@@ -125,9 +174,13 @@ export function Studio() {
   );
   const [generating, setGenerating] = useState(false);
   const [reproducingId, setReproducingId] = useState<string | null>(null);
+  const [reproduceTarget, setReproduceTarget] =
+    useState<GenerationRecord | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[] | null>(
     null
   );
+  const [clients, setClients] = useState<ClientRecord[]>([]);
+  const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectsReady, setProjectsReady] = useState(false);
@@ -160,9 +213,9 @@ export function Studio() {
   const [jobsClock, setJobsClock] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [qcFilter, setQcFilter] = useState<
-    "all" | "pass" | "revise" | "reject" | "client_ready" | "unreviewed"
-  >("all");
+  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">(
+    "all"
+  );
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine">("all");
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -176,6 +229,14 @@ export function Studio() {
     null
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
+  const [refLibOpen, setRefLibOpen] = useState(false);
+  const [saveRefUrl, setSaveRefUrl] = useState<string | null>(null);
+  const [saveRefName, setSaveRefName] = useState("");
+  const [saveRefKind, setSaveRefKind] = useState("character");
+  const [saveRefClientId, setSaveRefClientId] = useState<string | null>(null);
+  const [saveRefProjectId, setSaveRefProjectId] = useState<string | null>(null);
+  const [savingRef, setSavingRef] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<{
     modelArk: boolean;
     spaces: boolean;
@@ -183,6 +244,12 @@ export function Studio() {
   } | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const { resolvedTheme, setTheme } = useTheme();
+  const { data: session } = useSession();
+  const isManagement = session?.user?.role === "admin";
+  const firstName =
+    (session?.user?.name || session?.user?.email?.split("@")[0] || "")
+      .trim()
+      .split(/\s+/)[0] || "there";
   const [themeReady, setThemeReady] = useState(false);
   const refFileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -191,6 +258,12 @@ export function Studio() {
   const modelOptions = useMemo(() => listModelOptions(mode), [mode]);
   const selectedModelLabel =
     modelOptions.find((m) => m.tier === tier)?.label ?? model.slug;
+  const selectedStyleLabel =
+    clientStyles.find((s) => s.id === style)?.name ??
+    STYLE_PRESETS.find((s) => s.id === style)?.label ??
+    "Style";
+  const selectedCameraLabel =
+    CAMERA_PRESETS.find((c) => c.id === camera)?.label ?? "Camera";
 
   const openTool = (
     next: StudioMode,
@@ -198,12 +271,15 @@ export function Studio() {
   ) => {
     setMode(next);
     if (next === "t2v" && tier === "draft") setTier("standard");
+    if (next === "t2v") setNanoSelected(false);
     if (next === "t2v") setNumOutputs(1);
     setSubject(seed?.subject ?? "");
     setAction(seed?.action ?? "");
     setLighting(seed?.lighting ?? "");
     setBrandTokens(seed?.brandTokens ?? "");
     setNegativeAdditions(seed?.negativeAdditions ?? "");
+    setStyle(seed?.styleId ?? DEFAULT_STYLE_ID);
+    setCamera(seed?.cameraId ?? DEFAULT_CAMERA_ID);
     setReferenceUrls([]);
     setDetailsOpen(
       Boolean(
@@ -227,9 +303,13 @@ export function Studio() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
       setGenerations(json.generations);
-      // Keep the sidebar's per-project item counts in sync with the gallery
+      // Keep the sidebar's per-project item counts in sync with the gallery,
+      // scoped to the active client so the project list stays consistent.
       try {
-        const resProjects = await fetch("/api/projects");
+        const pQs = activeClientId
+          ? `?clientId=${encodeURIComponent(activeClientId)}`
+          : "";
+        const resProjects = await fetch(`/api/projects${pQs}`);
         const jsonProjects = await resProjects.json();
         if (resProjects.ok) setProjects(jsonProjects.projects);
       } catch {
@@ -239,9 +319,11 @@ export function Studio() {
       toast.error(err instanceof Error ? err.message : "Failed to load gallery");
       setGenerations([]);
     }
-  }, [activeProjectId, ownerFilter]);
+  }, [activeProjectId, ownerFilter, activeClientId]);
 
   useEffect(() => {
+    const storedClient = localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY);
+    if (storedClient) setActiveClientId(storedClient);
     const stored = localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
     if (stored) setActiveProjectId(stored);
     const storedKit = localStorage.getItem(ACTIVE_BRAND_KIT_STORAGE_KEY);
@@ -265,6 +347,15 @@ export function Studio() {
     );
   }, [notifications, projectsReady]);
 
+  // User switched client — clear stale project/kit selections that belong to
+  // the previous client. (Restoring from storage sets the id directly, so this
+  // only fires on an actual click, not on initial load.)
+  const onActiveClientChange = useCallback((id: string | null) => {
+    setActiveClientId(id);
+    setActiveProjectId(null);
+    setActiveBrandKitId(null);
+  }, []);
+
   const pushNotification = useCallback(
     (n: Omit<AppNotification, "id" | "createdAt" | "read">) => {
       setNotifications((prev) =>
@@ -281,6 +372,15 @@ export function Studio() {
     },
     []
   );
+
+  useEffect(() => {
+    if (!projectsReady) return;
+    if (activeClientId) {
+      localStorage.setItem(ACTIVE_CLIENT_STORAGE_KEY, activeClientId);
+    } else {
+      localStorage.removeItem(ACTIVE_CLIENT_STORAGE_KEY);
+    }
+  }, [activeClientId, projectsReady]);
 
   useEffect(() => {
     if (!projectsReady) return;
@@ -303,6 +403,32 @@ export function Studio() {
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId) ?? null,
     [projects, activeProjectId]
+  );
+
+  const activeClient = useMemo(
+    () => clients.find((c) => c.id === activeClientId) ?? null,
+    [clients, activeClientId]
+  );
+
+  // Load the active client's saved style presets for the Style dropdown.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const qs = activeClientId
+          ? `?clientId=${encodeURIComponent(activeClientId)}`
+          : "";
+        const res = await fetch(`/api/style-presets${qs}`);
+        const json = await res.json();
+        if (res.ok) setClientStyles(json.presets as StylePresetRecord[]);
+      } catch {
+        // best-effort — dropdown just shows the built-in looks
+      }
+    })();
+  }, [activeClientId]);
+
+  const activeClientStyle = useMemo(
+    () => clientStyles.find((s) => s.id === style) ?? null,
+    [clientStyles, style]
   );
 
   const activeVideoJobs = useMemo(
@@ -419,13 +545,8 @@ export function Studio() {
     if (!generations) return null;
     const q = query.trim().toLowerCase();
     let list = generations;
-    if (qcFilter === "client_ready") {
-      list = list.filter((g) => g.client_ready);
-    } else if (qcFilter === "unreviewed") {
-      list = list.filter((g) => !g.qc_status);
-    } else if (qcFilter !== "all") {
-      list = list.filter((g) => g.qc_status === qcFilter);
-    }
+    if (typeFilter === "image") list = list.filter((g) => !isVideo(g));
+    else if (typeFilter === "video") list = list.filter((g) => isVideo(g));
     if (!q) return list;
     return list.filter(
       (g) =>
@@ -433,15 +554,8 @@ export function Studio() {
         g.mode.toLowerCase().includes(q) ||
         g.model_endpoint.toLowerCase().includes(q)
     );
-  }, [generations, query, qcFilter]);
+  }, [generations, query, typeFilter]);
 
-  const onQcChange = (next: GenerationRecord) => {
-    setGenerations((prev) =>
-      prev ? prev.map((r) => (r.id === next.id ? next : r)) : prev
-    );
-    setDetailTarget((prev) => (prev?.id === next.id ? next : prev));
-    setVideoDetailTarget((prev) => (prev?.id === next.id ? next : prev));
-  };
 
   const submit = useCallback(
     async (
@@ -457,6 +571,8 @@ export function Studio() {
         sourceVideo?: { url: string; generationId: string | null } | null;
         /** Stay on Home/Library instead of jumping to Create */
         stayOnView?: boolean;
+        /** Explicit image-model override — "nano-banana" or "seedream". */
+        imageModel?: "nano-banana" | "seedream";
       } = {}
     ) => {
       setGenerating(true);
@@ -471,6 +587,16 @@ export function Studio() {
           body: JSON.stringify({
             mode: activeMode,
             tier: opts.tier ?? tier,
+            imageModel:
+              activeMode !== "t2i"
+                ? undefined
+                : opts.imageModel === "nano-banana"
+                  ? "nano-banana"
+                  : opts.imageModel === "seedream"
+                    ? undefined
+                    : nanoSelected
+                      ? "nano-banana"
+                      : undefined,
             prompt,
             aspect,
             numOutputs: activeMode === "t2v" ? 1 : numOutputs,
@@ -514,21 +640,115 @@ export function Studio() {
           );
           return;
         }
-        const seedLabel =
-          json.generation.seed != null ? ` · seed ${json.generation.seed}` : "";
-        toast.success(`Generated${seedLabel}`);
+        const batch =
+          (json.generations as GenerationRecord[] | undefined) ??
+          [json.generation as GenerationRecord];
+        const isBatch = activeMode === "t2i" && batch.length > 1;
+
         pushNotification({
           kind: "image",
           status: "success",
-          title: "Image generated",
-          body: (json.generation as GenerationRecord).final_prompt,
-          generationId: (json.generation as GenerationRecord).id,
-          thumbnailUrl: (json.generation as GenerationRecord).output_url,
+          title: isBatch ? `${batch.length} options generated` : "Image generated",
+          body: batch[0].final_prompt,
+          generationId: batch[0].id,
+          thumbnailUrl: batch[0].output_url,
         });
         await loadGallery();
-        const next = json.generation as GenerationRecord;
-        if (activeMode === "t2i" && next?.output_url) {
-          setDetailTarget(next);
+
+        // Best-of-N: score the batch and surface the winner.
+        let winner = batch[0];
+        if (isBatch) {
+          let scored = false;
+          try {
+            const scoreRes = await fetch("/api/score", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                prompt: batch[0].final_prompt,
+                images: batch
+                  .filter((g) => g.output_url)
+                  .map((g) => ({ id: g.id, url: g.output_url })),
+              }),
+            });
+            const sj = await scoreRes.json();
+            if (scoreRes.ok && sj.scored && sj.bestId) {
+              scored = true;
+              winner = batch.find((g) => g.id === sj.bestId) ?? winner;
+              const wScore = (
+                sj.ranking as { id: string; score: number }[]
+              )?.find((r) => r.id === winner.id)?.score;
+              if (wScore != null) {
+                winner = { ...winner, qc_score: wScore / 100 };
+              }
+              toast.success(
+                `Best of ${batch.length} picked · ${sj.ranking?.[0]?.score ?? ""}/100`
+              );
+              await loadGallery();
+            }
+          } catch {
+            // scoring is best-effort — leave the batch unscored
+          }
+          if (!scored) toast.success(`Generated ${batch.length} options`);
+        } else {
+          const seedLabel =
+            winner.seed != null ? ` · seed ${winner.seed}` : "";
+          toast.success(`Generated${seedLabel}`);
+        }
+
+        // Orchestration chain (Smart mode): finish the winner, then brand-check.
+        if (smartMode && activeMode === "t2i" && winner?.output_url) {
+          // Finishing pass — upscale the winner only (not the rejects).
+          try {
+            setSmartStage("Finishing the winner…");
+            const upRes = await fetch("/api/upscale", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                generationId: winner.id,
+                mode: "precision",
+                scale: 2,
+              }),
+            });
+            const upJson = await upRes.json();
+            if (upRes.ok && upJson.generation?.output_url) {
+              winner = upJson.generation as GenerationRecord;
+              toast.success("Finished — upscaled to 2K");
+            }
+          } catch {
+            // finishing is best-effort
+          }
+          // Brand-guideline enforcement against the active kit.
+          if (activeBrandKitId) {
+            try {
+              setSmartStage("Checking brand guidelines…");
+              const bcRes = await fetch("/api/brand-check", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  generationId: winner.id,
+                  brandKitId: activeBrandKitId,
+                }),
+              });
+              const bc = await bcRes.json();
+              if (bcRes.ok && bc.checked) {
+                if (bc.compliant) {
+                  toast.success("On-brand ✓");
+                } else {
+                  toast.warning(
+                    `Off-brand: ${(bc.violations ?? []).join("; ")}`
+                  );
+                }
+              }
+            } catch {
+              // brand-check is best-effort
+            }
+          }
+          setSmartStage(null);
+          await loadGallery();
+        }
+
+        if (activeMode === "t2i" && winner?.output_url) {
+          setDetailTarget(winner);
         }
         if (!opts.stayOnView) {
           setView("create");
@@ -542,6 +762,7 @@ export function Studio() {
     [
       mode,
       tier,
+      nanoSelected,
       aspect,
       resolution,
       numOutputs,
@@ -575,7 +796,10 @@ export function Studio() {
       setDetailTarget(next);
     }
     await loadGallery();
-    const resProjects = await fetch("/api/projects");
+    const pQs = activeClientId
+      ? `?clientId=${encodeURIComponent(activeClientId)}`
+      : "";
+    const resProjects = await fetch(`/api/projects${pQs}`);
     const jsonProjects = await resProjects.json();
     if (resProjects.ok) setProjects(jsonProjects.projects);
     const project = projects.find((p) => p.id === projectId);
@@ -784,18 +1008,62 @@ export function Studio() {
     }
   };
 
-  const onGenerate = () => {
+  const buildPromptInputs = (): PromptInputs => ({
+    subject,
+    action,
+    lighting,
+    brandTokens,
+    negativeAdditions: negativeAdditions || undefined,
+    styleId: activeClientStyle ? undefined : style,
+    styleTokens: activeClientStyle?.positive,
+    styleNegative: activeClientStyle?.negative || undefined,
+    cameraId: mode === "t2v" ? camera : undefined,
+  });
+
+  // Generate with a specific image model id (draft/standard/hero/nano).
+  const runGenerate = (modelId: string) => {
+    const isNano = modelId === "nano";
+    setNanoSelected(isNano);
+    if (!isNano) setTier(modelId as Tier);
+    submit(buildPromptInputs(), {
+      tier: isNano ? undefined : (modelId as Tier),
+      imageModel: isNano ? "nano-banana" : "seedream",
+    });
+  };
+
+  const onGenerate = async () => {
     if (!subject.trim()) {
       toast.error("Add a subject");
       return;
     }
-    submit({
-      subject,
-      action,
-      lighting,
-      brandTokens,
-      negativeAdditions: negativeAdditions || undefined,
-    });
+    if (mode !== "t2i") {
+      submit(buildPromptInputs());
+      return;
+    }
+    // Ask the guide whether a different model fits this prompt better.
+    const currentModelId = nanoSelected ? "nano" : tier;
+    setCheckingModel(true);
+    try {
+      const rec = await fetch("/api/recommend-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: subject, current: currentModelId }),
+      }).then((r) => r.json());
+      if (rec?.differs && rec.best) {
+        setModelSuggestion({
+          best: rec.best,
+          label: rec.label,
+          reason: rec.reason,
+          current: currentModelId,
+        });
+        setCheckingModel(false);
+        return;
+      }
+    } catch {
+      // guide is advisory — fall through and generate
+    }
+    setCheckingModel(false);
+    runGenerate(currentModelId);
   };
 
   const uploadReference = async (file: File) => {
@@ -952,6 +1220,53 @@ export function Studio() {
     return stored ?? { subject: g.final_prompt };
   };
 
+  // Re-runs a generation with its exact settings (a paid regeneration) — gated
+  // behind a confirmation so a curious click doesn't spend on a new render.
+  const runReproduce = (g: GenerationRecord) => {
+    let sourceImages:
+      | { url: string; generationId: string | null }[]
+      | undefined;
+    let sourceVideo:
+      | { url: string; generationId: string | null }
+      | null
+      | undefined;
+    if (isVideo(g)) {
+      const payload = g.input_payload as {
+        source_generation_id?: string;
+        source_image_url?: string;
+        source_image_urls?: string[];
+        source_video_url?: string;
+        source_video_generation_id?: string;
+      };
+      const imageUrls = payload.source_image_urls?.length
+        ? payload.source_image_urls
+        : payload.source_image_url
+          ? [payload.source_image_url]
+          : [];
+      sourceImages = imageUrls.map((url, i) => ({
+        url,
+        generationId: i === 0 ? (payload.source_generation_id ?? null) : null,
+      }));
+      sourceVideo = payload.source_video_url
+        ? {
+            url: payload.source_video_url,
+            generationId: payload.source_video_generation_id ?? null,
+          }
+        : null;
+    }
+    setReproducingId(g.id);
+    toast.message("Reproducing…");
+    void submit(promptInputsOf(g), {
+      seed: g.seed ?? undefined,
+      tier: g.tier,
+      mode: (isVideo(g) ? "t2v" : "t2i") as StudioMode,
+      durationS: g.duration_s ?? undefined,
+      sourceImages,
+      sourceVideo,
+      stayOnView: true,
+    }).finally(() => setReproducingId(null));
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
@@ -960,6 +1275,67 @@ export function Studio() {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
       e.preventDefault();
       setEditorOpen(true);
+    }
+  };
+
+  // Paste an image straight from the clipboard (⌘V after a screenshot) —
+  // routes to the video sources in t2v, or the reference images in t2i.
+  const onPromptPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const images = Array.from(items)
+      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+      .map((it) => it.getAsFile())
+      .filter((f): f is File => f != null);
+    if (images.length === 0) return; // plain text — let the default paste run
+    e.preventDefault();
+    if (mode === "t2v") {
+      void onVideoSourceFiles(images);
+    } else {
+      void onReferenceFiles(images);
+    }
+  };
+
+  // Bank an image (a good output, or an attached reference) into the client's
+  // reusable reference library — the one-click "save Layla" flow.
+  const openSaveReference = (url: string, defaultName = "") => {
+    setSaveRefUrl(url);
+    setSaveRefName(defaultName);
+    setSaveRefKind("character");
+    setSaveRefClientId(activeClientId);
+    setSaveRefProjectId(activeProjectId);
+  };
+
+  const saveReference = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saveRefUrl || !saveRefName.trim()) return;
+    setSavingRef(true);
+    try {
+      const res = await fetch("/api/reference-assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: saveRefName.trim(),
+          url: saveRefUrl,
+          kind: saveRefKind,
+          clientId: saveRefClientId,
+          projectId: saveRefProjectId,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      const savedClient = clients.find((c) => c.id === saveRefClientId);
+      toast.success(
+        savedClient
+          ? `Saved “${json.reference.name}” to ${savedClient.name}`
+          : `Saved “${json.reference.name}” to the shared library`
+      );
+      setSaveRefUrl(null);
+      setSaveRefName("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSavingRef(false);
     }
   };
 
@@ -1079,30 +1455,43 @@ export function Studio() {
         )}
       </button>
 
+      <div className="pointer-events-none absolute top-2 left-2 z-10 flex gap-1">
+        {g.qc_score != null && (
+          <span
+            title={`AI quality score ${Math.round(g.qc_score * 100)}/100`}
+            className={cn(
+              "rounded-md px-1.5 py-0.5 text-[10px] font-semibold backdrop-blur-sm",
+              g.qc_score >= 0.8
+                ? "bg-gold text-primary-foreground"
+                : "bg-black/70 text-white"
+            )}
+          >
+            AI {Math.round(g.qc_score * 100)}
+          </span>
+        )}
+        {g.brand_flagged === true && (
+          <span
+            title={g.brand_notes || "Off-brand"}
+            className="rounded-md bg-red-500/85 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm"
+          >
+            Off-brand
+          </span>
+        )}
+        {g.brand_flagged === false && (
+          <span
+            title="Passed brand check"
+            className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm"
+          >
+            On-brand ✓
+          </span>
+        )}
+      </div>
+
       {reproducingId === g.id && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70">
           <Loader2 className="size-6 animate-spin text-gold" />
           <p className="mt-2 text-xs text-white">Reproducing…</p>
         </div>
-      )}
-
-      {(g.qc_status || g.client_ready) && (
-        <span
-          className={cn(
-            "pointer-events-none absolute top-2.5 right-2.5 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1",
-            g.client_ready
-              ? "bg-foreground text-background ring-foreground"
-              : "bg-background/90 text-foreground ring-border"
-          )}
-        >
-          {g.client_ready
-            ? "Client ready"
-            : g.qc_status === "pass"
-              ? "Pass"
-              : g.qc_status === "revise"
-                ? "Revise"
-                : "Rejected"}
-        </span>
       )}
 
       {selectMode && !isVideo(g) && g.output_url && (
@@ -1156,54 +1545,7 @@ export function Studio() {
             variant="secondary"
             className="h-8 flex-1 gap-1.5 bg-white/15 text-xs text-white hover:bg-white/25"
             disabled={generating}
-            onClick={() => {
-              // Videos: replay the exact lineage (first frame / references /
-              // source video) instead of whatever is attached in the dock.
-              let sourceImages:
-                | { url: string; generationId: string | null }[]
-                | undefined;
-              let sourceVideo:
-                | { url: string; generationId: string | null }
-                | null
-                | undefined;
-              if (isVideo(g)) {
-                const payload = g.input_payload as {
-                  source_generation_id?: string;
-                  source_image_url?: string;
-                  source_image_urls?: string[];
-                  source_video_url?: string;
-                  source_video_generation_id?: string;
-                };
-                const imageUrls = payload.source_image_urls?.length
-                  ? payload.source_image_urls
-                  : payload.source_image_url
-                    ? [payload.source_image_url]
-                    : [];
-                sourceImages = imageUrls.map((url, i) => ({
-                  url,
-                  generationId:
-                    i === 0 ? (payload.source_generation_id ?? null) : null,
-                }));
-                sourceVideo = payload.source_video_url
-                  ? {
-                      url: payload.source_video_url,
-                      generationId:
-                        payload.source_video_generation_id ?? null,
-                    }
-                  : null;
-              }
-              setReproducingId(g.id);
-              toast.message("Reproducing…");
-              void submit(promptInputsOf(g), {
-                seed: g.seed ?? undefined,
-                tier: g.tier,
-                mode: (isVideo(g) ? "t2v" : "t2i") as StudioMode,
-                durationS: g.duration_s ?? undefined,
-                sourceImages,
-                sourceVideo,
-                stayOnView: true,
-              }).finally(() => setReproducingId(null));
-            }}
+            onClick={() => setReproduceTarget(g)}
           >
             {reproducingId === g.id ? (
               <Loader2 className="size-3 animate-spin" />
@@ -1231,17 +1573,95 @@ export function Studio() {
       {/* Magnific-style sidebar */}
       <aside className="relative z-10 flex h-full w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-5 pb-5">
         <AtharLogo height={ATHAR_LOCKUP_MIN_HEIGHT} priority />
-        <p className="mt-3 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-          Internal studio
-        </p>
+        <div className="mt-3" />
 
-        <Button
-          className="athar-label mt-4 mb-4 h-9 w-full justify-center gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
-          onClick={() => openTool("t2i")}
-        >
-          <Plus className="size-4" />
-          Generate
-        </Button>
+        <div className="relative mt-4 mb-4">
+          <Button
+            className="athar-label h-9 w-full justify-center gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
+            onClick={() => setGenerateMenuOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={generateMenuOpen}
+          >
+            <Plus className="size-4" />
+            Generate
+            <ChevronDown
+              className={cn(
+                "size-3.5 transition",
+                generateMenuOpen && "rotate-180"
+              )}
+            />
+          </Button>
+
+          {generateMenuOpen && (
+            <>
+              <button
+                type="button"
+                aria-hidden
+                tabIndex={-1}
+                className="fixed inset-0 z-30 cursor-default"
+                onClick={() => setGenerateMenuOpen(false)}
+              />
+              <div
+                role="menu"
+                className="absolute inset-x-0 top-full z-40 mt-1.5 overflow-hidden rounded-xl border border-sidebar-border bg-popover p-1 shadow-lg"
+              >
+                {[
+                  {
+                    icon: <ImageIcon className="size-4" />,
+                    label: "Image",
+                    hint: "Text → image",
+                    run: () => openTool("t2i"),
+                  },
+                  {
+                    icon: <Clapperboard className="size-4" />,
+                    label: "Video",
+                    hint: "Text or image → video",
+                    run: () => openTool("t2v"),
+                  },
+                  {
+                    icon: <Wand2 className="size-4" />,
+                    label: "Assistant",
+                    hint: "Edit an image with a prompt",
+                    run: () => openAssistant(null),
+                  },
+                  {
+                    icon: <Shuffle className="size-4" />,
+                    label: "Variations",
+                    hint: "Riff on a still",
+                    run: () => {
+                      const latestStill = generations?.find(
+                        (g) => !isVideo(g) && g.output_url
+                      );
+                      if (latestStill) openVary(latestStill);
+                      else toast.message("Generate a still first");
+                    },
+                  },
+                ].map((opt) => (
+                  <button
+                    key={opt.label}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setGenerateMenuOpen(false);
+                      opt.run();
+                    }}
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-sidebar-accent"
+                  >
+                    <span className="text-muted-foreground">{opt.icon}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm leading-tight text-foreground">
+                        {opt.label}
+                      </span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        {opt.hint}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
         <nav className="space-y-0.5">
@@ -1258,20 +1678,42 @@ export function Studio() {
             "Library"
           )}
           {navBtn(
-            view === "usage",
-            () => setView("usage"),
-            <BarChart3 className="size-4" />,
-            "Usage"
+            view === "assets",
+            () => setView("assets"),
+            <Boxes className="size-4" />,
+            "Assets"
           )}
+          {navBtn(
+            view === "orchestrate",
+            () => setView("orchestrate"),
+            <Workflow className="size-4" />,
+            "Campaign"
+          )}
+          {isManagement &&
+            navBtn(
+              view === "usage",
+              () => setView("usage"),
+              <BarChart3 className="size-4" />,
+              "Usage"
+            )}
         </nav>
 
         <div className="my-4 h-px bg-sidebar-border" />
+
+        <ClientPicker
+          activeClientId={activeClientId}
+          onActiveClientChange={onActiveClientChange}
+          clients={clients}
+          onClientsChange={setClients}
+          className="mb-3"
+        />
 
         <ProjectPicker
           activeProjectId={activeProjectId}
           onActiveProjectChange={setActiveProjectId}
           projects={projects}
           onProjectsChange={setProjects}
+          clientId={activeClientId}
           className="mb-3"
         />
 
@@ -1280,6 +1722,7 @@ export function Studio() {
           onActiveBrandKitChange={setActiveBrandKitId}
           brandKits={brandKits}
           onBrandKitsChange={setBrandKits}
+          clientId={activeClientId}
           className="mb-4"
         />
 
@@ -1386,6 +1829,7 @@ export function Studio() {
           )}
 
           <div className="flex items-center gap-1 px-1">
+            {isManagement && (
             <button
               type="button"
               aria-label="Connections"
@@ -1401,6 +1845,7 @@ export function Studio() {
                 Connections
               </span>
             </button>
+            )}
             <button
               type="button"
               aria-label="Toggle theme"
@@ -1421,7 +1866,19 @@ export function Studio() {
               </span>
             </button>
           </div>
-          <SidebarUser />
+          <SidebarUser onManageTeam={() => setView("team")} />
+          <a
+            href="https://yazmedia.com"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="YAZ Media"
+            className="mt-3 flex items-center justify-center gap-2 opacity-40 transition hover:opacity-80"
+          >
+            <span className="text-[9px] tracking-[0.2em] text-muted-foreground uppercase">
+              by
+            </span>
+            <YazMediaLogo height={22} />
+          </a>
         </div>
       </aside>
 
@@ -1458,7 +1915,9 @@ export function Studio() {
             onEdit={openEdit}
             onVary={openVary}
             onUpscale={(g) => setUpscaleTargets([g])}
-            onQcChange={onQcChange}
+            onSaveReference={(g) => {
+              if (g.output_url) openSaveReference(g.output_url);
+            }}
             onRemoveBackground={async (g) => {
               try {
                 const res = await fetch("/api/background/remove", {
@@ -1521,17 +1980,6 @@ export function Studio() {
                   ? prev.map((row) => (row.id === next.id ? next : row))
                   : prev
               );
-            }}
-            onDelete={async (g) => {
-              const res = await fetch(`/api/generations/${g.id}`, {
-                method: "DELETE",
-              });
-              const json = await res.json();
-              if (!res.ok) throw new Error(json.error ?? "Delete failed");
-              setGenerations((prev) =>
-                prev ? prev.filter((row) => row.id !== g.id) : prev
-              );
-              setDetailTarget(null);
             }}
             projects={projects}
             onMoveToProject={moveToProject}
@@ -1602,7 +2050,6 @@ export function Studio() {
               }
               setVideoDetailTarget(source);
             }}
-            onQcChange={onQcChange}
             onOpenSource={(generationId) => {
               const source = (generations ?? []).find(
                 (row) => row.id === generationId
@@ -1613,17 +2060,6 @@ export function Studio() {
               }
               setVideoDetailTarget(null);
               setDetailTarget(source);
-            }}
-            onDelete={async (g) => {
-              const res = await fetch(`/api/generations/${g.id}`, {
-                method: "DELETE",
-              });
-              const json = await res.json();
-              if (!res.ok) throw new Error(json.error ?? "Delete failed");
-              setGenerations((prev) =>
-                prev ? prev.filter((row) => row.id !== g.id) : prev
-              );
-              setVideoDetailTarget(null);
             }}
             projects={projects}
             onMoveToProject={moveToProject}
@@ -1671,6 +2107,23 @@ export function Studio() {
         {view === "home" && (
           <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-10">
             <div className="mx-auto max-w-4xl text-center">
+              {session?.user && (
+                <p className="mb-2 text-sm text-muted-foreground">
+                  {(() => {
+                    const h = new Date().getHours();
+                    return h < 12
+                      ? "Good morning"
+                      : h < 18
+                        ? "Good afternoon"
+                        : "Good evening";
+                  })()}
+                  ,{" "}
+                  <span className="font-medium text-foreground">
+                    {firstName}
+                  </span>{" "}
+                  — what are we making?
+                </p>
+              )}
               <h1 className="athar-display">
                 Generate
           </h1>
@@ -1743,16 +2196,60 @@ export function Studio() {
 
             <div className="mx-auto mt-12 max-w-6xl">
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-medium text-foreground">
-                  Recent generations
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setView("library")}
-                  className="text-xs text-muted-foreground hover:text-foreground"
-                >
+                <div className="flex items-center gap-2.5">
+                  <h2 className="text-sm font-medium text-foreground">
+                    Recent generations
+                  </h2>
+                  {activeProject && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveProjectId(null)}
+                      title="Showing this project only — click to show all"
+                      className="inline-flex items-center gap-1.5 rounded-full bg-gold-soft px-2.5 py-0.5 text-[11px] text-foreground ring-1 ring-gold/25 transition hover:opacity-80"
+                    >
+                      <FolderKanban className="size-3" />
+                      {activeProject.name}
+                      {filtered && (
+                        <span className="text-muted-foreground">
+                          · {filtered.length}
+                        </span>
+                      )}
+                      <X className="size-3 opacity-60" />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-0.5 rounded-full bg-card p-0.5 ring-1 ring-border">
+                    {(
+                      [
+                        { v: "all", label: "All" },
+                        { v: "image", label: "Images" },
+                        { v: "video", label: "Videos" },
+                      ] as const
+                    ).map((t) => (
+                      <button
+                        key={t.v}
+                        type="button"
+                        onClick={() => setTypeFilter(t.v)}
+                        className={cn(
+                          "rounded-full px-2.5 py-1 text-[11px] transition",
+                          typeFilter === t.v
+                            ? "bg-gold text-primary-foreground"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setView("library")}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
                   View library →
                 </button>
+                </div>
               </div>
 
               {filtered === null ? (
@@ -1760,17 +2257,34 @@ export function Studio() {
               ) : filtered.length === 0 ? (
                 <div className="rounded-2xl bg-[#121212] px-6 py-16 text-center ring-1 ring-white/6">
                   <Sparkles className="mx-auto mb-3 size-6 text-gold" />
-                  <p className="athar-headline">Nothing here yet</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Generate an image or video.
+                  <p className="athar-headline">
+                    {activeProject
+                      ? `Nothing in ${activeProject.name} yet`
+                      : "Nothing here yet"}
                   </p>
-                  <Button
-                    className="mt-5 rounded-full bg-gold text-primary-foreground"
-                    onClick={() => openTool("t2i")}
-                  >
-                    <Plus className="size-4" />
-                    Generate
-                  </Button>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {activeProject
+                      ? "New work you generate is tagged to this project. Switch to All projects to see everything."
+                      : "Generate an image or video."}
+                  </p>
+                  {activeProject && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveProjectId(null)}
+                      className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    >
+                      Show all projects
+                    </button>
+                  )}
+                  <div>
+                    <Button
+                      className="mt-5 rounded-full bg-gold text-primary-foreground"
+                      onClick={() => openTool("t2i")}
+                    >
+                      <Plus className="size-4" />
+                      Generate
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -1779,6 +2293,70 @@ export function Studio() {
               )}
             </div>
           </div>
+        )}
+
+        {view === "assets" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Assets</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {activeProject
+                    ? `Reusable references · ${activeProject.name}`
+                    : activeClient
+                      ? `Reusable references · ${activeClient.name}`
+                      : "Reusable references — pick a client to scope them"}
+                </p>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
+              <ReferenceLibrary
+                mode="manage"
+                clientId={activeClientId}
+                projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+              />
+            </div>
+          </>
+        )}
+
+        {view === "orchestrate" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Campaign</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Brief in → shot list → generate the whole set
+                  {activeClient ? ` · ${activeClient.name}` : ""}
+                </p>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
+              <Orchestrator
+                clientId={activeClientId}
+                projectId={activeProjectId}
+                brandKitId={activeBrandKitId}
+                clientName={activeClient?.name ?? null}
+                projectName={activeProject?.name ?? null}
+                onGenerated={() => void loadGallery()}
+              />
+            </div>
+          </>
+        )}
+
+        {view === "team" && isManagement && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Team</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Members, their team, role and access
+                </p>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
+              <TeamManagement />
+            </div>
+          </>
         )}
 
         {view === "usage" && (
@@ -2016,19 +2594,18 @@ export function Studio() {
                       </SelectContent>
                     </Select>
                     <Select
-                      value={qcFilter}
-                      onValueChange={(v) => setQcFilter(v as typeof qcFilter)}
+                      value={typeFilter}
+                      onValueChange={(v) =>
+                        setTypeFilter(v as typeof typeFilter)
+                      }
                     >
-                      <SelectTrigger className="h-10 w-auto min-w-[8.5rem] shrink-0 rounded-full border-border bg-card px-4 text-xs">
+                      <SelectTrigger className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="pass">QC pass</SelectItem>
-                        <SelectItem value="revise">Needs revision</SelectItem>
-                        <SelectItem value="reject">Rejected</SelectItem>
-                        <SelectItem value="unreviewed">Unreviewed</SelectItem>
-                        <SelectItem value="client_ready">Client ready</SelectItem>
+                        <SelectItem value="all">All types</SelectItem>
+                        <SelectItem value="image">Images</SelectItem>
+                        <SelectItem value="video">Videos</SelectItem>
                       </SelectContent>
                     </Select>
                     <button
@@ -2102,6 +2679,87 @@ export function Studio() {
             </div>
           </div>
         )}
+
+        {/* Reproduce confirmation — global, fires from cards on any view */}
+        <Dialog
+          open={reproduceTarget != null}
+          onOpenChange={(o) => {
+            if (!o) setReproduceTarget(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Reproduce this generation?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              This runs a{" "}
+              <span className="text-foreground">new paid render</span> with the
+              exact same settings and seed. It doesn&apos;t edit the original —
+              it creates another one.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setReproduceTarget(null)}>
+                Cancel
+              </Button>
+              <Button
+                className="bg-gold text-primary-foreground hover:bg-gold/90"
+                onClick={() => {
+                  const g = reproduceTarget;
+                  setReproduceTarget(null);
+                  if (g) runReproduce(g);
+                }}
+              >
+                <RefreshCw className="size-4" />
+                Reproduce
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Model guide — suggests a better-fit model for the prompt */}
+        <Dialog
+          open={modelSuggestion != null}
+          onOpenChange={(o) => {
+            if (!o) setModelSuggestion(null);
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Sparkles className="size-4 text-gold" />
+                Better with {modelSuggestion?.label}?
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              For this prompt,{" "}
+              <span className="text-foreground">{modelSuggestion?.label}</span>{" "}
+              is a stronger fit — {modelSuggestion?.reason}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const s = modelSuggestion;
+                  setModelSuggestion(null);
+                  if (s) runGenerate(s.current);
+                }}
+              >
+                Keep current
+              </Button>
+              <Button
+                className="gap-1.5 bg-gold text-primary-foreground hover:bg-gold/90"
+                onClick={() => {
+                  const s = modelSuggestion;
+                  setModelSuggestion(null);
+                  if (s) runGenerate(s.best);
+                }}
+              >
+                <Sparkles className="size-4" />
+                Use {modelSuggestion?.label}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Floating prompt dock — create views only */}
         {showDock && (
@@ -2372,44 +3030,79 @@ export function Studio() {
                         alt="Reference"
                         className="size-full object-cover"
                       />
-                      <button
-                        type="button"
-                        aria-label="Remove reference"
-                        onClick={() =>
-                          setReferenceUrls((prev) =>
-                            prev.filter((u) => u !== url)
-                          )
-                        }
-                        className="absolute inset-0 flex items-center justify-center bg-black/55 opacity-0 transition group-hover:opacity-100"
-                      >
-                        <X className="size-4 text-white" />
-                      </button>
+                      <div className="absolute inset-0 flex items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
+                        <button
+                          type="button"
+                          aria-label="Save to library"
+                          title="Save to library"
+                          onClick={() => openSaveReference(url)}
+                          className="flex size-6 items-center justify-center rounded-md bg-white/15 text-white transition hover:bg-white/30"
+                        >
+                          <Boxes className="size-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Remove reference"
+                          title="Remove"
+                          onClick={() =>
+                            setReferenceUrls((prev) =>
+                              prev.filter((u) => u !== url)
+                            )
+                          }
+                          className="flex size-6 items-center justify-center rounded-md bg-white/15 text-white transition hover:bg-white/30"
+                        >
+                          <X className="size-3.5" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
 
-            <Textarea
+            {generating ? (
+              <div className="flex items-center gap-3 px-1 py-3">
+                <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-foreground">
+                    {subject ||
+                      (mode === "t2v" ? "Starting render…" : "Generating…")}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {smartStage
+                      ? smartStage
+                      : mode === "t2v"
+                        ? "Starting render — it keeps going even if you leave"
+                        : `Generating ${numOutputs} image${
+                            numOutputs > 1 ? "s" : ""
+                          }… preview appears above`}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <Textarea
                 placeholder={
                   mode === "t2v"
                     ? videoEditSource
                       ? videoEditSource.intent === "extend"
-                        ? "Continue @video1"
+                        ? "Continue @video1 — what happens next?"
                         : videoEditSource.intent === "vary"
-                          ? "Vary @video1"
-                          : "Change @video1"
-                      : "Describe the shot"
+                          ? "Vary @video1 — same scene, new take"
+                          : "Change @video1 — what should be different?"
+                      : "Describe the shot — subject, action, camera, mood…"
                     : referenceUrls.length > 0
-                      ? "Describe the change"
-                      : "Describe the subject"
+                      ? "Describe the change you want from the reference…"
+                      : "Describe what you want to create — subject, setting, lighting, mood…"
                 }
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={onPromptPaste}
                 rows={6}
-                className="field-sizing-fixed h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-1 py-1 text-[15px] shadow-none focus-visible:ring-0"
+                className="field-sizing-fixed h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] shadow-none focus-visible:ring-0"
               />
+            )}
 
+              {!generating && (
               <div className="mt-1 flex items-center justify-between gap-2 px-1">
                 <button
                   type="button"
@@ -2440,8 +3133,9 @@ export function Studio() {
                   </kbd>
                 </button>
           </div>
+              )}
 
-              {detailsOpen && (
+              {!generating && detailsOpen && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <Input
                     placeholder="Action"
@@ -2464,6 +3158,7 @@ export function Studio() {
           </div>
               )}
 
+              {!generating && (
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
                   {mode === "t2i" && (
@@ -2517,6 +3212,16 @@ export function Studio() {
                     </button>
                   )}
 
+                  <button
+                    type="button"
+                    onClick={() => setRefLibOpen(true)}
+                    aria-label="Pick from reference library"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground"
+                  >
+                    <Boxes className="size-3.5" />
+                    Library
+                  </button>
+
                   {mode === "t2v" && (
                     <button
                       type="button"
@@ -2538,11 +3243,22 @@ export function Studio() {
                   )}
 
                   <Select
-                  value={tier}
-                  onValueChange={(v) => setTier(v as Tier)}
+                  value={mode === "t2i" && nanoSelected ? "nano" : tier}
+                  onValueChange={(v) => {
+                    if (v === "nano") {
+                      setNanoSelected(true);
+                    } else {
+                      setNanoSelected(false);
+                      setTier(v as Tier);
+                    }
+                  }}
                 >
                   <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                    <SelectValue>{selectedModelLabel}</SelectValue>
+                    <SelectValue>
+                      {mode === "t2i" && nanoSelected
+                        ? "Nano Banana"
+                        : selectedModelLabel}
+                    </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                     {modelOptions.map((m) => (
@@ -2555,8 +3271,124 @@ export function Studio() {
                         </span>
                     </SelectItem>
                   ))}
+                    {mode === "t2i" && (
+                      <SelectItem value="nano">
+                        <span className="flex flex-col items-start gap-0.5 py-0.5">
+                          <span>Nano Banana</span>
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            google · gemini-2.5-flash-image
+                          </span>
+                        </span>
+                      </SelectItem>
+                    )}
                 </SelectContent>
               </Select>
+
+              {mode === "t2i" && (
+                <Select value={style} onValueChange={setStyle}>
+                  <SelectTrigger
+                    title="Look / style applied to the image"
+                    className="h-8 w-auto min-w-[8rem] rounded-full border-white/10 bg-white/5 px-3 text-xs"
+                  >
+                    <Wand2 className="size-3.5 shrink-0 text-muted-foreground" />
+                    <SelectValue>{selectedStyleLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {clientStyles.length > 0 && (
+                      <div className="px-2 py-1 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                        {activeClient?.name ?? "Client"} presets
+                      </div>
+                    )}
+                    {clientStyles.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        <span className="flex flex-col items-start gap-0.5 py-0.5">
+                          <span>{s.name}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            Saved look
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {clientStyles.length > 0 && (
+                      <div className="my-1 h-px bg-border" />
+                    )}
+                    {STYLE_PRESETS.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        <span className="flex flex-col items-start gap-0.5 py-0.5">
+                          <span>{s.label}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {s.description}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+
+              {mode === "t2i" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const base =
+                      activeClientStyle?.positive ??
+                      STYLE_PRESETS.find((s) => s.id === style)?.positive ??
+                      "";
+                    setSaveStyleName("");
+                    setSaveStyleTokens(base);
+                    setSaveStyleOpen(true);
+                  }}
+                  title="Save the current look as a preset for this client"
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground"
+                >
+                  <Plus className="size-3.5" />
+                  Save look
+                </button>
+              )}
+
+              {mode === "t2i" && (
+                <button
+                  type="button"
+                  onClick={() => setSmartMode((s) => !s)}
+                  aria-pressed={smartMode}
+                  title="Smart: pick the best of the batch, upscale the winner, and brand-check it — automatically."
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
+                    smartMode
+                      ? "border-gold bg-gold/15 text-foreground"
+                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Sparkles
+                    className={cn("size-3.5", smartMode && "text-gold")}
+                  />
+                  Smart
+                </button>
+              )}
+
+              {mode === "t2v" && (
+                <Select value={camera} onValueChange={setCamera}>
+                  <SelectTrigger
+                    title="Camera move applied to the shot"
+                    className="h-8 w-auto min-w-[8.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs"
+                  >
+                    <Clapperboard className="size-3.5 shrink-0 text-muted-foreground" />
+                    <SelectValue>{selectedCameraLabel}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CAMERA_PRESETS.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        <span className="flex flex-col items-start gap-0.5 py-0.5">
+                          <span>{c.label}</span>
+                          <span className="text-[10px] text-muted-foreground">
+                            {c.description}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
 
               <Select
                 value={aspect}
@@ -2632,13 +3464,28 @@ export function Studio() {
               value={String(numOutputs)}
               onValueChange={(v) => setNumOutputs(Number(v))}
             >
-                      <SelectTrigger className="h-8 w-auto min-w-[4.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                <SelectValue />
+                      <SelectTrigger
+                        title="How many images to generate. Pick more than one and Athar auto-scores them and picks the best (best-of-N)."
+                        className="h-8 w-auto min-w-[6.5rem] gap-1.5 rounded-full border-white/10 bg-white/5 px-3 text-xs"
+                      >
+                        <Images className="size-3.5 shrink-0 text-muted-foreground" />
+                <SelectValue>
+                  {numOutputs === 1
+                    ? "1 image"
+                    : `${numOutputs} · best pick`}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {[1, 2, 3, 4].map((n) => (
                   <SelectItem key={n} value={String(n)}>
-                            {n}×
+                    <span className="flex flex-col items-start gap-0.5 py-0.5">
+                      <span>{n === 1 ? "1 image" : `${n} images`}</span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {n === 1
+                          ? "Single generation"
+                          : `Auto-scored — best of ${n} picked`}
+                      </span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2648,14 +3495,19 @@ export function Studio() {
 
           <Button
             size="lg"
-            onClick={onGenerate}
-            disabled={generating}
+            onClick={() => void onGenerate()}
+            disabled={generating || checkingModel}
                   className={cn(
                     "h-10 rounded-full px-6 font-medium text-primary-foreground",
-                    generating && "animate-gen-pulse"
+                    (generating || checkingModel) && "animate-gen-pulse"
                   )}
                 >
-                  {generating ? (
+                  {checkingModel ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Picking the best model…
+                    </>
+                  ) : generating ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
                       {mode === "t2v" ? "Rendering…" : "Generating…"}
@@ -2668,8 +3520,258 @@ export function Studio() {
                   )}
           </Button>
         </div>
+              )}
             </div>
             </div>
+
+          <Dialog
+            open={saveRefUrl != null}
+            onOpenChange={(o) => {
+              if (!o) setSaveRefUrl(null);
+            }}
+          >
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Save to reference library</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={saveReference} className="space-y-3">
+                {saveRefUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={saveRefUrl}
+                    alt=""
+                    className="h-32 w-full rounded-xl object-contain ring-1 ring-border"
+                  />
+                )}
+                <Input
+                  autoFocus
+                  placeholder="Name — e.g. Layla, Gold Tin"
+                  value={saveRefName}
+                  onChange={(e) => setSaveRefName(e.target.value)}
+                  required
+                />
+                <Select value={saveRefKind} onValueChange={setSaveRefKind}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="character">Character</SelectItem>
+                    <SelectItem value="product">Product</SelectItem>
+                    <SelectItem value="brand">Brand</SelectItem>
+                    <SelectItem value="style">Style</SelectItem>
+                    <SelectItem value="reference">Reference</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                      Client
+                    </span>
+                    <Select
+                      value={saveRefClientId ?? "none"}
+                      onValueChange={(v) => {
+                        setSaveRefClientId(v === "none" ? null : v);
+                        setSaveRefProjectId(null);
+                      }}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Shared (no client)</SelectItem>
+                        {clients.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                      Project
+                    </span>
+                    <Select
+                      value={saveRefProjectId ?? "none"}
+                      onValueChange={(v) =>
+                        setSaveRefProjectId(v === "none" ? null : v)
+                      }
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Client-wide</SelectItem>
+                        {projects
+                          .filter(
+                            (p) =>
+                              !saveRefClientId ||
+                              p.client_id === saveRefClientId
+                          )
+                          .map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {!saveRefClientId && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Tip: pick a client so this stays with the rest of their
+                    brand assets.
+                  </p>
+                )}
+                <Button
+                  type="submit"
+                  disabled={savingRef || !saveRefName.trim()}
+                  className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                >
+                  {savingRef ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    "Save reference"
+                  )}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={saveStyleOpen} onOpenChange={setSaveStyleOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>
+                  Save a look{activeClient ? ` for ${activeClient.name}` : ""}
+                </DialogTitle>
+              </DialogHeader>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!saveStyleName.trim() || !saveStyleTokens.trim()) return;
+                  setSavingStyle(true);
+                  try {
+                    const res = await fetch("/api/style-presets", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        name: saveStyleName.trim(),
+                        positive: saveStyleTokens.trim(),
+                        negative: negativeAdditions.trim() || undefined,
+                        clientId: activeClientId,
+                      }),
+                    });
+                    const json = await res.json();
+                    if (!res.ok) throw new Error(json.error);
+                    setClientStyles((prev) => [
+                      json.preset as StylePresetRecord,
+                      ...prev,
+                    ]);
+                    setStyle(json.preset.id);
+                    setSaveStyleOpen(false);
+                    toast.success(`Saved look “${json.preset.name}”`);
+                  } catch (err) {
+                    toast.error(
+                      err instanceof Error ? err.message : "Save failed"
+                    );
+                  } finally {
+                    setSavingStyle(false);
+                  }
+                }}
+                className="space-y-3"
+              >
+                <Input
+                  autoFocus
+                  placeholder="Look name — e.g. Aurum Signature"
+                  value={saveStyleName}
+                  onChange={(e) => setSaveStyleName(e.target.value)}
+                  required
+                />
+                <Textarea
+                  placeholder="Style tokens — e.g. warm editorial light, shallow depth, gold-black grade"
+                  value={saveStyleTokens}
+                  onChange={(e) => setSaveStyleTokens(e.target.value)}
+                  required
+                  className="min-h-20"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {activeClient
+                    ? `Appears in the Style menu only for ${activeClient.name}.`
+                    : "No client selected — this becomes a shared look."}
+                </p>
+                <Button
+                  type="submit"
+                  disabled={
+                    savingStyle ||
+                    !saveStyleName.trim() ||
+                    !saveStyleTokens.trim()
+                  }
+                  className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                >
+                  {savingStyle ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      Saving…
+                    </>
+                  ) : (
+                    "Save look"
+                  )}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={refLibOpen} onOpenChange={setRefLibOpen}>
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>
+                  {activeClient
+                    ? `${activeClient.name} · reference library`
+                    : "Reference library"}
+                </DialogTitle>
+              </DialogHeader>
+              <ReferenceLibrary
+                mode="picker"
+                clientId={activeClientId}
+                selectedUrls={mode === "t2v"
+                  ? videoSources.map((s) => s.url)
+                  : referenceUrls}
+                onPick={(url) => {
+                  if (mode === "t2v") {
+                    if (videoSources.some((s) => s.url === url)) {
+                      setVideoSources((prev) =>
+                        prev.filter((s) => s.url !== url)
+                      );
+                      return;
+                    }
+                    if (videoSources.length >= MAX_VIDEO_IMAGES) {
+                      toast.error(`Up to ${MAX_VIDEO_IMAGES} images`);
+                      return;
+                    }
+                    setVideoSources((prev) => [
+                      ...prev,
+                      { url, generationId: null },
+                    ]);
+                  } else {
+                    if (referenceUrls.includes(url)) {
+                      setReferenceUrls((prev) => prev.filter((u) => u !== url));
+                      return;
+                    }
+                    if (referenceUrls.length >= 4) {
+                      toast.error("Up to 4 reference images");
+                      return;
+                    }
+                    setReferenceUrls((prev) => [...prev, url]);
+                  }
+                }}
+              />
+            </DialogContent>
+          </Dialog>
 
           <PromptEditor
             open={editorOpen}

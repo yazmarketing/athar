@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { AtharLogo } from "@/components/athar-logo";
+import { YazMediaLogo } from "@/components/yaz-media-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -69,8 +70,23 @@ export function LoginForm({ googleEnabled }: Props) {
 
   const header = (
     <div className="mb-8 flex flex-col items-center text-center">
-      <AtharLogo variant="stacked" height={88} clearSpace priority />
-      <p className="text-sm text-muted-foreground">
+      <div className="flex items-center gap-4">
+        <AtharLogo variant="stacked" height={104} priority />
+        <span className="h-14 w-px bg-border/70" aria-hidden />
+        <a
+          href="https://yazmedia.com"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="by YAZ Media"
+          className="flex items-center gap-2 opacity-50 transition hover:opacity-90"
+        >
+          <span className="text-[0.6rem] uppercase tracking-[0.24em] text-muted-foreground">
+            by
+          </span>
+          <YazMediaLogo height={30} />
+        </a>
+      </div>
+      <p className="mt-8 text-sm text-muted-foreground">
         {mode === "signin" ? "Sign in" : "Create your account"}
       </p>
     </div>
@@ -93,28 +109,27 @@ export function LoginForm({ googleEnabled }: Props) {
     <div className="w-full max-w-sm">
       {header}
 
-      {googleEnabled && mode === "signin" && (
+      {googleEnabled && (
         <>
           <Button
             type="button"
-            variant="outline"
-            className="mb-4 h-10 w-full border-border bg-card"
+            className="athar-label h-11 w-full gap-2 bg-gold text-primary-foreground hover:bg-gold/90"
             disabled={loading}
             onClick={() => signIn("google", { callbackUrl })}
           >
             Continue with Google
           </Button>
-          <div className="relative mb-4">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">or</span>
-            </div>
-          </div>
+          <p className="mt-3 text-center text-xs text-muted-foreground">
+            Use your <span className="text-foreground">@yazmedia.com</span>{" "}
+            Google account.
+          </p>
         </>
       )}
 
+      {/* Email / password is a fallback for local dev only — hidden once
+          Google SSO is configured, so the team signs in with Google alone. */}
+      {!googleEnabled && (
+        <>
       <form onSubmit={onSubmit} className="space-y-3" suppressHydrationWarning>
         {mode === "register" && (
           <Input
@@ -182,6 +197,8 @@ export function LoginForm({ googleEnabled }: Props) {
           ? "New here? Create an account"
           : "Already have an account? Sign in"}
       </button>
+        </>
+      )}
     </div>
   );
 }
