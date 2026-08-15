@@ -1864,7 +1864,24 @@ export function Studio() {
     <div className="relative flex h-dvh overflow-hidden bg-background text-foreground">
       {/* Magnific-style sidebar */}
       <aside className="relative z-10 flex h-full w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-5 pb-5">
-        <AtharLogo height={ATHAR_LOCKUP_MIN_HEIGHT} priority />
+        {/* Same lockup treatment as the login page: Athar, a hairline
+            divider, then the "by YAZ Media" mark. */}
+        <div className="flex items-center gap-2">
+          <AtharLogo height={ATHAR_LOCKUP_MIN_HEIGHT} priority />
+          <span className="h-7 w-px shrink-0 bg-sidebar-border" aria-hidden />
+          <a
+            href="https://yazmedia.com"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="by YAZ Media"
+            className="flex shrink-0 items-center gap-1 opacity-50 transition hover:opacity-90"
+          >
+            <span className="text-[0.5rem] tracking-[0.14em] text-muted-foreground uppercase">
+              by
+            </span>
+            <YazMediaLogo height={14} />
+          </a>
+        </div>
         <div className="mt-3" />
 
         <div data-tour="new-generation" className="relative mt-4 mb-4">
@@ -2152,18 +2169,6 @@ export function Studio() {
             </button>
           </div>
           <SidebarUser onManageTeam={() => setView("team")} />
-          <a
-            href="https://yazmedia.com"
-            target="_blank"
-            rel="noreferrer"
-            aria-label="YAZ Media"
-            className="mt-3 flex items-center justify-center gap-2 opacity-40 transition hover:opacity-80"
-          >
-            <span className="text-[9px] tracking-[0.2em] text-muted-foreground uppercase">
-              by
-            </span>
-            <YazMediaLogo height={22} />
-          </a>
         </div>
       </aside>
 
