@@ -127,6 +127,13 @@ const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 const MAX_VIDEO_IMAGES = 9;
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
 
+/**
+ * The dock's live cost estimate, hidden for now. Flip to true to bring the
+ * chip back — the onboarding step for it is gated on this too, so the tour
+ * never points at an element that isn't rendered.
+ */
+const SHOW_COST_ESTIMATE = false;
+
 
 type StudioMode = Extract<Capability, "t2i" | "t2v">;
 type View =
@@ -280,6 +287,7 @@ export function Studio() {
    * per image outside the tiered registry, so it's handled separately.
    */
   const estimatedCost = useMemo(() => {
+    if (!SHOW_COST_ESTIMATE) return null;
     // The dock only ever drives t2i or t2v; i2v/v2v are entered from an
     // existing asset and priced on their own paths.
     const capability: Capability = mode === "t2i" ? "t2i" : "t2v";
@@ -367,7 +375,7 @@ export function Studio() {
       {
         target: "output",
         title: "Aspect, resolution, how many",
-        body: "Set the frame, the output size, and how many variations to render in one go. The running cost next to Generate updates as you change these.",
+        body: "Set the frame, the output size, and how many variations to render in one go. More variations costs more, but gives you options to choose between.",
         placement: "top",
         onEnter: toCreate,
       },
@@ -382,13 +390,6 @@ export function Studio() {
         target: "prompt-editor",
         title: "Prompt editor (⌘E)",
         body: "The full control surface: edit the structured prompt field by field — action, lighting, brand tokens, negatives — and have AI tighten it before you spend a render.",
-        placement: "top",
-        onEnter: toCreate,
-      },
-      {
-        target: "cost",
-        title: "What it'll cost",
-        body: "A live estimate for the settings you've chosen, before you commit. It moves with the model, the resolution and the number of variations — so you can see what Hero at 4 variations actually costs versus Draft at one.",
         placement: "top",
         onEnter: toCreate,
       },
