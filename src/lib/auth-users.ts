@@ -30,15 +30,9 @@ export function isEmailAllowed(email: string): boolean {
   }
   if (emails.length > 0 && emails.includes(normalized)) return true;
 
-  // Dev fallback when allowlist not configured
-  if (
-    process.env.NODE_ENV === "development" &&
-    domains.length === 0 &&
-    emails.length === 0
-  ) {
-    return true;
-  }
-
+  // Fail closed. There is deliberately no "allow everyone when the allowlist
+  // is empty" fallback: an unset AUTH_ALLOWED_DOMAINS/AUTH_ALLOWED_EMAILS must
+  // lock the studio down, never open it to any address that can reach it.
   return false;
 }
 

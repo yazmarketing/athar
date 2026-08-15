@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSessionUser } from "@/lib/auth-session";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured, openaiModel } from "@/lib/openai-server";
 import type { PromptInputs } from "@/lib/types";
@@ -32,6 +33,13 @@ function asString(value: unknown): string | undefined {
 
 export async function POST(req: NextRequest) {
   try {
+    // Re-check on the server: proxy.ts is an optimistic gate, not authorization.
+    // This route spends OpenAI/ModelArk credits, so it must never run signed out.
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const body = (await req.json()) as Body;
     const prompt = body.prompt;
     if (!prompt?.subject?.trim()) {

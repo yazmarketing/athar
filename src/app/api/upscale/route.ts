@@ -76,6 +76,7 @@ export async function POST(req: NextRequest) {
 
   const model = UPSCALE_MODELS[mode];
 
+  const renderStart = Date.now();
   let providerUrl: string;
   let requestId: string | null = null;
   try {
@@ -127,6 +128,7 @@ export async function POST(req: NextRequest) {
       userId: sessionUser.id,
       projectId: source.project_id,
       brandKitId: source.brand_kit_id,
+      renderMs: Date.now() - renderStart,
     });
     return NextResponse.json({ generation });
   } catch (err) {

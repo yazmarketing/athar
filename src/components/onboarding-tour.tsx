@@ -1,0 +1,329 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ArrowRight, Check, Sparkles, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+/**
+ * Set only when the walkthrough is actually completed — not merely seen.
+ * Bumping the suffix re-runs onboarding for everyone, which is the intended
+ * way to reintroduce it after a significant UI change.
+ */
+export const TOUR_STORAGE_KEY = "athar-onboarding-completed-v2";
+
+export type TourStep = {
+  /** Matches a `data-tour="…"` attribute in the app. */
+  target: string;
+  title: string;
+  body: string;
+  /** Preferred tooltip side; flips automatically when it won't fit. */
+  placement?: "right" | "bottom" | "left" | "top";
+  /**
+   * Run when the step becomes active — used to put the app in the state where
+   * the target actually exists (switching to Library before pointing at its
+   * search box, for instance). Measurement retries until the anchor appears.
+   */
+  onEnter?: () => void;
+};
+
+type Rect = { top: number; left: number; width: number; height: number };
+
+const PAD = 8;
+const TOOLTIP_W = 340;
+const TOOLTIP_GAP = 14;
+
+/**
+ * Guided walkthrough. Dims the whole viewport with a single large
+ * `box-shadow` spread and leaves the target element's rectangle clear — a
+ * spotlight without needing an SVG mask, so it stays crisp at any zoom.
+ *
+ * Steps whose target isn't in the DOM (role-gated nav, collapsed panels) are
+ * skipped automatically rather than pointing at nothing.
+ */
+export function OnboardingTour({
+  steps,
+  open,
+  onClose,
+}: {
+  steps: TourStep[];
+  open: boolean;
+  /**
+   * `completed` is true only when the user reaches the end and presses
+   * "Complete onboarding". Skipping, Esc and clicking away all close the tour
+   * *without* marking it done, so it returns on the next sign-in.
+   */
+  onClose: (completed: boolean) => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const [rect, setRect] = useState<Rect | null>(null);
+
+  // Steps are taken as given. Availability is the caller's call (it knows
+  // about roles and views); auto-skipping on "is it in the DOM right now?"
+  // broke once steps could switch views to reveal their own target.
+  const visibleSteps = steps;
+  const total = visibleSteps.length;
+  const step = visibleSteps[Math.min(index, Math.max(total - 1, 0))];
+  const targetId = step?.target;
+
+  const onEnter = step?.onEnter;
+
+  // Put the app into the state this step needs (e.g. switch to Library)
+  // before anything is measured.
+  useEffect(() => {
+    if (!open) return;
+    onEnter?.();
+  }, [open, onEnter]);
+
+  useEffect(() => {
+    if (!open) return;
+    let raf = 0;
+    let attempts = 0;
+
+    // All DOM reads and the resulting setState happen inside rAF, after
+    // layout has settled — never synchronously in the effect body.
+    // When a step switches views the anchor won't exist on the first frame,
+    // so keep retrying briefly instead of giving up and showing nothing.
+    const schedule = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const el = targetId
+          ? document.querySelector(`[data-tour="${targetId}"]`)
+          : null;
+
+        if (!el) {
+          if (attempts < 40) {
+            attempts += 1;
+            schedule();
+            return;
+          }
+          setRect(null);
+          return;
+        }
+
+        attempts = 0;
+        el.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const r = el.getBoundingClientRect();
+        setRect({
+          top: r.top - PAD,
+          left: r.left - PAD,
+          width: r.width + PAD * 2,
+          height: r.height + PAD * 2,
+        });
+      });
+    };
+
+    schedule();
+    window.addEventListener("resize", schedule);
+    window.addEventListener("scroll", schedule, true);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("scroll", schedule, true);
+    };
+  }, [open, targetId, steps]);
+
+  /** Finished the walkthrough — remember it and don't show it again. */
+  const complete = useCallback(() => {
+    try {
+      localStorage.setItem(TOUR_STORAGE_KEY, "1");
+    } catch {
+      // private mode — the tour just shows again next visit
+    }
+    setIndex(0);
+    onClose(true);
+  }, [onClose]);
+
+  /** Closed early. Deliberately does NOT persist, so it reappears later. */
+  const dismiss = useCallback(() => {
+    setIndex(0);
+    onClose(false);
+  }, [onClose]);
+
+  const next = useCallback(() => {
+    setIndex((i) => (i + 1 >= total ? i : i + 1));
+  }, [total]);
+
+  const back = useCallback(() => setIndex((i) => Math.max(0, i - 1)), []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss();
+      else if (e.key === "ArrowRight") next();
+      else if (e.key === "ArrowLeft") back();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, dismiss, next, back]);
+
+  if (!open || !step || total === 0) return null;
+
+  const isLast = index >= total - 1;
+  const isFirst = index === 0;
+
+  // Position the tooltip on the requested side, flipping when it would clip.
+  const placement = step.placement ?? "right";
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+
+  let tipTop = 0;
+  let tipLeft = 0;
+  // For "top" the card is anchored by its BOTTOM edge via translateY(-100%),
+  // so its height never has to be guessed — long copy can't overlap the
+  // element being pointed at.
+  let anchorFromBottom = false;
+
+  if (rect) {
+    const fitsRight = rect.left + rect.width + TOOLTIP_GAP + TOOLTIP_W < vw;
+    const fitsLeft = rect.left - TOOLTIP_GAP - TOOLTIP_W > 0;
+    // Enough clearance above for a tall card? Otherwise drop below instead.
+    const fitsAbove = rect.top > 260;
+
+    const side =
+      placement === "right" && !fitsRight
+        ? fitsLeft
+          ? "left"
+          : "bottom"
+        : placement === "left" && !fitsLeft
+          ? "right"
+          : placement === "top" && !fitsAbove
+            ? "bottom"
+            : placement;
+
+    if (side === "right") {
+      tipLeft = rect.left + rect.width + TOOLTIP_GAP;
+      tipTop = rect.top;
+    } else if (side === "left") {
+      tipLeft = rect.left - TOOLTIP_W - TOOLTIP_GAP;
+      tipTop = rect.top;
+    } else if (side === "top") {
+      tipLeft = rect.left;
+      tipTop = rect.top - TOOLTIP_GAP;
+      anchorFromBottom = true;
+    } else {
+      tipLeft = rect.left;
+      tipTop = rect.top + rect.height + TOOLTIP_GAP;
+    }
+
+    // Keep the card fully on screen horizontally; vertically only clamp the
+    // top-anchored case, which measures downward from its own bottom edge.
+    tipLeft = Math.max(12, Math.min(tipLeft, vw - TOOLTIP_W - 12));
+    if (!anchorFromBottom) {
+      tipTop = Math.max(12, Math.min(tipTop, vh - 280));
+    }
+  }
+
+  return (
+    <div className="dark fixed inset-0 z-[100]" role="dialog" aria-modal="true">
+      {/* Click-blocker only. Clicking the backdrop deliberately does nothing —
+          leaving onboarding must be a deliberate act (Skip, or finish it), not
+          something a stray click triggers. */}
+      <div className="absolute inset-0" />
+
+      {rect ? (
+        <div
+          className="pointer-events-none absolute rounded-xl ring-2 ring-gold transition-all duration-300 ease-out"
+          style={{
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height,
+            boxShadow: "0 0 0 9999px rgba(0,0,0,0.72)",
+          }}
+        />
+      ) : (
+        <div className="absolute inset-0 bg-black/72" />
+      )}
+
+      {/* Not rendered until the anchor is measured — otherwise the card
+          appears at the top-left corner and visibly flies into position.
+          From step 2 on, `rect` is already set, so it slides between
+          anchors as intended. */}
+      {rect && (
+      <div
+        className="absolute w-[340px] rounded-2xl bg-[#161616] p-4 text-foreground shadow-2xl ring-1 ring-white/10 transition-all duration-300 ease-out"
+        style={{
+          top: tipTop,
+          left: tipLeft,
+          transform: anchorFromBottom ? "translateY(-100%)" : undefined,
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-2 flex items-start justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="size-4 shrink-0 text-gold" />
+            <p className="text-sm font-medium">{step.title}</p>
+          </div>
+          <button
+            type="button"
+            onClick={dismiss}
+            aria-label="Skip for now"
+            title="Skip for now — this reopens next time you sign in"
+            className="rounded-md p-1 text-muted-foreground transition hover:bg-white/10 hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          {step.body}
+        </p>
+
+        {/* Stacked, not side-by-side: with this many steps the dot row plus
+            both buttons overflowed the card and pushed Next outside it. */}
+        <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-1" aria-hidden>
+            {visibleSteps.map((s, i) => (
+              <span
+                key={s.target}
+                className={cn(
+                  "h-1.5 shrink-0 rounded-full transition-all",
+                  i === index ? "w-4 bg-gold" : "w-1.5 bg-white/20"
+                )}
+              />
+            ))}
+          </div>
+
+          {/* Wraps: "Back" + "Complete onboarding" together exceed the card
+              width, and without this the overflow spills outside the box. */}
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {!isFirst && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 shrink-0 gap-1 rounded-full border-white/10 bg-transparent px-2.5"
+                onClick={back}
+              >
+                <ArrowLeft className="size-3.5" />
+                Back
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className="h-8 shrink-0 gap-1 rounded-full bg-gold px-2.5 text-primary-foreground hover:bg-gold/90"
+              onClick={isLast ? complete : next}
+            >
+              {isLast ? (
+                <>
+                  <Check className="size-3.5" />
+                  Complete onboarding
+                </>
+              ) : (
+                <>
+                  Next
+                  <ArrowRight className="size-3.5" />
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+
+        <p className="mt-2 text-center text-[10px] text-muted-foreground">
+          Step {index + 1} of {total} · ← → to move · Esc to skip for now
+        </p>
+      </div>
+      )}
+    </div>
+  );
+}

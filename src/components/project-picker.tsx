@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { FolderKanban, Loader2, Plus } from "lucide-react";
+import { FolderKanban, Loader2, Pencil, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,13 +16,19 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { RenameDialog } from "@/components/rename-dialog";
 import { cn } from "@/lib/utils";
 import type { ProjectRecord } from "@/lib/types";
 
 export const ACTIVE_PROJECT_STORAGE_KEY = "yaz-motion-active-project";
+
+/** Sentinels for the actions folded into the dropdown in compact mode. */
+const NEW = "__new__";
+const RENAME = "__rename__";
 
 type Props = {
   activeProjectId: string | null;
@@ -31,6 +37,8 @@ type Props = {
   onProjectsChange: (projects: ProjectRecord[]) => void;
   /** Scope the list + new projects to this client (null = all clients). */
   clientId?: string | null;
+  /** Dock variant: a single pill sized for the generate bar's chip row. */
+  compact?: boolean;
   className?: string;
 };
 
@@ -40,9 +48,11 @@ export function ProjectPicker({
   projects,
   onProjectsChange,
   clientId,
+  compact = false,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
   const [creating, setCreating] = useState(false);
@@ -95,53 +105,24 @@ export function ProjectPicker({
     }
   }
 
-  return (
-    <div className={cn("space-y-2", className)}>
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-          Project
-        </p>
-        <button
-          type="button"
-          title="New project"
-          aria-label="New project"
-          onClick={() => setCreateOpen(true)}
-          className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-
-      <Select
-        value={activeProjectId ?? "all"}
-        onValueChange={(v) => onActiveProjectChange(v === "all" ? null : v)}
-      >
-        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
-          <div className="flex min-w-0 items-center gap-2">
-            <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
-            <SelectValue placeholder="All projects">
-              {activeProject ? activeProject.name : "All projects"}
-            </SelectValue>
-          </div>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All projects</SelectItem>
-          {projects.map((p) => (
-            <SelectItem key={p.id} value={p.id}>
-              <span className="flex flex-col items-start gap-0.5 py-0.5">
-                <span>{p.name}</span>
-                {(p.client || p.generation_count != null) && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {[p.client, p.generation_count != null ? `${p.generation_count} items` : null]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                )}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+  const dialogs = (
+    <>
+      {activeProject && (
+        <RenameDialog
+          open={renameOpen}
+          onOpenChange={setRenameOpen}
+          entityLabel="project"
+          currentName={activeProject.name}
+          endpoint={`/api/projects/${activeProject.id}`}
+          onRenamed={(newName) =>
+            onProjectsChange(
+              projects.map((p) =>
+                p.id === activeProject.id ? { ...p, name: newName } : p
+              )
+            )
+          }
+        />
+      )}
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-md">
@@ -182,6 +163,117 @@ export function ProjectPicker({
           </form>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  const handleValueChange = (v: string) => {
+    if (v === NEW) {
+      setCreateOpen(true);
+      return;
+    }
+    if (v === RENAME) {
+      setRenameOpen(true);
+      return;
+    }
+    onActiveProjectChange(v === "all" ? null : v);
+  };
+
+  if (compact) {
+    return (
+      <>
+        <Select value={activeProjectId ?? "all"} onValueChange={handleValueChange}>
+          <SelectTrigger
+            aria-label="Project"
+            className={cn(
+              "h-8 w-auto gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground",
+              activeProject && "text-foreground",
+              className
+            )}
+          >
+            <FolderKanban className="size-3.5 shrink-0" />
+            <SelectValue>{activeProject?.name ?? "No project"}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">No project</SelectItem>
+            {projects.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.name}
+              </SelectItem>
+            ))}
+            <SelectSeparator />
+            <SelectItem value={NEW}>＋ New project…</SelectItem>
+            {activeProject && (
+              <SelectItem value={RENAME}>✎ Rename “{activeProject.name}”…</SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        {dialogs}
+      </>
+    );
+  }
+
+  return (
+    <div className={cn("space-y-2", className)}>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+          Project
+        </p>
+        <div className="flex items-center gap-0.5">
+          {activeProject && (
+            <button
+              type="button"
+              title={`Rename ${activeProject.name}`}
+              aria-label={`Rename ${activeProject.name}`}
+              onClick={() => setRenameOpen(true)}
+              className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            title="New project"
+            aria-label="New project"
+            onClick={() => setCreateOpen(true)}
+            className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <Select
+        value={activeProjectId ?? "all"}
+        onValueChange={(v) => onActiveProjectChange(v === "all" ? null : v)}
+      >
+        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
+          <div className="flex min-w-0 items-center gap-2">
+            <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
+            <SelectValue placeholder="All projects">
+              {activeProject ? activeProject.name : "All projects"}
+            </SelectValue>
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All projects</SelectItem>
+          {projects.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              <span className="flex flex-col items-start gap-0.5 py-0.5">
+                <span>{p.name}</span>
+                {(p.client || p.generation_count != null) && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {[p.client, p.generation_count != null ? `${p.generation_count} items` : null]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                )}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {dialogs}
     </div>
   );
 }

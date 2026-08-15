@@ -11,6 +11,8 @@ import {
   ChevronDown,
   Clapperboard,
   FolderKanban,
+  Heart,
+  HelpCircle,
   Home,
   ImageIcon,
   Images,
@@ -27,6 +29,7 @@ import {
   SquarePen,
   Sun,
   Plug,
+  Trash2,
   Wand2,
   Workflow,
   X,
@@ -47,6 +50,11 @@ import { cn } from "@/lib/utils";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
+import {
+  OnboardingTour,
+  TOUR_STORAGE_KEY,
+  type TourStep,
+} from "@/components/onboarding-tour";
 import { SidebarUser } from "@/components/sidebar-user";
 import { UpscaleDialog } from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
@@ -62,6 +70,7 @@ import {
   type VaryStrength,
 } from "@/components/variations-panel";
 import {
+  estimateCost,
   listModelOptions,
   resolveModel,
   type Capability,
@@ -117,6 +126,7 @@ const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
 const MAX_VIDEO_IMAGES = 9;
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
+
 
 type StudioMode = Extract<Capability, "t2i" | "t2v">;
 type View =
@@ -179,6 +189,8 @@ export function Studio() {
   const [generations, setGenerations] = useState<GenerationRecord[] | null>(
     null
   );
+  /** True while a scope-changing gallery fetch is in flight (see loadGallery). */
+  const [galleryLoading, setGalleryLoading] = useState(true);
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
@@ -213,10 +225,14 @@ export function Studio() {
   const [jobsClock, setJobsClock] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">(
     "all"
   );
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine">("all");
+  /** Favourites are marked on cards; this is how you actually get to them. */
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -229,6 +245,18 @@ export function Studio() {
     null
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+
+  /**
+   * Onboarding walks the generate bar, and those controls only render on the
+   * Create view in image mode — so put the app there before opening it.
+   */
+  const startTour = useCallback(() => {
+    setView("create");
+    setMode("t2i");
+    setTourOpen(true);
+  }, []);
+
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
   const [refLibOpen, setRefLibOpen] = useState(false);
   const [saveRefUrl, setSaveRefUrl] = useState<string | null>(null);
@@ -246,6 +274,178 @@ export function Studio() {
   const { resolvedTheme, setTheme } = useTheme();
   const { data: session } = useSession();
   const isManagement = session?.user?.role === "admin";
+
+  /**
+   * Live cost estimate for the current dock settings. Nano Banana is priced
+   * per image outside the tiered registry, so it's handled separately.
+   */
+  const estimatedCost = useMemo(() => {
+    // The dock only ever drives t2i or t2v; i2v/v2v are entered from an
+    // existing asset and priced on their own paths.
+    const capability: Capability = mode === "t2i" ? "t2i" : "t2v";
+    if (mode === "t2i" && nanoSelected) return 0.039 * numOutputs;
+    try {
+      return estimateCost(capability, tier, {
+        numOutputs: mode === "t2i" ? numOutputs : 1,
+        durationS,
+      });
+    } catch {
+      // Unknown tier/capability pairing — better to show nothing than a wrong
+      // number the team might budget against.
+      return null;
+    }
+  }, [mode, tier, nanoSelected, numOutputs, durationS]);
+
+
+  /**
+   * Onboarding: how to actually make something, in the order you'd do it.
+   * Steps declare the view they need via `onEnter`; role-gated steps are
+   * filtered out here rather than guessed at from the DOM.
+   */
+  const tourSteps = useMemo<TourStep[]>(() => {
+    const toCreate = () => {
+      setView("create");
+      setMode("t2i");
+    };
+    const steps: TourStep[] = [
+      {
+        target: "new-generation",
+        title: "Start a new generation",
+        body: "This is the way in. The dropdown picks what you're making — Image for stills, Video for a clip, and the image-to-video and edit options for building on something you already have. Each one opens the same dock, tuned for that job.",
+        placement: "right",
+        onEnter: toCreate,
+      },
+      {
+        target: "prompt",
+        title: "Describe the shot",
+        body: "Plain language, like a brief to a photographer: subject, setting, lighting, mood. No prompt syntax to learn — Athar structures it for you. ⌘↵ generates.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "client",
+        title: "Who it's for — required",
+        body: "Every generation is attributed to a client, so nothing lands unfiled and cost reporting stays accurate. Generate stays disabled until one is set. Create or rename clients from this same menu.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "project",
+        title: "Group it into a project — optional",
+        body: "Projects keep one campaign's shots together. Set one and everything you make is tagged to it; leave it as “No project” for quick one-offs.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "brand-kit",
+        title: "Lock the brand — optional",
+        body: "A brand kit carries the client's palette, tone and the things to avoid. Attach one and every prompt inherits it, so you're not retyping brand rules each time.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "model",
+        title: "Pick the model",
+        body: "Draft is fast and cheap for exploring. Standard is the everyday default. Hero costs more and is worth it for finals. Nano Banana is best at edits and text. Not sure? Leave it — Athar suggests a better fit when your prompt calls for one.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "style",
+        title: "Set the look",
+        body: "A style preset steers the whole aesthetic — photographic, cinematic, editorial and so on. Saved looks for this client appear at the top of the list.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "save-look",
+        title: "Save look",
+        body: "Landed on an aesthetic that works for this client? Save it as a named preset and the whole team can pick it from the style menu instead of recreating it.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "output",
+        title: "Aspect, resolution, how many",
+        body: "Set the frame, the output size, and how many variations to render in one go. The running cost next to Generate updates as you change these.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "smart",
+        title: "Smart mode",
+        body: "Turn this on and Athar runs the batch, picks the strongest frame, upscales it, and brand-checks it against the kit — automatically, in one pass.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "prompt-editor",
+        title: "Prompt editor (⌘E)",
+        body: "The full control surface: edit the structured prompt field by field — action, lighting, brand tokens, negatives — and have AI tighten it before you spend a render.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "cost",
+        title: "What it'll cost",
+        body: "A live estimate for the settings you've chosen, before you commit. It moves with the model, the resolution and the number of variations — so you can see what Hero at 4 variations actually costs versus Draft at one.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "generate",
+        title: "Generate",
+        body: "Renders your shot. Stills come back in seconds; video takes longer and keeps working in the background, so you can carry on elsewhere.",
+        placement: "top",
+        onEnter: toCreate,
+      },
+      {
+        target: "notifications",
+        title: "Notifications",
+        body: "Long video renders finish here. The bell tells you when a job is done — click through to jump straight to the result.",
+        placement: "bottom",
+        onEnter: toCreate,
+      },
+      {
+        target: "search",
+        title: "Search your back catalogue",
+        body: "Searches across every generation's prompt, mode and model — so “camel dune” or “seedance” finds the shot you half-remember. Pair it with the filters beside it to narrow by client, project, type or favourites.",
+        placement: "bottom",
+        onEnter: () => setView("library"),
+      },
+      {
+        target: "library",
+        title: "Everything lands here",
+        body: "The Library holds every generation. Favourite the keepers and filter to them, and open any image to upscale, cut the background, or download it.",
+        placement: "right",
+        onEnter: () => setView("library"),
+      },
+      {
+        target: "campaign",
+        title: "A whole campaign at once",
+        body: "Campaign takes one brief and fans it out into a full set of on-brand shots, instead of prompting them one at a time.",
+        placement: "right",
+      },
+    ];
+
+    if (isManagement) {
+      steps.push({
+        target: "usage",
+        title: "What it's costing",
+        body: "Usage tracks spend by model, project and person, so you can see what a campaign actually cost to produce.",
+        placement: "right",
+      });
+    }
+
+    steps.push({
+      target: "help",
+      title: "That's it — go make something",
+      body: "Replay this walkthrough any time from this button. It stays here even after you finish.",
+      placement: "top",
+    });
+
+    return steps;
+  }, [isManagement]);
   const firstName =
     (session?.user?.name || session?.user?.email?.split("@")[0] || "")
       .trim()
@@ -293,7 +493,17 @@ export function Studio() {
     setView("create");
   };
 
-  const loadGallery = useCallback(async () => {
+  /**
+   * `showLoader` is for reloads that change which generations are in scope
+   * (project / client / owner filters). Those must show the loader, otherwise
+   * the previous result set stays on screen — and if it was empty the user
+   * reads "No matches" until the new rows suddenly appear.
+   *
+   * Background refreshes after a generation finishes deliberately pass
+   * nothing, so the grid updates in place without flashing a spinner.
+   */
+  const loadGallery = useCallback(async (opts: { showLoader?: boolean } = {}) => {
+    if (opts.showLoader) setGalleryLoading(true);
     try {
       const params = new URLSearchParams();
       if (activeProjectId) params.set("projectId", activeProjectId);
@@ -318,6 +528,8 @@ export function Studio() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to load gallery");
       setGenerations([]);
+    } finally {
+      if (opts.showLoader) setGalleryLoading(false);
     }
   }, [activeProjectId, ownerFilter, activeClientId]);
 
@@ -337,6 +549,32 @@ export function Studio() {
       // corrupted storage — start fresh
     }
     setProjectsReady(true);
+
+    // Onboarding runs on every sign-in until it is explicitly completed.
+    // Skipping it doesn't count, so it comes back next time.
+    let done = false;
+    try {
+      done = Boolean(localStorage.getItem(TOUR_STORAGE_KEY));
+    } catch {
+      // private mode — treat as not completed
+    }
+    if (!done) {
+      setView("create");
+      setMode("t2i");
+      // Wait for the dock to exist rather than guessing a delay: a fixed
+      // timeout raced the first paint on slower loads and the tour opened
+      // with nothing to point at.
+      let tries = 0;
+      const waitForAnchors = window.setInterval(() => {
+        tries += 1;
+        if (document.querySelector('[data-tour="prompt"]')) {
+          window.clearInterval(waitForAnchors);
+          setTourOpen(true);
+        } else if (tries > 40) {
+          window.clearInterval(waitForAnchors);
+        }
+      }, 100);
+    }
   }, []);
 
   useEffect(() => {
@@ -538,13 +776,16 @@ export function Studio() {
 
   useEffect(() => {
     if (!projectsReady) return;
-    void loadGallery();
+    // loadGallery's identity changes whenever the project/client/owner scope
+    // changes, so this is exactly the "show the loader" case.
+    void loadGallery({ showLoader: true });
   }, [loadGallery, projectsReady]);
 
   const filtered = useMemo(() => {
     if (!generations) return null;
     const q = query.trim().toLowerCase();
     let list = generations;
+    if (favoritesOnly) list = list.filter((g) => Boolean(g.is_favorite));
     if (typeFilter === "image") list = list.filter((g) => !isVideo(g));
     else if (typeFilter === "video") list = list.filter((g) => isVideo(g));
     if (!q) return list;
@@ -554,7 +795,7 @@ export function Studio() {
         g.mode.toLowerCase().includes(q) ||
         g.model_endpoint.toLowerCase().includes(q)
     );
-  }, [generations, query, typeFilter]);
+  }, [generations, query, typeFilter, favoritesOnly]);
 
 
   const submit = useCallback(
@@ -1032,6 +1273,12 @@ export function Studio() {
   };
 
   const onGenerate = async () => {
+    // Client is required — everything downstream (projects, brand kits,
+    // reporting) hangs off it, so nothing is generated unattributed.
+    if (!activeClientId) {
+      toast.error("Pick a client first — it's in the bar below");
+      return;
+    }
     if (!subject.trim()) {
       toast.error("Add a subject");
       return;
@@ -1385,10 +1632,13 @@ export function Studio() {
     active: boolean,
     onClick: () => void,
     icon: React.ReactNode,
-    label: string
+    label: string,
+    /** Anchor id for the onboarding walkthrough. */
+    tourId?: string
   ) => (
     <button
       type="button"
+      data-tour={tourId}
       onClick={onClick}
       className={cn(
         "flex w-full items-center gap-3 rounded-lg py-1.5 athar-nav transition",
@@ -1402,14 +1652,55 @@ export function Studio() {
     </button>
   );
 
+  /**
+   * Select mode drives two batch actions with different eligibility:
+   * Upscale takes stills only, bulk delete (admins) takes anything. So the
+   * card selection itself is unrestricted and each action filters its own
+   * targets.
+   */
   const toggleSelected = (g: GenerationRecord) => {
-    if (isVideo(g) || !g.output_url) {
-      toast.message("Upscale stills only");
-      return;
-    }
     setSelectedIds((prev) =>
       prev.includes(g.id) ? prev.filter((x) => x !== g.id) : [...prev, g.id]
     );
+  };
+
+  const selectedGenerations = (generations ?? []).filter((g) =>
+    selectedIds.includes(g.id)
+  );
+  const upscalableSelected = selectedGenerations.filter(
+    (g) => !isVideo(g) && g.output_url
+  );
+
+  const bulkDelete = async () => {
+    if (bulkDeleting) return;
+    const ids = selectedIds;
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/generations/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Bulk delete failed");
+
+      const deleted = new Set<string>(json.ids ?? []);
+      setGenerations((prev) =>
+        prev ? prev.filter((row) => !deleted.has(row.id)) : prev
+      );
+      setSelectedIds([]);
+      setBulkDeleteOpen(false);
+      // Close the detail overlay if it was showing something just removed.
+      setDetailTarget((cur) => (cur && deleted.has(cur.id) ? null : cur));
+      toast.success(
+        `Deleted ${json.deleted} generation${json.deleted === 1 ? "" : "s"}`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Bulk delete failed");
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   const renderCard = (g: GenerationRecord, i: number) => (
@@ -1575,7 +1866,7 @@ export function Studio() {
         <AtharLogo height={ATHAR_LOCKUP_MIN_HEIGHT} priority />
         <div className="mt-3" />
 
-        <div className="relative mt-4 mb-4">
+        <div data-tour="new-generation" className="relative mt-4 mb-4">
           <Button
             className="athar-label h-9 w-full justify-center gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
             onClick={() => setGenerateMenuOpen((o) => !o)}
@@ -1675,56 +1966,37 @@ export function Studio() {
             view === "library",
             () => setView("library"),
             <Library className="size-4" />,
-            "Library"
+            "Library",
+            "library"
           )}
           {navBtn(
             view === "assets",
             () => setView("assets"),
             <Boxes className="size-4" />,
-            "Assets"
+            "Assets",
+            "assets"
           )}
           {navBtn(
             view === "orchestrate",
             () => setView("orchestrate"),
             <Workflow className="size-4" />,
-            "Campaign"
+            "Campaign",
+            "campaign"
           )}
           {isManagement &&
             navBtn(
               view === "usage",
               () => setView("usage"),
               <BarChart3 className="size-4" />,
-              "Usage"
+              "Usage",
+              "usage"
             )}
         </nav>
 
         <div className="my-4 h-px bg-sidebar-border" />
 
-        <ClientPicker
-          activeClientId={activeClientId}
-          onActiveClientChange={onActiveClientChange}
-          clients={clients}
-          onClientsChange={setClients}
-          className="mb-3"
-        />
-
-        <ProjectPicker
-          activeProjectId={activeProjectId}
-          onActiveProjectChange={setActiveProjectId}
-          projects={projects}
-          onProjectsChange={setProjects}
-          clientId={activeClientId}
-          className="mb-3"
-        />
-
-        <BrandKitPicker
-          activeBrandKitId={activeBrandKitId}
-          onActiveBrandKitChange={setActiveBrandKitId}
-          brandKits={brandKits}
-          onBrandKitsChange={setBrandKits}
-          clientId={activeClientId}
-          className="mb-4"
-        />
+        {/* Client / project / brand kit now live in the generate dock, next
+            to the other things you set before pressing Generate. */}
 
         <p className="mb-1 text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
           Tools
@@ -1829,6 +2101,18 @@ export function Studio() {
           )}
 
           <div className="flex items-center gap-1 px-1">
+            <button
+              type="button"
+              aria-label="Take the tour"
+              data-tour="help"
+              onClick={startTour}
+              className="group relative flex size-9 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+            >
+              <HelpCircle className="size-4" />
+              <span className="pointer-events-none absolute -top-8 left-1/2 z-50 -translate-x-1/2 rounded-md bg-foreground px-2 py-1 text-[10px] whitespace-nowrap text-background opacity-0 shadow-md transition-opacity duration-100 group-hover:opacity-100">
+                Take the tour
+              </span>
+            </button>
             {isManagement && (
             <button
               type="button"
@@ -1885,6 +2169,7 @@ export function Studio() {
       {/* Main */}
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
         <div className="absolute top-5 right-6 z-40 sm:right-8">
+          <span data-tour="notifications" className="inline-flex">
           <NotificationsBell
             notifications={notifications}
             onMarkAllRead={() =>
@@ -1906,6 +2191,7 @@ export function Studio() {
               else setDetailTarget(g);
             }}
           />
+          </span>
         </div>
 
         {detailTarget && (
@@ -2252,7 +2538,7 @@ export function Studio() {
                 </div>
               </div>
 
-              {filtered === null ? (
+              {filtered === null || galleryLoading ? (
                 galleryLoader
               ) : filtered.length === 0 ? (
                 <div className="rounded-2xl bg-[#121212] px-6 py-16 text-center ring-1 ring-white/6">
@@ -2575,6 +2861,7 @@ export function Studio() {
                       <input
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
+                        data-tour="search"
                         placeholder="Search prompts, modes, models…"
                         className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                       />
@@ -2608,6 +2895,70 @@ export function Studio() {
                         <SelectItem value="video">Videos</SelectItem>
                       </SelectContent>
                     </Select>
+                    {/* The dock's client/project chips only exist in Create,
+                        so Library carries its own scope control. */}
+                    <Select
+                      value={activeClientId ?? "all"}
+                      onValueChange={(v) =>
+                        onActiveClientChange(v === "all" ? null : v)
+                      }
+                    >
+                      <SelectTrigger
+                        aria-label="Filter by client"
+                        className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All clients</SelectItem>
+                        {clients.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={activeProjectId ?? "all"}
+                      onValueChange={(v) =>
+                        setActiveProjectId(v === "all" ? null : v)
+                      }
+                    >
+                      <SelectTrigger
+                        aria-label="Filter by project"
+                        className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All projects</SelectItem>
+                        {projects.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <button
+                      type="button"
+                      onClick={() => setFavoritesOnly((f) => !f)}
+                      aria-pressed={favoritesOnly}
+                      title="Show only favourites"
+                      className={cn(
+                        "inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-xs ring-1 transition",
+                        favoritesOnly
+                          ? "bg-gold text-primary-foreground ring-gold"
+                          : "bg-card text-muted-foreground ring-border hover:text-foreground"
+                      )}
+                    >
+                      <Heart
+                        className={cn(
+                          "size-3.5",
+                          favoritesOnly && "fill-current"
+                        )}
+                      />
+                      Favourites
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -2626,17 +2977,45 @@ export function Studio() {
                     </button>
                   </div>
 
-                  {filtered === null ? (
+                  {filtered === null || galleryLoading ? (
                     galleryLoader
                   ) : filtered.length === 0 ? (
                     <div className="flex h-[min(48vh,380px)] flex-col items-center justify-center text-center">
                       <Sparkles className="mb-3 size-6 text-gold" />
-                      <p className="athar-headline">
-                        No matches
-                      </p>
-                      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                        Try another search.
-                      </p>
+                      {/* An empty *source* list is a different story from a
+                          search/type filter that matched nothing. */}
+                      {(generations?.length ?? 0) === 0 ? (
+                        <>
+                          <p className="athar-headline">
+                            {activeProject
+                              ? `Nothing in ${activeProject.name} yet`
+                              : "Nothing here yet"}
+                          </p>
+                          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                            Generate an image or video and it lands here.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="athar-headline">No matches</p>
+                          <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                            {query.trim()
+                              ? `Nothing matches “${query.trim()}”.`
+                              : "Nothing matches this filter."}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setQuery("");
+                              setTypeFilter("all");
+                              setFavoritesOnly(false);
+                            }}
+                            className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                          >
+                            Clear filters
+                          </button>
+                        </>
+                      )}
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -2659,16 +3038,32 @@ export function Studio() {
               <Button
                 size="sm"
                 className="h-8 gap-1.5 rounded-full bg-gold text-primary-foreground hover:bg-gold/90"
+                disabled={upscalableSelected.length === 0}
+                title={
+                  upscalableSelected.length === 0
+                    ? "Upscale works on stills only"
+                    : undefined
+                }
                 onClick={() => {
-                  const targets = (generations ?? []).filter((g) =>
-                    selectedIds.includes(g.id)
-                  );
-                  if (targets.length > 0) setUpscaleTargets(targets);
+                  if (upscalableSelected.length > 0) {
+                    setUpscaleTargets(upscalableSelected);
+                  }
                 }}
               >
                 <ArrowUpToLine className="size-3.5" />
-                Upscale {selectedIds.length}
+                Upscale {upscalableSelected.length}
               </Button>
+              {isManagement && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="h-8 gap-1.5 rounded-full"
+                  onClick={() => setBulkDeleteOpen(true)}
+                >
+                  <Trash2 className="size-3.5" />
+                  Delete {selectedIds.length}
+                </Button>
+              )}
               <button
                 type="button"
                 onClick={() => setSelectedIds([])}
@@ -2679,6 +3074,62 @@ export function Studio() {
             </div>
           </div>
         )}
+
+        <OnboardingTour
+          steps={tourSteps}
+          open={tourOpen}
+          onClose={(completed) => {
+            setTourOpen(false);
+            // The tour moves through Create and Library; put people back on
+            // Home, which is where landing should always leave them.
+            setView("home");
+            if (completed) toast.success("You're all set — welcome to Athar");
+          }}
+        />
+
+        {/* Bulk delete confirmation — admins only, Library select mode */}
+        <Dialog
+          open={bulkDeleteOpen}
+          onOpenChange={(o) => {
+            if (!o && !bulkDeleting) setBulkDeleteOpen(false);
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                Delete {selectedIds.length} generation
+                {selectedIds.length === 1 ? "" : "s"}?
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              They&apos;ll be removed from the Library for everyone. Usage and
+              cost reporting is{" "}
+              <span className="text-foreground">not</span> affected — the
+              records are retained for billing history.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                disabled={bulkDeleting}
+                onClick={() => setBulkDeleteOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={bulkDeleting}
+                onClick={() => void bulkDelete()}
+              >
+                {bulkDeleting ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+                Delete {selectedIds.length}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Reproduce confirmation — global, fires from cards on any view */}
         <Dialog
@@ -2766,6 +3217,7 @@ export function Studio() {
           <>
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-4 pb-4 sm:pb-6">
             <div
+              data-tour="dock"
               className={cn(
                 "animate-dock-in dock-glass pointer-events-auto relative w-full max-w-[56rem] rounded-2xl p-3 sm:p-4",
                 dragOver && "ring-2 ring-gold/50"
@@ -3093,6 +3545,7 @@ export function Studio() {
                       ? "Describe the change you want from the reference…"
                       : "Describe what you want to create — subject, setting, lighting, mood…"
                 }
+              data-tour="prompt"
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
                 onKeyDown={onKeyDown}
@@ -3123,6 +3576,7 @@ export function Studio() {
                 <button
                   type="button"
                   onClick={() => setEditorOpen(true)}
+                  data-tour="prompt-editor"
                   className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-muted-foreground transition hover:border-gold/30 hover:text-foreground"
                   title="Prompt editor (⌘E)"
                 >
@@ -3161,6 +3615,40 @@ export function Studio() {
               {!generating && (
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex flex-wrap items-center gap-2">
+                  {/* Who the work is for, set right where it's used. Client is
+                      required; project and brand kit are optional. */}
+                  <span data-tour="client" className="inline-flex">
+                    <ClientPicker
+                      activeClientId={activeClientId}
+                      onActiveClientChange={onActiveClientChange}
+                      clients={clients}
+                      onClientsChange={setClients}
+                      compact
+                    />
+                  </span>
+                  <span data-tour="project" className="inline-flex">
+                    <ProjectPicker
+                      activeProjectId={activeProjectId}
+                      onActiveProjectChange={setActiveProjectId}
+                      projects={projects}
+                      onProjectsChange={setProjects}
+                      clientId={activeClientId}
+                      compact
+                    />
+                  </span>
+                  <span data-tour="brand-kit" className="inline-flex">
+                    <BrandKitPicker
+                      activeBrandKitId={activeBrandKitId}
+                      onActiveBrandKitChange={setActiveBrandKitId}
+                      brandKits={brandKits}
+                      onBrandKitsChange={setBrandKits}
+                      clientId={activeClientId}
+                      compact
+                    />
+                  </span>
+
+                  <span className="mx-0.5 h-5 w-px bg-white/10" aria-hidden />
+
                   {mode === "t2i" && (
                     <button
                       type="button"
@@ -3242,6 +3730,7 @@ export function Studio() {
                     </button>
                   )}
 
+                  <span data-tour="model" className="inline-flex">
                   <Select
                   value={mode === "t2i" && nanoSelected ? "nano" : tier}
                   onValueChange={(v) => {
@@ -3283,8 +3772,10 @@ export function Studio() {
                     )}
                 </SelectContent>
               </Select>
+              </span>
 
               {mode === "t2i" && (
+                <span data-tour="style" className="inline-flex">
                 <Select value={style} onValueChange={setStyle}>
                   <SelectTrigger
                     title="Look / style applied to the image"
@@ -3324,6 +3815,7 @@ export function Studio() {
                     ))}
                   </SelectContent>
                 </Select>
+                </span>
               )}
 
               {mode === "t2i" && (
@@ -3339,6 +3831,7 @@ export function Studio() {
                     setSaveStyleOpen(true);
                   }}
                   title="Save the current look as a preset for this client"
+                  data-tour="save-look"
                   className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground"
                 >
                   <Plus className="size-3.5" />
@@ -3351,6 +3844,7 @@ export function Studio() {
                   type="button"
                   onClick={() => setSmartMode((s) => !s)}
                   aria-pressed={smartMode}
+                  data-tour="smart"
                   title="Smart: pick the best of the batch, upscale the winner, and brand-check it — automatically."
                   className={cn(
                     "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
@@ -3390,6 +3884,7 @@ export function Studio() {
                 </Select>
               )}
 
+              <span data-tour="output" className="inline-flex">
               <Select
                 value={aspect}
                 onValueChange={(v) => setAspect(v as AspectRatio)}
@@ -3491,12 +3986,40 @@ export function Studio() {
               </SelectContent>
             </Select>
                   )}
+            </span>
           </div>
+
+          {/* Live estimate for the current settings, so cost is visible
+              before committing rather than discovered in the Usage report. */}
+          {estimatedCost != null && (
+            <span
+              data-tour="cost"
+              title={
+                mode === "t2i"
+                  ? `Estimate for ${numOutputs} image${numOutputs === 1 ? "" : "s"} at these settings`
+                  : `Estimate for a ${durationS}s clip at these settings`
+              }
+              className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
+            >
+              <span className="text-[10px] tracking-[0.14em] uppercase opacity-70">
+                Est.
+              </span>
+              <span className="font-medium text-foreground">
+                ${estimatedCost < 0.01 ? estimatedCost.toFixed(3) : estimatedCost.toFixed(2)}
+              </span>
+            </span>
+          )}
 
           <Button
             size="lg"
+            data-tour="generate"
             onClick={() => void onGenerate()}
-            disabled={generating || checkingModel}
+            disabled={generating || checkingModel || !activeClientId}
+            title={
+              !activeClientId
+                ? "Pick a client first — generations are always attributed to one"
+                : undefined
+            }
                   className={cn(
                     "h-10 rounded-full px-6 font-medium text-primary-foreground",
                     (generating || checkingModel) && "animate-gen-pulse"

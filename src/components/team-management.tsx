@@ -29,6 +29,42 @@ const ROLE_LABEL: Record<string, string> = {
   viewer: "Viewer",
 };
 
+/**
+ * Sessions are JWT-based, so there's no server-side session list to query.
+ * Recent sign-in activity is the honest proxy for "currently in the app".
+ */
+const ONLINE_WINDOW_MS = 15 * 60 * 1000;
+
+function lastSeen(iso: string | null): {
+  label: string;
+  online: boolean;
+  never: boolean;
+} {
+  if (!iso) return { label: "Never signed in", online: false, never: true };
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) {
+    return { label: "Unknown", online: false, never: true };
+  }
+  const diff = Date.now() - then;
+  if (diff < ONLINE_WINDOW_MS) return { label: "Active now", online: true, never: false };
+
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return { label: `${mins}m ago`, online: false, never: false };
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return { label: `${hours}h ago`, online: false, never: false };
+  const days = Math.floor(hours / 24);
+  if (days < 30) return { label: `${days}d ago`, online: false, never: false };
+  return {
+    label: new Date(iso).toLocaleDateString(undefined, {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    }),
+    online: false,
+    never: false,
+  };
+}
+
 function initials(name: string | null, email: string) {
   const src = (name || email).trim();
   const parts = src.split(/[\s@.]+/).filter(Boolean);
@@ -104,20 +140,22 @@ export function TeamManagement() {
       ) : (
         <div className="overflow-hidden rounded-2xl ring-1 ring-border">
           {/* header */}
-          <div className="hidden grid-cols-[1fr_9rem_9rem_6rem] gap-3 bg-secondary/60 px-4 py-2.5 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase sm:grid">
+          <div className="hidden grid-cols-[1fr_9rem_8rem_7rem_6rem] gap-3 bg-secondary/60 px-4 py-2.5 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase sm:grid">
             <span>Member</span>
             <span>Team</span>
             <span>Role</span>
+            <span>Last login</span>
             <span className="text-right">Access</span>
           </div>
           {users.map((u) => {
             const isMe = u.id === myId;
             const busy = busyId === u.id;
+            const seen = lastSeen(u.last_login_at);
             return (
               <div
                 key={u.id}
                 className={cn(
-                  "grid grid-cols-1 gap-3 border-t border-border bg-card px-4 py-3 sm:grid-cols-[1fr_9rem_9rem_6rem] sm:items-center",
+                  "grid grid-cols-1 gap-3 border-t border-border bg-card px-4 py-3 sm:grid-cols-[1fr_9rem_8rem_7rem_6rem] sm:items-center",
                   !u.active && "opacity-60"
                 )}
               >
@@ -192,6 +230,38 @@ export function TeamManagement() {
                     <SelectItem value="viewer">Viewer</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {/* last login */}
+                <div
+                  className="min-w-0"
+                  title={
+                    u.last_login_at
+                      ? new Date(u.last_login_at).toLocaleString()
+                      : "This member has never signed in"
+                  }
+                >
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 text-xs",
+                      seen.online
+                        ? "text-foreground"
+                        : seen.never
+                          ? "text-muted-foreground/70 italic"
+                          : "text-muted-foreground"
+                    )}
+                  >
+                    {!seen.never && (
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          seen.online ? "bg-emerald-400" : "bg-muted-foreground/40"
+                        )}
+                      />
+                    )}
+                    {seen.label}
+                  </span>
+                </div>
 
                 {/* access */}
                 <div className="flex sm:justify-end">

@@ -28,7 +28,10 @@ const googleEnabled =
 async function fetchGoogleDepartment(
   accessToken: string | undefined
 ): Promise<string | null> {
-  if (!accessToken) return null;
+  if (!accessToken) {
+    console.warn("[team-sync] no Google access token on the account");
+    return null;
+  }
   try {
     // DOMAIN_PROFILE pulls the Workspace directory (admin-set Department),
     // which the plain personal PROFILE source does not expose.
@@ -39,20 +42,49 @@ async function fetchGoogleDepartment(
         "&sources=READ_SOURCE_TYPE_DOMAIN_PROFILE",
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
-    if (!res.ok) return null;
+
+    // Previously this failed silently, so a disabled People API or a missing
+    // scope looked identical to "no department set". Log the real reason.
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(
+        `[team-sync] People API ${res.status} ${res.statusText}. ` +
+          `Check the People API is enabled in the Google Cloud project and ` +
+          `that the user.organization.read scope was granted. ` +
+          detail.slice(0, 400)
+      );
+      return null;
+    }
+
     const json = (await res.json()) as {
-      organizations?: { department?: string; name?: string }[];
+      organizations?: { department?: string; name?: string; title?: string }[];
     };
-    // Prefer an entry that actually carries a department.
     const orgs = json.organizations ?? [];
+    if (orgs.length === 0) {
+      console.warn(
+        "[team-sync] People API returned no organizations — the Workspace " +
+          "profile likely has no Department set for this user."
+      );
+      return null;
+    }
+
+    // Prefer an entry that actually carries a department.
     const withDept = orgs.find((o) => o.department?.trim());
-    return (
+    const team =
       withDept?.department?.trim() ||
       orgs[0]?.department?.trim() ||
       orgs[0]?.name?.trim() ||
-      null
-    );
-  } catch {
+      null;
+    if (!team) {
+      console.warn(
+        `[team-sync] organizations present but no department/name: ${JSON.stringify(
+          orgs
+        ).slice(0, 300)}`
+      );
+    }
+    return team;
+  } catch (err) {
+    console.error("[team-sync] People API request failed", err);
     return null;
   }
 }
@@ -68,10 +100,18 @@ export const authOptions: NextAuthOptions = {
             clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
             authorization: {
               params: {
-                // Read the member's org info (Department → team). Requires the
-                // People API enabled + the org scope granted on the Google app.
-                scope:
-                  "openid email profile https://www.googleapis.com/auth/directory.readonly",
+                // Department → team. `user.organization.read` is the scope
+                // that actually authorises `organizations` on people/me;
+                // `directory.readonly` only covers reading OTHER directory
+                // profiles, which is why the department never came through.
+                // Both are requested so either source can satisfy the read.
+                scope: [
+                  "openid",
+                  "email",
+                  "profile",
+                  "https://www.googleapis.com/auth/user.organization.read",
+                  "https://www.googleapis.com/auth/directory.readonly",
+                ].join(" "),
                 prompt: "consent",
                 access_type: "offline",
               },

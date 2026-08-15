@@ -17,21 +17,23 @@ export async function GET(req: NextRequest) {
     }
     const mineOnly = req.nextUrl.searchParams.get("createdBy") === "me";
 
-    const where: string[] = ["deleted_at is null"];
+    const where: string[] = ["g.deleted_at is null"];
     const values: unknown[] = [];
     if (projectId) {
       values.push(projectId);
-      where.push(`project_id = $${values.length}`);
+      where.push(`g.project_id = $${values.length}`);
     }
     if (mineOnly) {
       values.push(sessionUser.id);
-      where.push(`user_id = $${values.length}`);
+      where.push(`g.user_id = $${values.length}`);
     }
 
     const { rows } = await db().query(
-      `select * from generations
+      `select g.*, u.name as creator_name, u.email as creator_email
+       from generations g
+       left join public.users u on u.id = g.user_id
        ${where.length ? `where ${where.join(" and ")}` : ""}
-       order by is_favorite desc, created_at desc
+       order by g.is_favorite desc, g.created_at desc
        limit 120`,
       values
     );

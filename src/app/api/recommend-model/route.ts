@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth-session";
+import { requireCreator } from "@/lib/authz";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
 
 /** Selectable image models and what each is genuinely best at. */
@@ -32,10 +32,9 @@ type Body = { prompt?: string; current?: string };
 
 export async function POST(req: NextRequest) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Spends AI credits — viewers must not be able to trigger it.
+    const { response: authError } = await requireCreator();
+    if (authError) return authError;
     if (!openaiConfigured()) {
       return NextResponse.json({ differs: false });
     }

@@ -91,6 +91,8 @@ export type InsertGenerationInput = {
   userId: string | null;
   projectId: string | null;
   brandKitId: string | null;
+  /** Measured provider round-trip in ms, for "took Ns" in the detail panel. */
+  renderMs?: number | null;
 };
 
 /** Insert a completed `generations` row and return it. */
@@ -102,10 +104,10 @@ export async function insertGeneration(
        (mode, tier, model_endpoint, input_payload, final_prompt,
         negative_prompt, seed, reference_urls, status, output_url,
         fal_url, request_id, cost, aspect, duration_s, client_ready,
-        user_id, project_id, brand_kit_id, completed_at)
+        user_id, project_id, brand_kit_id, render_ms, completed_at)
      values
        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, now())
+        $16, $17, $18, $19, $20, now())
      returning *`,
     [
       input.mode,
@@ -127,6 +129,7 @@ export async function insertGeneration(
       input.userId,
       input.projectId,
       input.brandKitId,
+      input.renderMs ?? null,
     ]
   );
   return rows[0] as GenerationRecord;

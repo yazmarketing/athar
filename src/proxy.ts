@@ -2,7 +2,17 @@ import { getToken } from "next-auth/jwt";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export async function middleware(req: NextRequest) {
+/**
+ * First line of defence: redirect signed-out browsers to /login and reject
+ * unauthenticated API calls.
+ *
+ * This is an *optimistic* gate only. Next's own guidance is that proxy
+ * "should not be used as a full session management or authorization
+ * solution", so every page and route handler re-checks the session on the
+ * server as well. Never let this file be the only thing standing between a
+ * request and the app.
+ */
+export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (
@@ -21,7 +31,7 @@ export async function middleware(req: NextRequest) {
 
   const token = await getToken({
     req,
-    secret: process.env.AUTH_SECRET,
+    secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
   });
 
   if (!token) {

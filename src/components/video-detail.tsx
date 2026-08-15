@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   ArrowRightToLine,
   Clapperboard,
@@ -9,14 +9,10 @@ import {
   ExternalLink,
   Heart,
   Loader2,
-  MessageSquarePlus,
-  Send,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -26,14 +22,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { GenerationRecord, ProjectRecord } from "@/lib/types";
-
-type GenerationComment = {
-  id: string;
-  generation_id: string;
-  author: string;
-  body: string;
-  created_at: string;
-};
+import { friendlyModelName } from "@/config/models";
 
 type Props = {
   generation: GenerationRecord;
@@ -50,6 +39,16 @@ type Props = {
     projectId: string | null
   ) => Promise<void>;
 };
+
+/** "4.2s" / "1m 18s" — render time, omitted when it wasn't recorded. */
+function renderTime(ms: number | null | undefined): string | null {
+  if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
+  const secs = ms / 1000;
+  if (secs < 60) return `${secs < 10 ? secs.toFixed(1) : Math.round(secs)}s`;
+  const m = Math.floor(secs / 60);
+  const r = Math.round(secs % 60);
+  return r ? `${m}m ${r}s` : `${m}m`;
+}
 
 function timeAgo(iso: string) {
   const diff = Date.now() - new Date(iso).getTime();
@@ -71,18 +70,21 @@ export function VideoDetail({
   projects = [],
   onMoveToProject,
 }: Props) {
-  const [tab, setTab] = useState<"details" | "comments">("details");
   const [favorited, setFavorited] = useState(Boolean(g.is_favorite));
   const [busy, setBusy] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [movingProject, setMovingProject] = useState(false);
-  const [comments, setComments] = useState<GenerationComment[] | null>(null);
-  const [commentDraft, setCommentDraft] = useState("");
-  const [commentAuthor, setCommentAuthor] = useState("Studio");
-  const [commentBusy, setCommentBusy] = useState(false);
 
   const videoUrl = g.output_url ?? "";
-  const modelLabel = g.model_endpoint.replace(/^byteplus:|^fal:/, "");
+  const modelLabel = friendlyModelName(g.model_endpoint);
+  // Who ran it. Falls back to the email's local part when no name is stored.
+  const creatorLabel =
+    g.creator_name?.trim() || g.creator_email?.split("@")[0] || null;
+  const took = renderTime(g.render_ms);
+  const costLabel =
+    g.cost != null && Number(g.cost) > 0
+      ? `$${Number(g.cost).toFixed(3)}`
+      : null;
   const currentProject = projects.find((p) => p.id === g.project_id);
   const payload = g.input_payload as {
     source_generation_id?: string;
@@ -109,35 +111,7 @@ export function VideoDetail({
   if (prevKey !== genKey) {
     setPrevKey(genKey);
     setFavorited(Boolean(g.is_favorite));
-    if (!prevKey || prevKey.split(":")[0] !== g.id) {
-      setComments(null);
-      setCommentDraft("");
-      setTab("details");
-    }
   }
-
-  useEffect(() => {
-    if (tab !== "comments") return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/generations/${g.id}/comments`);
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Failed to load comments");
-        if (!cancelled) setComments(json.comments as GenerationComment[]);
-      } catch (err) {
-        if (!cancelled) {
-          setComments([]);
-          toast.error(
-            err instanceof Error ? err.message : "Failed to load comments"
-          );
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, g.id]);
 
   const toggleFavorite = async () => {
     if (busy) return;
@@ -214,31 +188,6 @@ export function VideoDetail({
     }
   };
 
-  const submitComment = async () => {
-    const text = commentDraft.trim();
-    if (!text || commentBusy) return;
-    setCommentBusy(true);
-    try {
-      const res = await fetch(`/api/generations/${g.id}/comments`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          body: text,
-          author: commentAuthor.trim() || "Studio",
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Could not add comment");
-      setComments((prev) => [...(prev ?? []), json.comment as GenerationComment]);
-      setCommentDraft("");
-      toast.success("Comment added");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Comment failed");
-    } finally {
-      setCommentBusy(false);
-    }
-  };
-
   return (
     // "dark" pins the player to dark styling even in the light theme —
     // the media viewer is designed as a dark overlay
@@ -271,30 +220,12 @@ export function VideoDetail({
 
       {/* Right panel */}
       <aside className="flex h-full w-full max-w-md shrink-0 flex-col border-l border-white/8 bg-[#141414]">
-        <div className="flex gap-1 border-b border-white/8 p-3">
-          {(["details", "comments"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                "flex-1 rounded-lg px-3 py-2 text-sm capitalize transition",
-                tab === t
-                  ? "bg-white/10 text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              {t}
-            </button>
-          ))}
+        <div className="border-b border-white/8 px-4 py-3">
+          <p className="text-sm font-medium text-foreground">Details</p>
         </div>
 
-        {tab === "details" ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
             <div className="mb-4 flex items-center gap-2">
-              <IconBtn label="Copy prompt" onClick={() => void copyPrompt()}>
-                <Copy className="size-4" />
-              </IconBtn>
               <IconBtn
                 label={favorited ? "Remove favorite" : "Favorite"}
                 onClick={() => void toggleFavorite()}
@@ -329,13 +260,45 @@ export function VideoDetail({
 
             <p className="text-xs text-muted-foreground">
               {timeAgo(g.created_at)}
+              {creatorLabel && (
+                <>
+                  {" · by "}
+                  <span className="text-foreground">{creatorLabel}</span>
+                </>
+              )}
+              {took && (
+                <>
+                  {" · took "}
+                  <span className="text-foreground">{took}</span>
+                </>
+              )}
+              {costLabel && (
+                <>
+                  {" · "}
+                  <span className="text-foreground">{costLabel}</span>
+                </>
+              )}
             </p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Saved in <span className="text-foreground">Library</span>
             </p>
 
             <section className="mt-5">
-              <h3 className="mb-2 text-sm font-medium">Prompt</h3>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-medium">Prompt</h3>
+                {/* Sits on the Prompt heading so it's unambiguous that this
+                    copies the prompt, not the clip or its URL. */}
+                <button
+                  type="button"
+                  onClick={() => void copyPrompt()}
+                  title="Copy prompt"
+                  aria-label="Copy prompt"
+                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition hover:bg-white/8 hover:text-foreground"
+                >
+                  <Copy className="size-3" />
+                  Copy
+                </button>
+              </div>
               <div className="max-h-36 overflow-y-auto rounded-xl bg-white/4 p-3 text-sm leading-relaxed text-foreground/90 ring-1 ring-white/6">
                 {g.final_prompt}
               </div>
@@ -513,94 +476,7 @@ export function VideoDetail({
                 <span className="text-black/50">→</span>
               </Button>
             </div>
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-              {comments === null ? (
-                <div className="flex items-center gap-2 py-10 text-xs text-muted-foreground">
-                  <Loader2 className="size-3.5 animate-spin" />
-                  Loading comments…
-                </div>
-              ) : comments.length === 0 ? (
-                <div className="rounded-2xl bg-white/4 px-4 py-8 text-center ring-1 ring-white/6">
-                  <MessageSquarePlus className="mx-auto mb-3 size-6 text-gold" />
-                  <p className="text-sm font-medium text-foreground">
-                    No comments yet
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Leave a note for the team — feedback, client direction, or
-                    what to try next.
-                  </p>
-                </div>
-              ) : (
-                comments.map((c) => (
-                  <article
-                    key={c.id}
-                    className="rounded-xl bg-white/4 px-3 py-2.5 ring-1 ring-white/6"
-                  >
-                    <div className="mb-1 flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-foreground">
-                        {c.author}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {timeAgo(c.created_at)}
-                      </span>
-                    </div>
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap text-foreground/90">
-                      {c.body}
-                    </p>
-                  </article>
-                ))
-              )}
-            </div>
-
-            <div className="border-t border-white/8 p-3">
-              <p className="mb-2 px-0.5 text-[11px] text-muted-foreground">
-                Team notes on this clip
-              </p>
-              <Input
-                value={commentAuthor}
-                onChange={(e) => setCommentAuthor(e.target.value)}
-                placeholder="Your name"
-                className="mb-2 h-9 border-white/8 bg-black/25 text-sm"
-              />
-              <div className="rounded-2xl bg-[#161616] p-2 ring-1 ring-white/8">
-                <Textarea
-                  value={commentDraft}
-                  onChange={(e) => setCommentDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                      e.preventDefault();
-                      void submitComment();
-                    }
-                  }}
-                  placeholder="Add a comment…"
-                  rows={3}
-                  className="field-sizing-fixed h-20 max-h-20 min-h-20 resize-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0"
-                />
-                <div className="mt-1 flex items-center justify-between px-1">
-                  <span className="text-[10px] text-muted-foreground">
-                    ⌘/Ctrl + Enter
-                  </span>
-                  <Button
-                    size="sm"
-                    className="h-8 gap-1.5 rounded-full"
-                    disabled={commentBusy || !commentDraft.trim()}
-                    onClick={() => void submitComment()}
-                  >
-                    {commentBusy ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Send className="size-3.5" />
-                    )}
-                    Add comment
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        </div>
       </aside>
     </div>
   );

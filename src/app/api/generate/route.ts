@@ -375,6 +375,10 @@ export async function POST(req: NextRequest) {
 
   for (let i = 0; i < numOutputs; i++) {
     const seed = baseSeed + i;
+    // Measure the provider round-trip so the detail panel can report how long
+    // the render actually took (completed_at - created_at is always ~0 here,
+    // since the row is only inserted once the render is already finished).
+    const renderStart = Date.now();
     let generated;
     try {
       if (useNano) {
@@ -427,10 +431,10 @@ export async function POST(req: NextRequest) {
            (mode, tier, model_endpoint, input_payload, final_prompt,
             negative_prompt, seed, reference_urls, status, output_url,
             fal_url, request_id, cost, aspect, duration_s, client_ready,
-            user_id, project_id, brand_kit_id, completed_at)
+            user_id, project_id, brand_kit_id, render_ms, completed_at)
          values
            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-            $16, $17, $18, $19, now())
+            $16, $17, $18, $19, $20, now())
          returning *`,
         [
           mode,
@@ -459,6 +463,7 @@ export async function POST(req: NextRequest) {
           sessionUser.id,
           projectId,
           brandKitId,
+          Date.now() - renderStart,
         ]
       );
       records.push(rows[0]);

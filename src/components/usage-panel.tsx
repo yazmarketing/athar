@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Download, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { friendlyModelName } from "@/config/models";
 
 type UsageRow = { label?: string; mode?: string; model_endpoint?: string; cost: number; count: number };
 type DayRow = { day: string; cost: number; count: number };
@@ -253,7 +254,7 @@ export function UsagePanel() {
         <BreakdownTable
           title="By model"
           rows={data.byModel.map((r) => ({
-            label: (r.model_endpoint ?? "").replace(/^byteplus:|^fal:/, ""),
+            label: friendlyModelName(r.model_endpoint),
             cost: r.cost,
             count: r.count,
           }))}

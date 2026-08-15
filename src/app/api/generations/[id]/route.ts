@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
+import { requireCreator } from "@/lib/authz";
 import { logAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { ensureFavoriteColumn } from "@/lib/generations-store";
@@ -106,10 +107,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Destructive — viewers are read-only.
+    const { user: sessionUser, response: authError } = await requireCreator();
+    if (authError) return authError;
 
     const { id } = await params;
     if (!isUuid(id)) {

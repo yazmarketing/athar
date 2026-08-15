@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
+import { requireCreator } from "@/lib/authz";
 import { arkGetVideoTask } from "@/lib/byteplus-server";
 import {
   ensureGenerationModes,
@@ -122,6 +123,11 @@ async function checkAndFinalize(job: GenerationJobRecord) {
       userId: job.user_id,
       projectId: job.project_id,
       brandKitId: job.brand_kit_id,
+      // Video renders are async, so the real elapsed time is from when the
+      // job was queued to now — not a single request round-trip.
+      renderMs: job.created_at
+        ? Date.now() - new Date(job.created_at).getTime()
+        : null,
     });
 
     return { job: await markJobCompleted(job.id, generation.id), generation };
@@ -173,10 +179,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
 /** Dismiss a finished job so it stops reappearing after refresh. */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Destructive — viewers are read-only.
+    const { response: authError } = await requireCreator();
+    if (authError) return authError;
 
     const { id } = await params;
     if (!UUID_RE.test(id)) {

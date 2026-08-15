@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getSessionUser } from "@/lib/auth-session";
 
 export const maxDuration = 60;
 
@@ -34,6 +35,12 @@ function isAllowedImageUrl(raw: string): boolean {
 /** Proxies a generation image so the browser can download/convert same-origin. */
 export async function GET(req: NextRequest) {
   try {
+    // Re-check on the server: proxy.ts is an optimistic gate, not authorization.
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const url = req.nextUrl.searchParams.get("url");
     if (!url || !isAllowedImageUrl(url)) {
       return NextResponse.json({ error: "Invalid image URL" }, { status: 400 });

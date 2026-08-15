@@ -343,3 +343,40 @@ export function estimateCost(
   if (model.unit === "image") return model.costPerUnit * n;
   return model.costPerUnit * (opts.durationS ?? model.maxDuration) * n;
 }
+
+/**
+ * Human-facing model name.
+ *
+ * Stored endpoints are provider slugs with vendor prefixes and build dates
+ * ("byteplus:dreamina-seedance-2-5-260628"), which mean nothing to the team.
+ * Known slugs map to the name the model is actually known by; anything new
+ * falls back to a tidied-up version rather than leaking the raw id.
+ */
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "seedream-4-0-250828": "Seedream 4.0",
+  "seedream-5-0-260128": "Seedream 5.0",
+  "dola-seedream-5-0-pro-260628": "Seedream 5.0 Pro",
+  "dreamina-seedance-2-0-mini-260615": "Seedance 2.0 Mini",
+  "dreamina-seedance-2-5-260628": "Seedance 2.5",
+  "gemini-2-5-flash-image": "Nano Banana",
+  "nano-banana": "Nano Banana",
+};
+
+export function friendlyModelName(endpoint: string | null | undefined): string {
+  if (!endpoint) return "—";
+  const slug = endpoint.replace(/^[a-z0-9_-]+:/i, "").trim();
+  if (MODEL_DISPLAY_NAMES[slug]) return MODEL_DISPLAY_NAMES[slug];
+
+  // Fallback: drop the vendor word and trailing build date, then turn the
+  // dashed version ("5-0-pro") back into something readable ("5.0 Pro").
+  const cleaned = slug
+    .replace(/^(dreamina|dola|byteplus|google|fal)-/i, "")
+    .replace(/-\d{6,}$/, "");
+
+  return cleaned
+    .replace(/(\d)-(\d)/g, "$1.$2")
+    .split("-")
+    .filter(Boolean)
+    .map((w) => (/^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(" ");
+}

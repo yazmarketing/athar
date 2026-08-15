@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionUser } from "@/lib/auth-session";
+import { requireCreator } from "@/lib/authz";
 import { getBrandKit } from "@/lib/brand-kits";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
@@ -43,10 +43,9 @@ function coerceShots(raw: unknown): Shot[] {
  */
 export async function POST(req: NextRequest) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Spends AI credits — viewers must not be able to trigger it.
+    const { response: authError } = await requireCreator();
+    if (authError) return authError;
 
     const body = (await req.json()) as Body;
     const brief = body.brief?.trim();

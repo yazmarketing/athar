@@ -175,6 +175,11 @@ export type GenerationRecord = {
   id: string;
   project_id: string | null;
   user_id: string | null;
+  /** Joined from users — who ran this generation. */
+  creator_name?: string | null;
+  creator_email?: string | null;
+  /** Measured render time in ms (null for rows created before this existed). */
+  render_ms?: number | null;
   mode: Capability;
   preset_id: string | null;
   brand_kit_id: string | null;

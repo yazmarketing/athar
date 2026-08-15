@@ -67,6 +67,34 @@ export async function createClient(
   return { ...rows[0], project_count: 0, brand_kit_count: 0 };
 }
 
+/**
+ * Rename a client. Names are case-insensitively unique, so a collision with a
+ * *different* client is reported as a conflict rather than silently merging.
+ */
+export async function renameClient(
+  id: string,
+  name: string
+): Promise<ClientRecord> {
+  await ensureClientsTable();
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Client name is required");
+  if (trimmed.length > 120) throw new Error("Client name is too long");
+
+  const clash = await db().query<{ id: string }>(
+    `select id from clients where lower(name) = lower($1) and id <> $2`,
+    [trimmed, id]
+  );
+  if (clash.rows[0]) throw new Error("Another client already uses that name");
+
+  const { rows } = await db().query<ClientRecord>(
+    `update clients set name = $2, updated_at = now()
+     where id = $1 returning *`,
+    [id, trimmed]
+  );
+  if (!rows[0]) throw new Error("Client not found");
+  return rows[0];
+}
+
 export async function clientExists(id: string): Promise<boolean> {
   await ensureClientsTable();
   const { rows } = await db().query(`select id from clients where id = $1`, [

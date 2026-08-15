@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
+import { requireCreator } from "@/lib/authz";
 import {
   addReferenceVersion,
   archiveReferenceAsset,
@@ -40,10 +41,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 /** Archive (soft-delete) a reference. */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Destructive — viewers are read-only.
+    const { response: authError } = await requireCreator();
+    if (authError) return authError;
     const { id } = await params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });

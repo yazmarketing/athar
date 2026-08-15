@@ -129,6 +129,10 @@ export function VariationsPanel({
       toast.error("Source image missing");
       return;
     }
+    // Clear first: without this the previous batch stays on screen for the
+    // whole run, the skeletons never show, and it reads as "stuck on the
+    // same images" even though a new batch is being generated.
+    setResults([]);
     try {
       const prompt: PromptInputs = {
         subject: [STRENGTH_COPY[strength].nudge, base.subject || source.final_prompt]
@@ -153,7 +157,17 @@ export function VariationsPanel({
             : undefined,
       });
       setResults(next);
-      if (next.length) toast.success(`${next.length} variations ready`);
+      if (next.length === 0) {
+        toast.error("No variations came back — try again");
+      } else if (next.length < count) {
+        // The API stops the batch on the first provider error and returns
+        // what it already has; say so rather than quietly showing fewer.
+        toast.warning(
+          `Only ${next.length} of ${count} variations came back — the rest failed`
+        );
+      } else {
+        toast.success(`${next.length} variations ready`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Variations failed");
     }

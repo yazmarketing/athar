@@ -17,6 +17,7 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -25,6 +26,10 @@ import type { BrandKitRecord } from "@/lib/types";
 
 export const ACTIVE_BRAND_KIT_STORAGE_KEY = "yaz-motion-active-brand-kit";
 
+/** Sentinels for the actions folded into the dropdown in compact mode. */
+const NEW = "__new__";
+const EDIT = "__edit__";
+
 type Props = {
   activeBrandKitId: string | null;
   onActiveBrandKitChange: (id: string | null) => void;
@@ -32,6 +37,8 @@ type Props = {
   onBrandKitsChange: (kits: BrandKitRecord[]) => void;
   /** Scope the list + new kits to this client (null = all clients). */
   clientId?: string | null;
+  /** Dock variant: a single pill sized for the generate bar's chip row. */
+  compact?: boolean;
   className?: string;
 };
 
@@ -41,6 +48,7 @@ export function BrandKitPicker({
   brandKits,
   onBrandKitsChange,
   clientId,
+  compact = false,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -149,65 +157,8 @@ export function BrandKitPicker({
     }
   }
 
-  return (
-    <div className={cn("space-y-2", className)}>
-      <div className="flex items-center justify-between">
-        <p className="text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-          Brand kit
-        </p>
-        <div className="flex items-center gap-0.5">
-          {activeKit && (
-            <button
-              type="button"
-              title="Edit brand kit"
-              aria-label="Edit brand kit"
-              onClick={openEdit}
-              className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
-            >
-              <SquarePen className="size-3.5" />
-            </button>
-          )}
-          <button
-            type="button"
-            title="New brand kit"
-            aria-label="New brand kit"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
-          >
-            <Plus className="size-3.5" />
-          </button>
-        </div>
-      </div>
-
-      <Select
-        value={activeBrandKitId ?? "none"}
-        onValueChange={(v) => onActiveBrandKitChange(v === "none" ? null : v)}
-      >
-        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
-          <div className="flex min-w-0 items-center gap-2">
-            <Palette className="size-3.5 shrink-0 text-muted-foreground" />
-            <SelectValue placeholder="No brand kit">
-              {activeKit ? activeKit.name : "No brand kit"}
-            </SelectValue>
-          </div>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="none">No brand kit</SelectItem>
-          {brandKits.map((k) => (
-            <SelectItem key={k.id} value={k.id}>
-              <span className="flex flex-col items-start gap-0.5 py-0.5">
-                <span>{k.name}</span>
-                {k.client && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {k.client}
-                  </span>
-                )}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
+  const dialogs = (
+    <>
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -312,6 +263,115 @@ export function BrandKitPicker({
           </form>
         </DialogContent>
       </Dialog>
+    </>
+  );
+
+  const handleValueChange = (v: string) => {
+    if (v === NEW) {
+      setCreateOpen(true);
+      return;
+    }
+    if (v === EDIT) {
+      openEdit();
+      return;
+    }
+    onActiveBrandKitChange(v === "none" ? null : v);
+  };
+
+  if (compact) {
+    return (
+      <>
+        <Select value={activeBrandKitId ?? "none"} onValueChange={handleValueChange}>
+          <SelectTrigger
+            aria-label="Brand kit"
+            className={cn(
+              "h-8 w-auto gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground",
+              activeKit && "border-gold/30 text-foreground",
+              className
+            )}
+          >
+            <Palette className="size-3.5 shrink-0" />
+            <SelectValue>{activeKit?.name ?? "No brand kit"}</SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">No brand kit</SelectItem>
+            {brandKits.map((k) => (
+              <SelectItem key={k.id} value={k.id}>
+                {k.name}
+              </SelectItem>
+            ))}
+            <SelectSeparator />
+            <SelectItem value={NEW}>＋ New brand kit…</SelectItem>
+            {activeKit && (
+              <SelectItem value={EDIT}>✎ Edit “{activeKit.name}”…</SelectItem>
+            )}
+          </SelectContent>
+        </Select>
+        {dialogs}
+      </>
+    );
+  }
+
+  return (
+    <div className={cn("space-y-2", className)}>
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+          Brand kit
+        </p>
+        <div className="flex items-center gap-0.5">
+          {activeKit && (
+            <button
+              type="button"
+              title="Edit brand kit"
+              aria-label="Edit brand kit"
+              onClick={openEdit}
+              className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+            >
+              <SquarePen className="size-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            title="New brand kit"
+            aria-label="New brand kit"
+            onClick={() => setCreateOpen(true)}
+            className="rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+      </div>
+
+      <Select
+        value={activeBrandKitId ?? "none"}
+        onValueChange={(v) => onActiveBrandKitChange(v === "none" ? null : v)}
+      >
+        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
+          <div className="flex min-w-0 items-center gap-2">
+            <Palette className="size-3.5 shrink-0 text-muted-foreground" />
+            <SelectValue placeholder="No brand kit">
+              {activeKit ? activeKit.name : "No brand kit"}
+            </SelectValue>
+          </div>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">No brand kit</SelectItem>
+          {brandKits.map((k) => (
+            <SelectItem key={k.id} value={k.id}>
+              <span className="flex flex-col items-start gap-0.5 py-0.5">
+                <span>{k.name}</span>
+                {k.client && (
+                  <span className="text-[10px] text-muted-foreground">
+                    {k.client}
+                  </span>
+                )}
+              </span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {dialogs}
     </div>
   );
 }

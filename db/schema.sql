@@ -44,18 +44,6 @@ create index if not exists generations_created_at_idx
 create index if not exists generations_status_idx
   on public.generations (status);
 
--- Team notes / feedback on a generation (detail panel Comments tab).
-create table if not exists public.generation_comments (
-  id uuid primary key default gen_random_uuid(),
-  generation_id uuid not null references public.generations (id) on delete cascade,
-  author text not null default 'Studio',
-  body text not null,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists generation_comments_generation_id_idx
-  on public.generation_comments (generation_id, created_at asc);
-
 -- Internal users (auth gate)
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
