@@ -99,31 +99,59 @@ export function Orchestrator({
   async function generateAll() {
     if (!shots?.length) return;
     setRunning(true);
-    // Sequential so cost + rate are predictable, and the story renders in order.
+
+    /**
+     * The first rendered shot becomes the key frame, and every later shot is
+     * generated against it as a visual reference. Describing the subject
+     * identically isn't enough on its own — the model still redraws the face
+     * and wardrobe each time. Anchoring to real pixels is what actually holds
+     * a person across frames.
+     *
+     * The first shot is rendered at hero tier: everything downstream inherits
+     * its look, so it's the one frame worth paying more for.
+     */
+    let keyFrameUrl: string | null = null;
+
+    // Sequential so cost + rate are predictable, the story renders in order,
+    // and the key frame exists before anything references it.
     for (const shot of shots) {
       if (!shot.prompt.trim()) continue;
       patchShot(shot.id, { status: "running", error: undefined });
       try {
+        // Snapshot the anchor before the request. Reading the mutable
+        // `keyFrameUrl` directly inside the body makes its narrowed type
+        // depend on the response it is later assigned from, which TypeScript
+        // (correctly) rejects as circular.
+        const anchor: string | null = keyFrameUrl;
+        const isKeyFrame = anchor === null;
         const res = await fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: "t2i",
-            tier: "standard",
+            tier: isKeyFrame ? "hero" : "standard",
             prompt: { subject: shot.prompt },
             aspect: shot.aspect,
             numOutputs: 1,
             resolution: "2K",
+            referenceUrls: anchor ? [anchor] : undefined,
             projectId: projectId ?? undefined,
             brandKitId: brandKitId ?? undefined,
           }),
         });
-        const json = await res.json();
+        // Annotated: without it the inferred type of `json` flows into
+        // `keyFrameUrl`, which the request body reads, making `res` depend on
+        // its own response.
+        const json: {
+          error?: string;
+          generation?: { output_url?: string | null };
+        } = await res.json();
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
-        patchShot(shot.id, {
-          status: "done",
-          url: json.generation?.output_url ?? null,
-        });
+        const url: string | null = json.generation?.output_url ?? null;
+        // Only promote a real URL — a failed key frame must not leave the
+        // rest of the campaign anchored to nothing.
+        if (!keyFrameUrl && url) keyFrameUrl = url;
+        patchShot(shot.id, { status: "done", url });
       } catch (err) {
         patchShot(shot.id, {
           status: "error",
