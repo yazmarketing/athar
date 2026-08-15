@@ -30,7 +30,8 @@ export type TourStep = {
 type Rect = { top: number; left: number; width: number; height: number };
 
 const PAD = 8;
-const TOOLTIP_W = 340;
+const TOOLTIP_W_MAX = 340;
+const TOOLTIP_MARGIN = 12;
 const TOOLTIP_GAP = 14;
 
 /**
@@ -166,6 +167,9 @@ export function OnboardingTour({
   const placement = step.placement ?? "right";
   const vw = window.innerWidth;
   const vh = window.innerHeight;
+  // Narrow screens get a card that fits with margins rather than one that
+  // runs off the edge.
+  const TOOLTIP_W = Math.min(TOOLTIP_W_MAX, vw - TOOLTIP_MARGIN * 2);
 
   let tipTop = 0;
   let tipLeft = 0;
@@ -242,10 +246,11 @@ export function OnboardingTour({
           anchors as intended. */}
       {rect && (
       <div
-        className="absolute w-[340px] rounded-2xl bg-[#161616] p-4 text-foreground shadow-2xl ring-1 ring-white/10 transition-all duration-300 ease-out"
+        className="absolute rounded-2xl bg-[#161616] p-4 text-foreground shadow-2xl ring-1 ring-white/10 transition-all duration-300 ease-out"
         style={{
           top: tipTop,
           left: tipLeft,
+          width: TOOLTIP_W,
           transform: anchorFromBottom ? "translateY(-100%)" : undefined,
         }}
         onClick={(e) => e.stopPropagation()}
@@ -276,7 +281,7 @@ export function OnboardingTour({
           <div className="flex flex-wrap items-center gap-1" aria-hidden>
             {visibleSteps.map((s, i) => (
               <span
-                key={s.target}
+                key={`${s.target}-${i}`}
                 className={cn(
                   "h-1.5 shrink-0 rounded-full transition-all",
                   i === index ? "w-4 bg-gold" : "w-1.5 bg-white/20"

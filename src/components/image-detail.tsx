@@ -409,7 +409,7 @@ export function ImageDetail({
   return (
     // "dark" pins the lightbox to dark styling even in the light theme —
     // the media viewer is designed as a dark overlay
-    <div className="dark fixed inset-0 z-50 flex bg-black/90 text-foreground backdrop-blur-sm">
+    <div className="dark fixed inset-0 z-50 flex flex-col overflow-y-auto bg-black/90 text-foreground backdrop-blur-sm md:flex-row md:overflow-hidden">
       <button
         type="button"
         aria-label="Close"
@@ -420,13 +420,13 @@ export function ImageDetail({
       </button>
 
       {/* Preview */}
-      <div className="relative flex min-w-0 flex-1 items-center justify-center p-6 md:p-10">
+      <div className="relative flex min-w-0 shrink-0 items-center justify-center p-4 md:flex-1 md:shrink md:p-10">
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={imageUrl}
             alt={g.final_prompt}
-            className="max-h-[85vh] max-w-full rounded-lg object-contain shadow-2xl"
+            className="max-h-[52vh] max-w-full rounded-lg object-contain shadow-2xl md:max-h-[85vh]"
           />
         ) : (
           <p className="text-sm text-muted-foreground">No image</p>
@@ -434,7 +434,7 @@ export function ImageDetail({
       </div>
 
       {/* Right panel */}
-      <aside className="flex h-full w-full max-w-md shrink-0 flex-col border-l border-white/8 bg-[#141414]">
+      <aside className="flex w-full shrink-0 flex-col border-white/8 bg-[#141414] md:h-full md:max-w-md md:border-l">
         <div className="border-b border-white/8 px-4 py-3">
           <p className="text-sm font-medium text-foreground">Details</p>
         </div>
@@ -567,7 +567,7 @@ export function ImageDetail({
                 <Chip>{modelLabel}</Chip>
                 <Chip className="capitalize">{g.tier}</Chip>
                 {g.seed != null && <Chip>seed {g.seed}</Chip>}
-                <Chip>${Number(g.cost).toFixed(3)}</Chip>
+                {SHOW_COST && <Chip>${Number(g.cost).toFixed(3)}</Chip>}
               </div>
               {onMoveToProject && (
                 <div className="mt-3">

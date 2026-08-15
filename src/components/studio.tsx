@@ -14,6 +14,7 @@ import {
   Heart,
   HelpCircle,
   Home,
+  Menu,
   ImageIcon,
   Images,
   Library,
@@ -253,6 +254,7 @@ export function Studio() {
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   /**
    * Onboarding walks the generate bar, and those controls only render on the
@@ -1640,7 +1642,10 @@ export function Studio() {
     <button
       type="button"
       data-tour={tourId}
-      onClick={onClick}
+      onClick={() => {
+        onClick();
+        setSidebarOpen(false);
+      }}
       className={cn(
         "flex w-full items-center gap-3 rounded-lg py-1.5 athar-nav transition",
         active
@@ -1862,8 +1867,24 @@ export function Studio() {
 
   return (
     <div className="relative flex h-dvh overflow-hidden bg-background text-foreground">
-      {/* Magnific-style sidebar */}
-      <aside className="relative z-10 flex h-full w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-5 pb-5">
+      {/* Dims the app while the mobile drawer is open. */}
+      {sidebarOpen && (
+        <button
+          type="button"
+          aria-label="Close menu"
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/60 md:hidden"
+        />
+      )}
+
+      {/* Sidebar: off-canvas drawer under md, static column from md up. */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex h-full w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-5 pb-5 transition-transform duration-200 ease-out",
+          "md:relative md:z-10 md:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+      >
         {/* Same lockup treatment as the login page: Athar, a hairline
             divider, then the "by YAZ Media" mark. */}
         <div className="flex items-center gap-2">
@@ -2174,6 +2195,15 @@ export function Studio() {
 
       {/* Main */}
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen(true)}
+          className="absolute top-4 left-4 z-40 inline-flex size-9 items-center justify-center rounded-lg bg-card text-muted-foreground ring-1 ring-border transition hover:text-foreground md:hidden"
+        >
+          <Menu className="size-4" />
+        </button>
         <div className="absolute top-5 right-6 z-40 sm:right-8">
           <span data-tour="notifications" className="inline-flex">
           <NotificationsBell
@@ -3620,7 +3650,10 @@ export function Studio() {
 
               {!generating && (
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap items-center gap-2">
+                {/* On a phone this row holds ~11 chips; wrapping turns the
+                    dock into a wall that covers the screen, so it scrolls
+                    sideways instead and only wraps once there's room. */}
+                <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 sm:[&>*]:shrink">
                   {/* Who the work is for, set right where it's used. Client is
                       required; project and brand kit are optional. */}
                   <span data-tour="client" className="inline-flex">
