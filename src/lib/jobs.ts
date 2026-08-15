@@ -138,7 +138,15 @@ export async function markJobFailed(
   return rows[0] ?? null;
 }
 
-/** Permanently dismiss a finished job (hidden from restore-on-refresh). */
+/**
+ * Cancel a job, or dismiss a finished one.
+ *
+ * This previously only accepted 'failed' and 'completed', which meant a
+ * queued or running render could not be stopped — the expensive case, and
+ * exactly the one worth stopping when something is kicked off by mistake.
+ * Cancelling a live job also stops the poller from turning it into a
+ * generation row when the provider eventually answers.
+ */
 export async function markJobCancelled(
   id: string
 ): Promise<GenerationJobRecord | null> {
@@ -146,7 +154,8 @@ export async function markJobCancelled(
     `update generation_jobs
      set status = 'cancelled', updated_at = now(),
          completed_at = coalesce(completed_at, now())
-     where id = $1 and status in ('failed', 'completed')
+     where id = $1
+       and status in ('queued', 'running', 'failed', 'completed')
      returning *`,
     [id]
   );
