@@ -80,25 +80,48 @@ export function OnboardingTour({
     if (!open) return;
     let raf = 0;
     let attempts = 0;
+    const timers: number[] = [];
+    // Retry on a timer, not rAF, so a throttled tab still converges.
+    const retry = () => {
+      attempts += 1;
+      timers.push(window.setTimeout(measure, 50));
+    };
 
-    // All DOM reads and the resulting setState happen inside rAF, after
-    // layout has settled — never synchronously in the effect body.
-    // When a step switches views the anchor won't exist on the first frame,
-    // so keep retrying briefly instead of giving up and showing nothing.
-    const schedule = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
+    // The DOM read and the resulting setState never run synchronously in the
+    // effect body — they go through rAF, or a timer when rAF is throttled.
+    //
+    // `measure` is deliberately callable without rAF: a hidden or background
+    // tab stops firing animation frames entirely, and a tour that only ever
+    // measured inside rAF would sit there showing a dimmed screen with no
+    // card on it. The settle timers below call this directly.
+    const measure = () => {
         const el = targetId
           ? document.querySelector(`[data-tour="${targetId}"]`)
           : null;
 
         if (!el) {
           if (attempts < 40) {
-            attempts += 1;
-            schedule();
+            retry();
             return;
           }
           setRect(null);
+          return;
+        }
+
+
+        const probe = el.getBoundingClientRect();
+        // An anchor can exist but sit off-screen — the mobile sidebar is
+        // translated out of view until its drawer opens. Highlighting that
+        // draws the spotlight at negative coordinates, so wait for it.
+        const offScreen =
+          probe.width === 0 ||
+          probe.height === 0 ||
+          probe.right <= 0 ||
+          probe.bottom <= 0 ||
+          probe.left >= window.innerWidth ||
+          probe.top >= window.innerHeight;
+        if (offScreen && attempts < 40) {
+          retry();
           return;
         }
 
@@ -111,14 +134,28 @@ export function OnboardingTour({
           width: r.width + PAD * 2,
           height: r.height + PAD * 2,
         });
-      });
+    };
+
+    const schedule = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
     };
 
     schedule();
+
+    // A step may animate the layout it points at — most notably the mobile
+    // sidebar drawer, which slides in over ~200ms. Measuring once lands
+    // mid-transition and the spotlight sits in the wrong place (or off
+    // screen entirely), so re-measure until things settle.
+    [80, 180, 300, 450, 650].forEach((ms) =>
+      timers.push(window.setTimeout(measure, ms))
+    );
+
     window.addEventListener("resize", schedule);
     window.addEventListener("scroll", schedule, true);
     return () => {
       cancelAnimationFrame(raf);
+      timers.forEach(window.clearTimeout);
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);
     };

@@ -316,14 +316,18 @@ export function Studio() {
     const toCreate = () => {
       setView("create");
       setMode("t2i");
+      // On mobile the drawer would sit on top of the dock being explained.
+      setSidebarOpen(false);
     };
+    /** Steps that point at the sidebar need it on-screen to be highlightable. */
+    const toSidebar = () => setSidebarOpen(true);
     const steps: TourStep[] = [
       {
         target: "new-generation",
         title: "Start a new generation",
         body: "This is the way in. The dropdown picks what you're making — Image for stills, Video for a clip, and the image-to-video and edit options for building on something you already have. Each one opens the same dock, tuned for that job.",
         placement: "right",
-        onEnter: toCreate,
+        onEnter: toSidebar,
       },
       {
         target: "prompt",
@@ -414,17 +418,21 @@ export function Studio() {
         title: "Search your back catalogue",
         body: "Searches across every generation's prompt, mode and model — so “camel dune” or “seedance” finds the shot you half-remember. Pair it with the filters beside it to narrow by client, project, type or favourites.",
         placement: "bottom",
-        onEnter: () => setView("library"),
+        onEnter: () => {
+          setView("library");
+          setSidebarOpen(false);
+        },
       },
       {
         target: "library",
         title: "Everything lands here",
         body: "The Library holds every generation. Favourite the keepers and filter to them, and open any image to upscale, cut the background, or download it.",
         placement: "right",
-        onEnter: () => setView("library"),
+        onEnter: toSidebar,
       },
       {
         target: "campaign",
+        onEnter: toSidebar,
         title: "A whole campaign at once",
         body: "Campaign takes one brief and fans it out into a full set of on-brand shots, instead of prompting them one at a time.",
         placement: "right",
@@ -434,6 +442,7 @@ export function Studio() {
     if (isManagement) {
       steps.push({
         target: "usage",
+        onEnter: toSidebar,
         title: "What it's costing",
         body: "Usage tracks spend by model, project and person, so you can see what a campaign actually cost to produce.",
         placement: "right",
@@ -442,6 +451,7 @@ export function Studio() {
 
     steps.push({
       target: "help",
+      onEnter: toSidebar,
       title: "That's it — go make something",
       body: "Replay this walkthrough any time from this button. It stays here even after you finish.",
       placement: "top",
