@@ -155,6 +155,8 @@ export function ImageDetail({
   onMoveToProject,
 }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [sharePending, setSharePending] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [favorited, setFavorited] = useState(Boolean(g.is_favorite));
@@ -189,8 +191,10 @@ export function ImageDetail({
   const creatorLabel =
     g.creator_name?.trim() || g.creator_email?.split("@")[0] || null;
   const took = renderTime(g.render_ms);
+  // Per-generation cost is hidden for now — flip to true to show it again.
+  const SHOW_COST = false;
   const costLabel =
-    g.cost != null && Number(g.cost) > 0
+    SHOW_COST && g.cost != null && Number(g.cost) > 0
       ? `$${Number(g.cost).toFixed(3)}`
       : null;
   const currentProject = projects.find((p) => p.id === g.project_id);
@@ -264,10 +268,11 @@ export function ImageDetail({
   };
 
   const copyUrl = async () => {
-    if (!imageUrl) return;
+    const link = await ensureShareLink();
+    if (!link) return;
     try {
-      await navigator.clipboard.writeText(imageUrl);
-      toast.success("Image URL copied");
+      await navigator.clipboard.writeText(link);
+      toast.success("Share link copied");
       setShareOpen(false);
     } catch {
       toast.error("Copy failed");
@@ -303,21 +308,65 @@ export function ImageDetail({
     }
   };
 
+  /**
+   * Mint (or reuse) the public share link. Shared links point at the app's
+   * /s/<token> page, never the raw Spaces URL — so the storage location isn't
+   * handed out, and the link can be revoked later.
+   */
+  const ensureShareLink = async (): Promise<string | null> => {
+    if (shareUrl) return shareUrl;
+    setSharePending(true);
+    try {
+      const res = await fetch(`/api/generations/${g.id}/share`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Could not create link");
+      const url = `${window.location.origin}/s/${json.token}`;
+      setShareUrl(url);
+      return url;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create link");
+      return null;
+    } finally {
+      setSharePending(false);
+    }
+  };
+
+  const revokeShareLink = async () => {
+    setSharePending(true);
+    try {
+      const res = await fetch(`/api/generations/${g.id}/share`, {
+        method: "DELETE",
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Revoke failed");
+      setShareUrl(null);
+      toast.success("Link revoked — it no longer opens");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Revoke failed");
+    } finally {
+      setSharePending(false);
+    }
+  };
+
   const openExternal = (url: string) => {
     window.open(url, "_blank", "noopener,noreferrer");
     setShareOpen(false);
   };
 
   const shareNative = async () => {
-    if (!imageUrl || !navigator.share) {
+    if (!navigator.share) {
       toast.message("Share unavailable");
       return;
     }
+    const link = await ensureShareLink();
+    if (!link) return;
     try {
       await navigator.share({
         title: "Athar generation",
         text: shareText,
-        url: imageUrl,
+        url: link,
       });
       setShareOpen(false);
     } catch (err) {
@@ -326,30 +375,34 @@ export function ImageDetail({
     }
   };
 
-  const shareEmail = () => {
-    if (!imageUrl) return;
+  const shareEmail = async () => {
+    const link = await ensureShareLink();
+    if (!link) return;
     const subject = encodeURIComponent("Athar image");
-    const body = encodeURIComponent(`${shareText}\n\n${imageUrl}`);
+    const body = encodeURIComponent(`${shareText}\n\n${link}`);
     openExternal(`mailto:?subject=${subject}&body=${body}`);
   };
 
-  const shareX = () => {
-    if (!imageUrl) return;
-    const text = encodeURIComponent(`${shareText}\n${imageUrl}`);
+  const shareX = async () => {
+    const link = await ensureShareLink();
+    if (!link) return;
+    const text = encodeURIComponent(`${shareText}\n${link}`);
     openExternal(`https://twitter.com/intent/tweet?text=${text}`);
   };
 
-  const shareLinkedIn = () => {
-    if (!imageUrl) return;
+  const shareLinkedIn = async () => {
+    const link = await ensureShareLink();
+    if (!link) return;
     openExternal(
-      `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(imageUrl)}`
+      `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(link)}`
     );
   };
 
-  const shareWhatsApp = () => {
-    if (!imageUrl) return;
+  const shareWhatsApp = async () => {
+    const link = await ensureShareLink();
+    if (!link) return;
     openExternal(
-      `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${imageUrl}`)}`
+      `https://wa.me/?text=${encodeURIComponent(`${shareText}\n${link}`)}`
     );
   };
 
@@ -665,9 +718,29 @@ export function ImageDetail({
           <DialogHeader>
             <DialogTitle>Share generation</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              Copy, download, or send this image
+              Creates a link on athar.yazmedia.com that anyone can open — no
+              sign-in needed. Revoke it any time.
             </DialogDescription>
           </DialogHeader>
+
+          {shareUrl && (
+            <div className="rounded-xl bg-white/4 px-3 py-2.5 ring-1 ring-white/8">
+              <p className="mb-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                Live link
+              </p>
+              <p className="truncate font-mono text-[11px] text-foreground/90">
+                {shareUrl}
+              </p>
+              <button
+                type="button"
+                disabled={sharePending}
+                onClick={() => void revokeShareLink()}
+                className="mt-2 text-[11px] text-muted-foreground underline-offset-2 transition hover:text-destructive hover:underline disabled:opacity-50"
+              >
+                Revoke this link
+              </button>
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <ShareOption

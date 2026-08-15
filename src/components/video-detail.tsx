@@ -81,8 +81,10 @@ export function VideoDetail({
   const creatorLabel =
     g.creator_name?.trim() || g.creator_email?.split("@")[0] || null;
   const took = renderTime(g.render_ms);
+  // Per-generation cost is hidden for now — flip to true to show it again.
+  const SHOW_COST = false;
   const costLabel =
-    g.cost != null && Number(g.cost) > 0
+    SHOW_COST && g.cost != null && Number(g.cost) > 0
       ? `$${Number(g.cost).toFixed(3)}`
       : null;
   const currentProject = projects.find((p) => p.id === g.project_id);

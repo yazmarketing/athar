@@ -15,6 +15,13 @@ import type { NextRequest } from "next/server";
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  // Public share links: /s/<token> and its /s/<token>/image stream. Matched
+  // on the exact token shape rather than a bare "/s/" prefix, so this can
+  // only ever expose a share page — nothing else can be reached through it.
+  if (/^\/s\/[A-Za-z0-9_-]{16,128}(\/image)?$/.test(pathname)) {
+    return NextResponse.next();
+  }
+
   if (
     pathname.startsWith("/api/auth") ||
     pathname === "/api/register" ||
