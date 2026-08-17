@@ -80,7 +80,15 @@ export const STYLE_PRESETS: StylePreset[] = [
   },
 ];
 
-export const DEFAULT_STYLE_ID = "photographic";
+/**
+ * Raw by default, for both image and video.
+ *
+ * A preset silently appends its own words to every prompt — "professional
+ * photography, photorealistic, sharp focus…" was landing on shots that never
+ * asked for it, fighting the brief and the brand kit. Nothing is added unless
+ * someone deliberately picks a look.
+ */
+export const DEFAULT_STYLE_ID = "raw";
 
 export function resolveStyle(id?: string | null): StylePreset {
   return (

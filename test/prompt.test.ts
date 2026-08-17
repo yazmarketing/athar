@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildPrompt } from "@/lib/prompt";
 
 describe("buildPrompt", () => {
-  it("joins all provided fragments in spec order (default Photographic look)", () => {
+  // The default look is now "raw", which contributes nothing — a preset only
+  // appends its words when someone deliberately picks one.
+  it("joins all provided fragments in spec order (raw default adds nothing)", () => {
     const { finalPrompt } = buildPrompt({
       subject: "an elderly Emirati woman",
       action: "smiling at the camera",
@@ -12,16 +14,24 @@ describe("buildPrompt", () => {
     });
     expect(finalPrompt).toBe(
       "an elderly Emirati woman, smiling at the camera, 85mm portrait lens, " +
-        "golden hour, bold black and white, " +
+        "golden hour, bold black and white"
+    );
+  });
+
+  it("appends the look only when a preset is chosen", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "an elderly Emirati woman",
+      styleId: "photographic",
+    });
+    expect(finalPrompt).toBe(
+      "an elderly Emirati woman, " +
         "professional photography, photorealistic, sharp focus, natural lighting, high detail"
     );
   });
 
   it("skips empty optional fragments", () => {
     const { finalPrompt } = buildPrompt({ subject: "a desert dune", action: "  " });
-    expect(finalPrompt.startsWith("a desert dune, professional photography")).toBe(
-      true
-    );
+    expect(finalPrompt).toBe("a desert dune");
     expect(finalPrompt).not.toContain(", ,");
   });
 
