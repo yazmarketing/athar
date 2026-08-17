@@ -31,7 +31,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import type { GenerationRecord, ProjectRecord, PromptInputs } from "@/lib/types";
+import type {
+  ClientRecord,
+  GenerationRecord,
+  ProjectRecord,
+  PromptInputs,
+} from "@/lib/types";
 import {
   Select,
   SelectContent,
@@ -70,6 +75,7 @@ type Props = {
   onRemoveBackground?: (g: GenerationRecord) => Promise<void>;
   onFavorite?: (g: GenerationRecord, isFavorite: boolean) => Promise<void>;
   projects?: ProjectRecord[];
+  clients?: ClientRecord[];
   onMoveToProject?: (
     g: GenerationRecord,
     projectId: string | null
@@ -155,6 +161,7 @@ export function ImageDetail({
   onRemoveBackground,
   onFavorite,
   projects = [],
+  clients = [],
   onMoveToProject,
 }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
@@ -230,6 +237,12 @@ export function ImageDetail({
       ? `$${Number(g.cost).toFixed(3)}`
       : null;
   const currentProject = projects.find((p) => p.id === g.project_id);
+  // A generation inherits its client through its project. Resolve by id and
+  // fall back to the project's older freeform label for pre-existing rows.
+  const currentClient =
+    clients.find((c) => c.id === currentProject?.client_id)?.name ??
+    currentProject?.client ??
+    null;
   const imageUrl = g.output_url ?? "";
   const shareText = g.final_prompt.slice(0, 180);
 
@@ -608,7 +621,15 @@ export function ImageDetail({
               </div>
               {onMoveToProject && (
                 <div className="mt-3">
-                  <p className="mb-1.5 text-xs text-muted-foreground">Project</p>
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    Project
+                    {currentClient && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="text-foreground">{currentClient}</span>
+                      </>
+                    )}
+                  </p>
                   <Select
                     value={g.project_id ?? "none"}
                     onValueChange={handleProjectChange}

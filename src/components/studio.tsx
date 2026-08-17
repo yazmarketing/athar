@@ -2341,6 +2341,7 @@ export function Studio() {
               );
             }}
             projects={projects}
+            clients={clients}
             onMoveToProject={moveToProject}
           />
         )}
@@ -2421,6 +2422,7 @@ export function Studio() {
               setDetailTarget(source);
             }}
             projects={projects}
+            clients={clients}
             onMoveToProject={moveToProject}
           />
         )}

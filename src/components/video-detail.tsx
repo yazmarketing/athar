@@ -21,7 +21,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import type { GenerationRecord, ProjectRecord } from "@/lib/types";
+import type {
+  ClientRecord,
+  GenerationRecord,
+  ProjectRecord,
+} from "@/lib/types";
 import { friendlyModelName } from "@/config/models";
 
 type Props = {
@@ -34,6 +38,7 @@ type Props = {
   /** Open the video generation this clip was edited/extended from */
   onOpenSourceVideo?: (generationId: string) => void;
   projects?: ProjectRecord[];
+  clients?: ClientRecord[];
   onMoveToProject?: (
     g: GenerationRecord,
     projectId: string | null
@@ -68,6 +73,7 @@ export function VideoDetail({
   onEditVideo,
   onOpenSourceVideo,
   projects = [],
+  clients = [],
   onMoveToProject,
 }: Props) {
   const [favorited, setFavorited] = useState(Boolean(g.is_favorite));
@@ -88,6 +94,12 @@ export function VideoDetail({
       ? `$${Number(g.cost).toFixed(3)}`
       : null;
   const currentProject = projects.find((p) => p.id === g.project_id);
+  // A generation inherits its client through its project. Resolve by id and
+  // fall back to the project's older freeform label for pre-existing rows.
+  const currentClient =
+    clients.find((c) => c.id === currentProject?.client_id)?.name ??
+    currentProject?.client ??
+    null;
   const payload = g.input_payload as {
     source_generation_id?: string;
     source_image_url?: string;
@@ -408,7 +420,15 @@ export function VideoDetail({
               </div>
               {onMoveToProject && (
                 <div className="mt-3">
-                  <p className="mb-1.5 text-xs text-muted-foreground">Project</p>
+                  <p className="mb-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    Project
+                    {currentClient && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="text-foreground">{currentClient}</span>
+                      </>
+                    )}
+                  </p>
                   <Select
                     value={g.project_id ?? "none"}
                     onValueChange={(v) => void handleProjectChange(v)}
