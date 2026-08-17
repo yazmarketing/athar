@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
-import { getProject, updateProject } from "@/lib/projects";
+import { logAudit } from "@/lib/audit";
+import {
+  deleteProjectIfEmpty,
+  getProject,
+  updateProject,
+} from "@/lib/projects";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -58,5 +63,37 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Update failed";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+/** Delete a project — only when it holds no live generations. */
+export async function DELETE(_req: NextRequest, { params }: Params) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const { id } = await params;
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
+    await deleteProjectIfEmpty(id);
+    await logAudit({
+      userId: sessionUser.id,
+      userEmail: sessionUser.email,
+      action: "project_delete",
+      subjectType: "project",
+      subjectId: id,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Delete failed";
+    const status = message.includes("still has")
+      ? 409
+      : message.includes("not found")
+        ? 404
+        : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }

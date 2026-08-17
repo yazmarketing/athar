@@ -13,8 +13,27 @@ import { resolveCamera } from "@/config/camera";
  * instead of a single hardcoded quality suffix.
  */
 
-const GLOBAL_NEGATIVE =
-  "watermark, text overlay, logo, low quality, blurry, distorted anatomy, oversaturated";
+/**
+ * Applied to every generation. Split because two of these actively fight the
+ * user: banning "logo" and "text overlay" while the prompt asks for a logo or
+ * lettering pulls the model both ways at once, and it resolves that by
+ * rendering a degraded, misspelled approximation.
+ */
+const BASE_NEGATIVE =
+  "low quality, blurry, distorted anatomy, oversaturated";
+
+/** Only safe to apply when the prompt is NOT asking for text or a logo. */
+const NO_TEXT_NEGATIVE = "watermark, text overlay, logo";
+
+/**
+ * Does the prompt deliberately want lettering? Covers logos, wordmarks,
+ * signage, and any quoted string (`the sign reads "OPEN"`).
+ */
+function wantsText(prompt: string): boolean {
+  return /\b(logo|wordmark|lettering|typograph|text|signage|sign|label|banner|billboard|branding|written|reads|says|caption|title|slogan|nameplate|engrav)/i.test(
+    prompt
+  ) || /["“”'']\s*\S/.test(prompt);
+}
 
 export function buildPrompt(inputs: PromptInputs): {
   finalPrompt: string;
@@ -39,8 +58,11 @@ export function buildPrompt(inputs: PromptInputs): {
     stylePositive || undefined,
   ].filter((p): p is string => Boolean(p));
 
+  // Decide against everything the user actually wrote, not just the subject.
+  const positiveText = parts.join(" ");
   const negativeParts = [
-    GLOBAL_NEGATIVE,
+    BASE_NEGATIVE,
+    wantsText(positiveText) ? undefined : NO_TEXT_NEGATIVE,
     styleNegative,
     inputs.negativeAdditions?.trim(),
   ].filter((p): p is string => Boolean(p));

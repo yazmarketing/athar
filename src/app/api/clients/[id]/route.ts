@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/auth-session";
-import { renameClient } from "@/lib/clients";
+import { deleteClientIfEmpty, renameClient } from "@/lib/clients";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -56,6 +56,38 @@ export async function PATCH(req: NextRequest, { params }: Params) {
         : message.includes("required") || message.includes("too long")
           ? 400
           : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+/** Delete — only when nothing depends on it. */
+export async function DELETE(_req: NextRequest, { params }: Params) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const { id } = await params;
+    if (!UUID_RE.test(id)) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
+    await deleteClientIfEmpty(id);
+    await logAudit({
+      userId: sessionUser.id,
+      userEmail: sessionUser.email,
+      action: "client_delete",
+      subjectType: "client",
+      subjectId: id,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Delete failed";
+    const status = message.includes("still has")
+      ? 409
+      : message.includes("not found")
+        ? 404
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }

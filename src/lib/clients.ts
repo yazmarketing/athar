@@ -95,6 +95,39 @@ export async function renameClient(
   return rows[0];
 }
 
+/**
+ * Delete a client, but only when nothing hangs off it. Refusing loudly beats
+ * cascading — a client with work under it is almost never meant to vanish.
+ */
+export async function deleteClientIfEmpty(id: string): Promise<void> {
+  await ensureClientsTable();
+  const { rows } = await db().query<{
+    projects: string;
+    brand_kits: string;
+    generations: string;
+  }>(
+    `select
+       (select count(*) from projects where client_id = $1 and archived_at is null) as projects,
+       (select count(*) from brand_kits where client_id = $1 and archived_at is null) as brand_kits,
+       (select count(*) from generations g
+          join projects p on p.id = g.project_id
+        where p.client_id = $1 and g.deleted_at is null) as generations`,
+    [id]
+  );
+  const c = rows[0];
+  const blockers = [
+    Number(c?.projects ?? 0) > 0 && `${c.projects} project(s)`,
+    Number(c?.brand_kits ?? 0) > 0 && `${c.brand_kits} brand kit(s)`,
+    Number(c?.generations ?? 0) > 0 && `${c.generations} generation(s)`,
+  ].filter(Boolean);
+  if (blockers.length > 0) {
+    throw new Error(`Client still has ${blockers.join(", ")} — empty it first`);
+  }
+
+  const { rowCount } = await db().query(`delete from clients where id = $1`, [id]);
+  if (!rowCount) throw new Error("Client not found");
+}
+
 export async function clientExists(id: string): Promise<boolean> {
   await ensureClientsTable();
   const { rows } = await db().query(`select id from clients where id = $1`, [

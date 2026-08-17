@@ -116,6 +116,22 @@ export async function updateProject(
   return rows[0] ?? null;
 }
 
+/** Delete a project only when it holds no live generations. */
+export async function deleteProjectIfEmpty(id: string): Promise<void> {
+  await ensureProjectsTable();
+  const { rows } = await db().query<{ n: string }>(
+    `select count(*) as n from generations
+     where project_id = $1 and deleted_at is null`,
+    [id]
+  );
+  const n = Number(rows[0]?.n ?? 0);
+  if (n > 0) {
+    throw new Error(`Project still has ${n} generation(s) — move or delete them first`);
+  }
+  const { rowCount } = await db().query(`delete from projects where id = $1`, [id]);
+  if (!rowCount) throw new Error("Project not found");
+}
+
 export async function projectExists(id: string): Promise<boolean> {
   await ensureProjectsTable();
   const { rows } = await db().query(`select id from projects where id = $1`, [
