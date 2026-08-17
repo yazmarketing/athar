@@ -537,6 +537,9 @@ export function Studio() {
     try {
       const params = new URLSearchParams();
       if (activeProjectId) params.set("projectId", activeProjectId);
+      // A generation's client comes through its project, so the server has to
+      // resolve it — filtering here would only ever see the rows it fetched.
+      if (activeClientId) params.set("clientId", activeClientId);
       if (ownerFilter === "mine") params.set("createdBy", "me");
       const qs = params.size ? `?${params.toString()}` : "";
       const res = await fetch(`/api/generations${qs}`);

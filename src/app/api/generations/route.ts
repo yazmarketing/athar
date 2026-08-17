@@ -15,6 +15,10 @@ export async function GET(req: NextRequest) {
     if (projectId && !UUID_RE.test(projectId)) {
       return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
     }
+    const clientId = req.nextUrl.searchParams.get("clientId");
+    if (clientId && !UUID_RE.test(clientId)) {
+      return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
+    }
     const mineOnly = req.nextUrl.searchParams.get("createdBy") === "me";
 
     const where: string[] = ["g.deleted_at is null"];
@@ -22,6 +26,14 @@ export async function GET(req: NextRequest) {
     if (projectId) {
       values.push(projectId);
       where.push(`g.project_id = $${values.length}`);
+    }
+    if (clientId) {
+      values.push(clientId);
+      // Generations have no client column — they inherit it from their
+      // project, so unfiled work is correctly excluded from a client view.
+      where.push(
+        `g.project_id in (select id from projects where client_id = $${values.length})`
+      );
     }
     if (mineOnly) {
       values.push(sessionUser.id);

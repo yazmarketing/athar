@@ -144,3 +144,25 @@ export async function updateBrandKit(
   );
   return rows[0] ?? null;
 }
+
+/**
+ * Delete a brand kit, unless generations were made with it — those rows
+ * reference it, and losing the kit would strip the record of how they were
+ * made. Archiving keeps that history intact.
+ */
+export async function deleteBrandKitIfUnused(id: string): Promise<void> {
+  await ensureBrandKitsTable();
+  const { rows } = await db().query<{ n: string }>(
+    `select count(*) as n from generations
+     where brand_kit_id = $1 and deleted_at is null`,
+    [id]
+  );
+  const n = Number(rows[0]?.n ?? 0);
+  if (n > 0) {
+    throw new Error(
+      `${n} generation(s) were made with this kit — archive it instead of deleting`
+    );
+  }
+  const { rowCount } = await db().query(`delete from brand_kits where id = $1`, [id]);
+  if (!rowCount) throw new Error("Brand kit not found");
+}

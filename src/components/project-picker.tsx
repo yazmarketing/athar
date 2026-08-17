@@ -55,7 +55,6 @@ export function ProjectPicker({
   const [createOpen, setCreateOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [name, setName] = useState("");
-  const [client, setClient] = useState("");
   const [creating, setCreating] = useState(false);
 
   const loadProjects = useCallback(async () => {
@@ -86,7 +85,6 @@ export function ProjectPicker({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim(),
-          client: client.trim() || undefined,
           clientId: clientId ?? undefined,
         }),
       });
@@ -97,7 +95,6 @@ export function ProjectPicker({
       onActiveProjectChange(project.id);
       setCreateOpen(false);
       setName("");
-      setClient("");
       toast.success(`Project “${project.name}” created`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Create failed");
@@ -142,14 +139,22 @@ export function ProjectPicker({
               required
               autoFocus
             />
-            <Input
-              placeholder="Client (optional)"
-              value={client}
-              onChange={(e) => setClient(e.target.value)}
-            />
+            <p className="rounded-lg bg-white/4 px-3 py-2 text-xs text-muted-foreground ring-1 ring-white/8">
+              {clientId ? (
+                <>
+                  Belongs to the selected client. Switch client in the bar
+                  below to file it elsewhere.
+                </>
+              ) : (
+                <>
+                  Pick a client first — projects always belong to one, so the
+                  Library can filter by it.
+                </>
+              )}
+            </p>
             <Button
               type="submit"
-              disabled={creating || !name.trim()}
+              disabled={creating || !name.trim() || !clientId}
               className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
             >
               {creating ? (

@@ -29,6 +29,7 @@ export const ACTIVE_BRAND_KIT_STORAGE_KEY = "yaz-motion-active-brand-kit";
 /** Sentinels for the actions folded into the dropdown in compact mode. */
 const NEW = "__new__";
 const EDIT = "__edit__";
+const DELETE = "__delete__";
 
 type Props = {
   activeBrandKitId: string | null;
@@ -266,6 +267,27 @@ export function BrandKitPicker({
     </>
   );
 
+  /** Only removes a kit nothing was generated with; the API enforces it. */
+  const onDelete = async () => {
+    if (!activeKit) return;
+    const ok = window.confirm(
+      `Delete “${activeKit.name}”? This only works if nothing used it.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/brand-kits/${activeKit.id}`, {
+        method: "DELETE",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Delete failed");
+      onBrandKitsChange(brandKits.filter((k) => k.id !== activeKit.id));
+      onActiveBrandKitChange(null);
+      toast.success(`Deleted “${activeKit.name}”`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
   const handleValueChange = (v: string) => {
     if (v === NEW) {
       setCreateOpen(true);
@@ -273,6 +295,10 @@ export function BrandKitPicker({
     }
     if (v === EDIT) {
       openEdit();
+      return;
+    }
+    if (v === DELETE) {
+      void onDelete();
       return;
     }
     onActiveBrandKitChange(v === "none" ? null : v);
@@ -304,6 +330,9 @@ export function BrandKitPicker({
             <SelectItem value={NEW}>＋ New brand kit…</SelectItem>
             {activeKit && (
               <SelectItem value={EDIT}>✎ Edit “{activeKit.name}”…</SelectItem>
+            )}
+            {activeKit && (
+              <SelectItem value={DELETE}>🗑 Delete “{activeKit.name}”…</SelectItem>
             )}
           </SelectContent>
         </Select>

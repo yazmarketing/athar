@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
-import { getBrandKit, updateBrandKit } from "@/lib/brand-kits";
+import {
+  deleteBrandKitIfUnused,
+  getBrandKit,
+  updateBrandKit,
+} from "@/lib/brand-kits";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -61,5 +65,26 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Update failed";
     return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+/** Delete a brand kit — only when nothing was generated with it. */
+export async function DELETE(_req: NextRequest, { params }: Params) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const { id } = await params;
+    await deleteBrandKitIfUnused(id);
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Delete failed";
+    const status = message.includes("generation(s)")
+      ? 409
+      : message.includes("not found")
+        ? 404
+        : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
