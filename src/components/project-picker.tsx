@@ -29,6 +29,7 @@ export const ACTIVE_PROJECT_STORAGE_KEY = "yaz-motion-active-project";
 /** Sentinels for the actions folded into the dropdown in compact mode. */
 const NEW = "__new__";
 const RENAME = "__rename__";
+const DELETE = "__delete__";
 
 type Props = {
   activeProjectId: string | null;
@@ -166,6 +167,28 @@ export function ProjectPicker({
     </>
   );
 
+  /**
+   * Only ever removes an empty project — the API refuses with 409 and explains
+   * what is still attached, which is surfaced verbatim.
+   */
+  const onDelete = async () => {
+    if (!activeProject) return;
+    const ok = window.confirm(
+      `Delete “${activeProject.name}”? This only works if it's empty.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/projects/${activeProject.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Delete failed");
+      onProjectsChange(projects.filter((x) => x.id !== activeProject.id));
+      onActiveProjectChange(null);
+      toast.success(`Deleted “${activeProject.name}”`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
   const handleValueChange = (v: string) => {
     if (v === NEW) {
       setCreateOpen(true);
@@ -173,6 +196,10 @@ export function ProjectPicker({
     }
     if (v === RENAME) {
       setRenameOpen(true);
+      return;
+    }
+    if (v === DELETE) {
+      void onDelete();
       return;
     }
     onActiveProjectChange(v === "all" ? null : v);
@@ -204,6 +231,9 @@ export function ProjectPicker({
             <SelectItem value={NEW}>＋ New project…</SelectItem>
             {activeProject && (
               <SelectItem value={RENAME}>✎ Rename “{activeProject.name}”…</SelectItem>
+            )}
+            {activeProject && (
+              <SelectItem value={DELETE}>🗑 Delete “{activeProject.name}”…</SelectItem>
             )}
           </SelectContent>
         </Select>

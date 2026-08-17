@@ -43,6 +43,9 @@ import { friendlyModelName } from "@/config/models";
 
 type DownloadFormat = "png" | "jpeg" | "webp";
 
+/** Sentinel for the "create one" row inside the project picker. */
+const NEW_PROJECT = "__new_project__";
+
 const DOWNLOAD_FORMATS: {
   id: DownloadFormat;
   label: string;
@@ -164,6 +167,35 @@ export function ImageDetail({
   const [movingProject, setMovingProject] = useState(false);
   const [removingBg, setRemovingBg] = useState(false);
   const [addingAsset, setAddingAsset] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+
+  /** Create a project and move this generation straight into it. */
+  async function createAndMove(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newProjectName.trim();
+    if (!name || creatingProject) return;
+    setCreatingProject(true);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const json: { error?: string; project?: { id: string } } =
+        await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Could not create project");
+      const id = json.project?.id;
+      if (id && onMoveToProject) await onMoveToProject(g, id);
+      setNewProjectOpen(false);
+      toast.success(`Moved to “${name}”`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not create project");
+    } finally {
+      setCreatingProject(false);
+    }
+  }
 
   async function addToAssetLibrary() {
     setAddingAsset(true);
@@ -202,6 +234,11 @@ export function ImageDetail({
   const shareText = g.final_prompt.slice(0, 180);
 
   async function handleProjectChange(value: string) {
+    if (value === NEW_PROJECT) {
+      setNewProjectName("");
+      setNewProjectOpen(true);
+      return;
+    }
     if (!onMoveToProject) return;
     setMovingProject(true);
     try {
@@ -592,6 +629,7 @@ export function ImageDetail({
                           {p.client ? ` · ${p.client}` : ""}
                         </SelectItem>
                       ))}
+                      <SelectItem value={NEW_PROJECT}>＋ New project…</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -712,6 +750,41 @@ export function ImageDetail({
             </div>
         </div>
       </aside>
+
+      <Dialog open={newProjectOpen} onOpenChange={setNewProjectOpen}>
+        <DialogContent className="z-[60] max-w-sm border-white/10 bg-[#161616] text-foreground ring-white/10">
+          <DialogHeader>
+            <DialogTitle>New project</DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              Creates the project and files this generation into it.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createAndMove} className="space-y-3">
+            <input
+              autoFocus
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="Project name"
+              maxLength={120}
+              className="w-full rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-sm outline-none focus:border-gold/40"
+            />
+            <Button
+              type="submit"
+              disabled={creatingProject || !newProjectName.trim()}
+              className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+            >
+              {creatingProject ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Creating…
+                </>
+              ) : (
+                "Create and move here"
+              )}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
         <DialogContent className="z-[60] max-w-sm border-white/10 bg-[#161616] text-foreground ring-white/10">

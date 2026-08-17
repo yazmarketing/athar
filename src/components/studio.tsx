@@ -254,6 +254,23 @@ export function Studio() {
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [refAdviceOpen, setRefAdviceOpen] = useState(false);
+  const [refAdviceDismissed, setRefAdviceDismissed] = useState(false);
+
+  /**
+   * True when the prompt names something the model can only approximate —
+   * a logo, wordmark or named person — and nothing has been attached to
+   * anchor it. Attaching the real artwork is the difference between the
+   * actual mark and a misspelled lookalike.
+   */
+  const needsReferenceAsset = () => {
+    if (mode !== "t2i") return false;
+    if (referenceUrls.length > 0) return false;
+    const text = `${subject} ${brandTokens}`.toLowerCase();
+    return /\b(logo|wordmark|brand ?mark|emblem|insignia|monogram|crest|badge|watermark)\b/.test(
+      text
+    );
+  };
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   /**
@@ -1290,6 +1307,13 @@ export function Studio() {
     // reporting) hangs off it, so nothing is generated unattributed.
     if (!activeClientId) {
       toast.error("Pick a client first — it's in the bar below");
+      return;
+    }
+    // Asking a diffusion model to draw a known logo or a specific person from
+    // words alone is where output silently goes wrong — it approximates the
+    // glyphs and misspells the name. Offer the reference route first, once.
+    if (needsReferenceAsset() && !refAdviceDismissed) {
+      setRefAdviceOpen(true);
       return;
     }
     if (!subject.trim()) {
@@ -3132,6 +3156,47 @@ export function Studio() {
             if (completed) toast.success("You're all set — welcome to Athar");
           }}
         />
+
+        {/* Offered before spending: attach the real artwork instead of
+            asking the model to redraw a logo from its name. */}
+        <Dialog open={refAdviceOpen} onOpenChange={setRefAdviceOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Attach the real artwork?</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              Your prompt asks for a{" "}
+              <span className="text-foreground">logo or brand mark</span>.
+              Image models don&apos;t typeset — they redraw letterforms from
+              memory, which is how a name comes back subtly misspelled.
+              Attaching the actual file and describing where it sits gives you
+              the real mark instead of a lookalike.
+            </p>
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  // Don't ask again this session — they've made the call.
+                  setRefAdviceDismissed(true);
+                  setRefAdviceOpen(false);
+                  void onGenerate();
+                }}
+              >
+                Generate anyway
+              </Button>
+              <Button
+                className="bg-gold text-primary-foreground hover:bg-gold/90"
+                onClick={() => {
+                  setRefAdviceOpen(false);
+                  refFileInput.current?.click();
+                }}
+              >
+                <Paperclip className="size-4" />
+                Attach artwork
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Bulk delete confirmation — admins only, Library select mode */}
         <Dialog

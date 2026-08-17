@@ -29,6 +29,7 @@ export const ACTIVE_CLIENT_STORAGE_KEY = "yaz-motion-active-client";
 /** Sentinels for the actions folded into the dropdown in compact mode. */
 const NEW = "__new__";
 const RENAME = "__rename__";
+const DELETE = "__delete__";
 
 type Props = {
   activeClientId: string | null;
@@ -101,6 +102,28 @@ export function ClientPicker({
     }
   }
 
+  /**
+   * Only ever removes an empty client — the API refuses with 409 and explains
+   * what is still attached, which is surfaced verbatim.
+   */
+  const onDelete = async () => {
+    if (!activeClient) return;
+    const ok = window.confirm(
+      `Delete “${activeClient.name}”? This only works if it's empty.`
+    );
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/clients/${activeClient.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Delete failed");
+      onClientsChange(clients.filter((x) => x.id !== activeClient.id));
+      onActiveClientChange(null);
+      toast.success(`Deleted “${activeClient.name}”`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Delete failed");
+    }
+  };
+
   const handleValueChange = (v: string) => {
     if (v === NEW) {
       setCreateOpen(true);
@@ -108,6 +131,10 @@ export function ClientPicker({
     }
     if (v === RENAME) {
       setRenameOpen(true);
+      return;
+    }
+    if (v === DELETE) {
+      void onDelete();
       return;
     }
     onActiveClientChange(v === "all" ? null : v);
@@ -201,6 +228,9 @@ export function ClientPicker({
             <SelectItem value={NEW}>＋ New client…</SelectItem>
             {activeClient && (
               <SelectItem value={RENAME}>✎ Rename “{activeClient.name}”…</SelectItem>
+            )}
+            {activeClient && (
+              <SelectItem value={DELETE}>🗑 Delete “{activeClient.name}”…</SelectItem>
             )}
           </SelectContent>
         </Select>
