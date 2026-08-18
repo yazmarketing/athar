@@ -24,7 +24,7 @@ Next.js 15 (App Router) · TypeScript · Tailwind v4 + shadcn/ui · DigitalOcean
    - `ARK_API_KEY` (server only, never reaches the browser)
    - `DATABASE_URL` (server only — DO Managed Postgres connection string)
    - `DO_SPACES_REGION`, `DO_SPACES_BUCKET`, `DO_SPACES_KEY`, `DO_SPACES_SECRET` (server only)
-   - `GEMINI_API_KEY` (server only, optional) — unlocks the Nano Banana and Nano Banana Pro entries in the image-model picker. Without it both are still listed but fail at generate time.
+   - `GEMINI_API_KEY` (server only) — one key serves both Nano Banana and Nano Banana Pro in the image-model picker. Without it both are still listed but fail at generate time.
 
 5. **Run**
 

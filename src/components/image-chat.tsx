@@ -41,7 +41,11 @@ import type {
 
 const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
 const RESOLUTIONS: ImageResolution[] = ["1K", "2K"];
-const MAX_EXTRA_REFS = 3;
+/**
+ * Attachments per message, on top of the image being edited. Six plus the
+ * base stays inside the eight references the edit request actually fuses.
+ */
+const MAX_EXTRA_REFS = 6;
 
 const TOOL_CHIPS = [
   {
