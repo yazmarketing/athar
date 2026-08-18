@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildPrompt } from "@/lib/prompt";
+import { DEFAULT_CAMERA_ID } from "@/config/camera";
 
 describe("buildPrompt", () => {
   // The default look is now "raw", which contributes nothing — a preset only
@@ -95,11 +96,18 @@ describe("buildPrompt", () => {
     expect(finalPrompt).toContain("orbit");
   });
 
-  it("locked-off camera adds no motion text", () => {
-    const withCam = buildPrompt({ subject: "x", cameraId: "locked" })
-      .finalPrompt;
+  it("raw camera adds no motion text, and is what you get by default", () => {
+    const raw = buildPrompt({ subject: "x", cameraId: "raw" }).finalPrompt;
     const noCam = buildPrompt({ subject: "x" }).finalPrompt;
-    expect(withCam).toBe(noCam);
+    expect(raw).toBe(noCam);
+    expect(DEFAULT_CAMERA_ID).toBe("raw");
+  });
+
+  it("locked-off pins the camera rather than staying silent", () => {
+    const locked = buildPrompt({ subject: "x", cameraId: "locked" })
+      .finalPrompt;
+    expect(locked).not.toBe(buildPrompt({ subject: "x" }).finalPrompt);
+    expect(locked).toMatch(/locked-off|no camera movement/i);
   });
 
   it("unknown styleId falls back to the default look", () => {

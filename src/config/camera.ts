@@ -4,8 +4,8 @@
  * Seedance responds well to explicit cinematography language, so each preset is
  * a tuned motion fragment appended to the video prompt — the same idea as
  * Higgsfield's camera presets ("Crash Zoom", "Orbit"), but as curated text the
- * model reliably reads. "Locked off" adds nothing (still frame / your own
- * direction in the prompt).
+ * model reliably reads. "Raw" adds nothing — the prompt (or the model) decides
+ * the camera.
  */
 
 export type CameraPreset = {
@@ -18,10 +18,18 @@ export type CameraPreset = {
 
 export const CAMERA_PRESETS: CameraPreset[] = [
   {
+    id: "raw",
+    label: "Raw (as prompted)",
+    description:
+      "No camera direction added — whatever the prompt says, or the model's own choice.",
+    fragment: "",
+  },
+  {
     id: "locked",
     label: "Locked off",
-    description: "No camera move — a still, tripod-locked frame.",
-    fragment: "",
+    description: "A deliberately static, tripod-locked frame.",
+    fragment:
+      "static locked-off tripod shot, fixed frame, no camera movement whatsoever",
   },
   {
     id: "push_in",
@@ -88,7 +96,13 @@ export const CAMERA_PRESETS: CameraPreset[] = [
   },
 ];
 
-export const DEFAULT_CAMERA_ID = "locked";
+/**
+ * Raw by default — the same rule as the style presets. A camera move is a
+ * creative decision to opt into, not something the studio should impose on
+ * every prompt. "Locked off" now genuinely pins the camera, so it can no
+ * longer double as the neutral choice.
+ */
+export const DEFAULT_CAMERA_ID = "raw";
 
 export function resolveCamera(id?: string | null): CameraPreset {
   return (
