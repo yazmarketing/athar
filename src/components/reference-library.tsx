@@ -34,6 +34,12 @@ const KIND_LABEL: Record<string, string> = Object.fromEntries(
   KINDS.map((k) => [k.value, k.label])
 );
 
+/** How many images one "Add references" batch can carry. */
+const MAX_BATCH = 12;
+
+/** An uploaded image waiting to be named and saved into the library. */
+type Draft = { id: string; url: string; name: string; kind: string };
+
 type Props = {
   /** Scope to a client (null = shared / all). */
   clientId?: string | null;
@@ -60,9 +66,7 @@ export function ReferenceLibrary({
   const [filter, setFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [uploading, setUploading] = useState(false);
-  const [draftUrl, setDraftUrl] = useState<string | null>(null);
-  const [draftName, setDraftName] = useState("");
-  const [draftKind, setDraftKind] = useState<string>("character");
+  const [drafts, setDrafts] = useState<Draft[]>([]);
   const [saving, setSaving] = useState(false);
   const [versioningId, setVersioningId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -91,56 +95,129 @@ export function ReferenceLibrary({
     void load();
   }, [load]);
 
-  async function onFile(files: FileList | null) {
-    const file = files?.[0];
-    if (!file) return;
-    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+  async function uploadOne(file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Upload failed");
+    return json.url as string;
+  }
+
+  // Take a whole batch at once — a character set, a product line, a logo
+  // pack — and stage each image as a draft to name before saving.
+  async function onFiles(files: FileList | null) {
+    const picked = Array.from(files ?? []);
+    if (!picked.length) return;
+    const images = picked.filter((f) => /^image\/(jpeg|png|webp)$/.test(f.type));
+    if (!images.length) {
       toast.error("Only JPEG, PNG, or WebP");
       return;
     }
+    if (images.length < picked.length) {
+      toast.error(
+        `Skipped ${picked.length - images.length} file(s) — only JPEG, PNG, or WebP`
+      );
+    }
+    const remaining = MAX_BATCH - drafts.length;
+    if (remaining <= 0) {
+      toast.error(`Up to ${MAX_BATCH} references at a time`);
+      return;
+    }
+    const batch = images.slice(0, remaining);
+    if (batch.length < images.length) {
+      toast.error(`Only the first ${batch.length} added — ${MAX_BATCH} at a time`);
+    }
     setUploading(true);
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: form });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Upload failed");
-      setDraftUrl(json.url as string);
-      setDraftName(file.name.replace(/\.[^.]+$/, "").slice(0, 60));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      const results = await Promise.all(
+        batch.map(async (file) => {
+          try {
+            const url = await uploadOne(file);
+            return { file, url, error: null as string | null };
+          } catch (err) {
+            return {
+              file,
+              url: null as string | null,
+              error: err instanceof Error ? err.message : "Upload failed",
+            };
+          }
+        })
+      );
+      const added = results
+        .filter((r) => r.url)
+        .map((r, i) => ({
+          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+          url: r.url as string,
+          name: r.file.name.replace(/\.[^.]+$/, "").slice(0, 60),
+          kind: drafts[drafts.length - 1]?.kind ?? "character",
+        }));
+      if (added.length) setDrafts((prev) => [...prev, ...added]);
+      const failed = results.filter((r) => !r.url);
+      if (failed.length) {
+        toast.error(
+          failed.length === 1
+            ? `${failed[0].file.name}: ${failed[0].error}`
+            : `${failed.length} images failed to upload`
+        );
+      }
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = "";
     }
   }
 
-  async function saveDraft(e: React.FormEvent) {
+  function patchDraft(id: string, patch: Partial<Draft>) {
+    setDrafts((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, ...patch } : d))
+    );
+  }
+
+  async function saveDrafts(e: React.FormEvent) {
     e.preventDefault();
-    if (!draftUrl || !draftName.trim()) return;
+    if (!drafts.length || drafts.some((d) => !d.name.trim())) return;
     setSaving(true);
-    try {
-      const res = await fetch("/api/reference-assets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: draftName.trim(),
-          url: draftUrl,
-          kind: draftKind,
-          clientId: clientId ?? null,
-        }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
-      toast.success(`Saved “${json.reference.name}”`);
-      setDraftUrl(null);
-      setDraftName("");
-      void load();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setSaving(false);
+    const failed: string[] = [];
+    let savedCount = 0;
+    let lastName = "";
+    for (const draft of drafts) {
+      try {
+        const res = await fetch("/api/reference-assets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: draft.name.trim(),
+            url: draft.url,
+            kind: draft.kind,
+            clientId: clientId ?? null,
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error);
+        savedCount += 1;
+        lastName = json.reference.name as string;
+      } catch {
+        failed.push(draft.id);
+      }
     }
+    // Keep whatever failed on screen so it can be retried without re-uploading.
+    setDrafts((prev) => prev.filter((d) => failed.includes(d.id)));
+    if (savedCount) {
+      toast.success(
+        savedCount === 1
+          ? `Saved “${lastName}”`
+          : `Saved ${savedCount} references`
+      );
+      void load();
+    }
+    if (failed.length) {
+      toast.error(
+        failed.length === 1
+          ? "1 reference failed to save"
+          : `${failed.length} references failed to save`
+      );
+    }
+    setSaving(false);
   }
 
   async function archive(id: string) {
@@ -214,9 +291,10 @@ export function ReferenceLibrary({
       <input
         ref={fileInput}
         type="file"
+        multiple
         accept="image/jpeg,image/png,image/webp"
         className="hidden"
-        onChange={(e) => onFile(e.target.files)}
+        onChange={(e) => onFiles(e.target.files)}
       />
       <input
         ref={versionInput}
@@ -269,59 +347,109 @@ export function ReferenceLibrary({
           ) : (
             <Plus className="size-3.5" />
           )}
-          Add reference
+          Add references
         </Button>
       </div>
 
-      {/* draft save bar (after an upload) */}
-      {draftUrl && (
+      {/* draft bar (after an upload) — one row per staged image */}
+      {drafts.length > 0 && (
         <form
-          onSubmit={saveDraft}
-          className="flex flex-wrap items-center gap-2 rounded-xl border border-gold/30 bg-gold-soft/50 p-2.5"
+          onSubmit={saveDrafts}
+          className="flex flex-col gap-2 rounded-xl border border-gold/30 bg-gold-soft/50 p-2.5"
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={draftUrl}
-            alt=""
-            className="size-12 shrink-0 rounded-lg object-cover ring-1 ring-white/10"
-          />
-          <Input
-            autoFocus
-            placeholder="Name — e.g. Layla, Gold Tin"
-            value={draftName}
-            onChange={(e) => setDraftName(e.target.value)}
-            className="h-9 min-w-[10rem] flex-1 bg-card text-sm"
-          />
-          <Select value={draftKind} onValueChange={setDraftKind}>
-            <SelectTrigger className="h-9 w-auto min-w-[7rem] bg-card text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {KINDS.map((k) => (
-                <SelectItem key={k.value} value={k.value}>
-                  {k.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={saving || !draftName.trim()}
-            className="h-9 rounded-full bg-gold px-4 text-xs text-primary-foreground"
-          >
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : "Save"}
-          </Button>
-          <button
-            type="button"
-            onClick={() => {
-              setDraftUrl(null);
-              setDraftName("");
-            }}
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            Cancel
-          </button>
+          {drafts.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 px-0.5">
+              <p className="text-xs text-muted-foreground">
+                {drafts.length} images ready — name each one
+              </p>
+              <div className="flex-1" />
+              <Select
+                value="__set_all"
+                onValueChange={(kind) =>
+                  setDrafts((prev) => prev.map((d) => ({ ...d, kind })))
+                }
+              >
+                <SelectTrigger className="h-8 w-auto min-w-[8rem] bg-card text-xs">
+                  <span className="text-muted-foreground">Set all types…</span>
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map((k) => (
+                    <SelectItem key={k.value} value={k.value}>
+                      {k.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {drafts.map((d) => (
+            <div key={d.id} className="flex flex-wrap items-center gap-2">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={d.url}
+                alt=""
+                className="size-12 shrink-0 rounded-lg object-cover ring-1 ring-white/10"
+              />
+              <Input
+                autoFocus={drafts.length === 1}
+                placeholder="Name — e.g. Layla, Gold Tin"
+                value={d.name}
+                onChange={(e) => patchDraft(d.id, { name: e.target.value })}
+                className="h-9 min-w-[10rem] flex-1 bg-card text-sm"
+              />
+              <Select
+                value={d.kind}
+                onValueChange={(kind) => patchDraft(d.id, { kind })}
+              >
+                <SelectTrigger className="h-9 w-auto min-w-[7rem] bg-card text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KINDS.map((k) => (
+                    <SelectItem key={k.value} value={k.value}>
+                      {k.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <button
+                type="button"
+                aria-label="Discard this image"
+                title="Discard"
+                onClick={() =>
+                  setDrafts((prev) => prev.filter((x) => x.id !== d.id))
+                }
+                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition hover:text-foreground"
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </div>
+          ))}
+
+          <div className="flex items-center justify-end gap-3 px-0.5">
+            <button
+              type="button"
+              onClick={() => setDrafts([])}
+              className="text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={saving || drafts.some((d) => !d.name.trim())}
+              className="h-9 rounded-full bg-gold px-4 text-xs text-primary-foreground"
+            >
+              {saving ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : drafts.length === 1 ? (
+                "Save"
+              ) : (
+                `Save ${drafts.length}`
+              )}
+            </Button>
+          </div>
         </form>
       )}
 
@@ -334,7 +462,7 @@ export function ReferenceLibrary({
         <div className="rounded-2xl border border-dashed border-border px-6 py-12 text-center text-sm text-muted-foreground">
           No saved references yet
           {clientId ? " for this client" : ""}. Use{" "}
-          <span className="text-foreground">Add reference</span> to build a
+          <span className="text-foreground">Add references</span> to build a
           reusable set — the same face, product or logo, picked into any
           generation.
         </div>
