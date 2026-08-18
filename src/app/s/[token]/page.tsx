@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { AtharLogo } from "@/components/athar-logo";
+import { YazMediaLogo } from "@/components/yaz-media-logo";
 import { friendlyModelName } from "@/config/models";
 import { resolveShareContext, type ShareContext } from "@/lib/shares";
 import type { GenerationRecord } from "@/lib/types";
@@ -101,9 +102,12 @@ export default async function SharePage({ params }: Props) {
           href="https://yazmedia.com"
           target="_blank"
           rel="noreferrer"
-          className="text-[10px] tracking-[0.2em] text-muted-foreground uppercase transition hover:text-foreground"
+          className="flex items-center gap-2 opacity-70 transition hover:opacity-100"
         >
-          by YAZ Media
+          <span className="text-[10px] tracking-[0.2em] text-muted-foreground uppercase">
+            by
+          </span>
+          <YazMediaLogo height={22} />
         </a>
       </header>
 

@@ -11,7 +11,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { cn } from "@/lib/utils";
+import { cn, postJson } from "@/lib/utils";
+import { UPSCALE_MODELS } from "@/config/models";
 import type { GenerationRecord } from "@/lib/types";
 
 type Props = {
@@ -26,12 +27,16 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
   const [mode, setMode] = useState<"creative" | "precision">("creative");
   const [scale, setScale] = useState<2 | 4>(2);
   const [busy, setBusy] = useState(false);
+  // Second click confirms the spend. Any settings change disarms it, so the
+  // price on the button is always the price of what's about to run.
+  const [armed, setArmed] = useState(false);
   const [progress, setProgress] = useState<{ done: number; failed: number }>({
     done: 0,
     failed: 0,
   });
 
   const isBatch = sources.length > 1;
+  const cost = UPSCALE_MODELS[mode].costPerUnit * sources.length;
 
   const run = async () => {
     if (busy || sources.length === 0) return;
@@ -42,16 +47,11 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
     // Sequential on purpose — keeps provider load and cost predictable
     for (const source of sources) {
       try {
-        const res = await fetch("/api/upscale", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            generationId: source.id,
-            mode,
-            scale,
-          }),
+        const { res, json } = await postJson("/api/upscale", {
+          generationId: source.id,
+          mode,
+          scale,
         });
-        const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? "Upscale failed");
         results.push(json.generation as GenerationRecord);
       } catch (err) {
@@ -64,6 +64,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
     }
 
     setBusy(false);
+    setArmed(false);
     if (results.length > 0) {
       toast.success(
         isBatch
@@ -80,7 +81,14 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (busy) return;
+        if (!o) setArmed(false);
+        onOpenChange(o);
+      }}
+    >
       <DialogContent className="z-[60] w-[min(28rem,calc(100vw-2rem))] max-w-md min-w-0 overflow-hidden border-white/10 bg-[#161616] text-foreground ring-white/10 sm:max-w-md">
         <DialogHeader className="min-w-0 pr-8">
           <DialogTitle className="flex min-w-0 items-center gap-2">
@@ -141,7 +149,10 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => setMode(m.id)}
+                  onClick={() => {
+                    setMode(m.id);
+                    setArmed(false);
+                  }}
                   className={cn(
                     "min-w-0 rounded-xl border px-3 py-2.5 text-left transition",
                     mode === m.id
@@ -167,7 +178,10 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
                 <button
                   key={s}
                   type="button"
-                  onClick={() => setScale(s)}
+                  onClick={() => {
+                    setScale(s);
+                    setArmed(false);
+                  }}
                   className={cn(
                     "min-w-0 rounded-xl border px-3 py-2 text-sm transition",
                     scale === s
@@ -182,24 +196,46 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
           </div>
         </div>
 
-        <Button
-          className="h-11 w-full min-w-0 whitespace-normal rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
-          disabled={busy}
-          onClick={() => void run()}
-        >
-          {busy ? (
-            <>
-              <Loader2 className="size-4 animate-spin" />
-              {isBatch
-                ? `Upscaling ${progress.done + progress.failed + 1}/${sources.length}…`
-                : "Upscaling — usually under a minute…"}
-            </>
-          ) : isBatch ? (
-            `Upscale ${sources.length} images ${scale}×`
-          ) : (
-            `Upscale ${scale}×`
+        {armed && !busy && (
+          <p className="rounded-lg bg-gold-soft/50 px-3 py-2 text-xs text-muted-foreground">
+            This runs {isBatch ? `${sources.length} renders` : "a render"} and
+            costs about{" "}
+            <span className="text-foreground">${cost.toFixed(2)}</span>. Each
+            result is a new Library entry — the originals stay as they are.
+          </p>
+        )}
+
+        <div className="flex min-w-0 gap-2">
+          {armed && !busy && (
+            <Button
+              variant="outline"
+              className="h-11 rounded-xl border-white/10 bg-transparent"
+              onClick={() => setArmed(false)}
+            >
+              Cancel
+            </Button>
           )}
-        </Button>
+          <Button
+            className="h-11 min-w-0 flex-1 whitespace-normal rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
+            disabled={busy}
+            onClick={() => (armed ? void run() : setArmed(true))}
+          >
+            {busy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {isBatch
+                  ? `Upscaling ${progress.done + progress.failed + 1}/${sources.length}…`
+                  : "Upscaling — usually under a minute…"}
+              </>
+            ) : armed ? (
+              `Confirm — spend ~$${cost.toFixed(2)}`
+            ) : isBatch ? (
+              `Upscale ${sources.length} images ${scale}×`
+            ) : (
+              `Upscale ${scale}×`
+            )}
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

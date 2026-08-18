@@ -46,3 +46,38 @@ function gatewayMessage(status: number, body: string): string {
       }`;
   }
 }
+
+/**
+ * POST JSON and read a JSON reply, with failures that name themselves.
+ *
+ * A render that outruns the gateway doesn't answer with an error — the
+ * connection is cut, and `fetch` rejects with a bare "Failed to fetch". That
+ * says nothing about what happened or whether the work was wasted, so it is
+ * translated here.
+ */
+export async function postJson<T = JsonBody>(
+  url: string,
+  body: unknown
+): Promise<{ res: Response; json: T }> {
+  const res = await postFetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { res, json: await readJson<T>(res) };
+}
+
+/** `fetch`, with a dropped connection reported as what it is. */
+export async function postFetch(
+  url: string,
+  init: RequestInit
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new Error(
+      "The connection dropped before the render finished. It may still have " +
+        "completed — check the Library before running it again."
+    );
+  }
+}

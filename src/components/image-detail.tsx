@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -41,7 +42,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { friendlyModelName } from "@/config/models";
+import {
+  friendlyModelName,
+  BACKGROUND_REMOVE_MODEL,
+} from "@/config/models";
 
 type DownloadFormat = "png" | "jpeg" | "webp";
 
@@ -210,7 +214,7 @@ export function ImageDetail({
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Asset upload failed");
       toast.success(
-        "Added to BytePlus asset library — usable in videos once it's Active (a few minutes)"
+        "Registered as a video character — usable in videos once it's Active (a few minutes)"
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Asset upload failed");
@@ -218,6 +222,7 @@ export function ImageDetail({
       setAddingAsset(false);
     }
   }
+  const [confirmBgOpen, setConfirmBgOpen] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement>(null);
   const inputs = promptInputs(g);
   const modelLabel = friendlyModelName(g.model_endpoint);
@@ -602,14 +607,7 @@ export function ImageDetail({
                   variant="outline"
                   className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
                   disabled={removingBg}
-                  onClick={async () => {
-                    setRemovingBg(true);
-                    try {
-                      await onRemoveBackground(g);
-                    } finally {
-                      setRemovingBg(false);
-                    }
-                  }}
+                  onClick={() => setConfirmBgOpen(true)}
                 >
                   {removingBg ? (
                     <Loader2 className="size-4 animate-spin" />
@@ -621,6 +619,7 @@ export function ImageDetail({
               )}
               <Button
                 variant="outline"
+                title="Registers this face or product with BytePlus so video can hold the same identity across shots. Separate from the Library, which already has every generation."
                 className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
                 disabled={addingAsset}
                 onClick={() => void addToAssetLibrary()}
@@ -630,7 +629,7 @@ export function ImageDetail({
                 ) : (
                   <ShieldCheck className="size-4" />
                 )}
-                Add to asset library
+                Register as video character
               </Button>
               <Button
                 variant="outline"
@@ -710,6 +709,25 @@ export function ImageDetail({
           />
         ))}
       />
+
+      {onRemoveBackground && (
+        <ConfirmDialog
+          open={confirmBgOpen}
+          onOpenChange={setConfirmBgOpen}
+          title="Remove the background?"
+          description="Re-renders this image with the subject cut out onto plain white."
+          cost={BACKGROUND_REMOVE_MODEL.costPerUnit}
+          confirmLabel="Remove background"
+          onConfirm={async () => {
+            setRemovingBg(true);
+            try {
+              await onRemoveBackground(g);
+            } finally {
+              setRemovingBg(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }

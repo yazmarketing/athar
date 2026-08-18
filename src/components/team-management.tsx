@@ -125,8 +125,9 @@ export function TeamManagement() {
     <div className="mx-auto max-w-4xl">
       <p className="mb-4 text-xs text-muted-foreground">
         {users ? `${users.length} members · ${activeCount} active` : "…"} ·
-        Members appear after their first Google sign-in. Team comes from their
-        Google Workspace Department — edit it if it's blank.
+        Team is read from a member&rsquo;s Google Workspace Department, and only
+        when they sign in <em>with Google</em> — signing in with the shared
+        password can&rsquo;t read the directory. Set it here for anyone blank.
       </p>
 
       {users === null ? (

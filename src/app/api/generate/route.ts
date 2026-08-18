@@ -65,6 +65,9 @@ const ASPECT_TO_VIDEO_RATIO: Record<string, string> = {
   "21:9": "16:9",
 };
 
+/** A row from the generations table, as the insert returns it. */
+type GenerationRow = Record<string, unknown>;
+
 type ProviderOutput = {
   url: string;
   seed: number | null;
@@ -388,69 +391,61 @@ export async function POST(req: NextRequest) {
   }
 
   const pool = db();
-  const records = [];
 
   const googleSpec = googleModel ? GOOGLE_IMAGE_MODELS[googleModel] : null;
 
-  for (let i = 0; i < numOutputs; i++) {
+  /** Render and store one image of the batch. */
+  const renderOne = async (i: number) => {
     const seed = baseSeed + i;
     // Measure the provider round-trip so the detail panel can report how long
     // the render actually took (completed_at - created_at is always ~0 here,
     // since the row is only inserted once the render is already finished).
     const renderStart = Date.now();
     let generated;
-    try {
-      if (googleModel && googleSpec) {
-        const isPro = googleModel === "nano-banana-pro";
-        const { dataUri, model: usedSlug } = await geminiGenerateImage({
-          prompt: finalPrompt,
-          imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
-          model: googleModel,
-          // Only Pro takes a size/aspect; Nano Banana keeps its bare payload.
-          imageSize: isPro ? resolution : undefined,
-          aspectRatio: isPro ? aspect : undefined,
-        });
-        generated = {
-          output: {
-            url: dataUri,
-            seed,
-            requestId: null,
-            payload: { provider: "google", model: usedSlug },
-            kind: "image" as const,
-            durationS: null,
-          },
-          usedModel: {
-            provider: "google",
-            slug: usedSlug,
-            costPerUnit:
-              isPro && resolution === "4K"
-                ? (googleSpec.costPerImage4K ?? googleSpec.costPerImage)
-                : googleSpec.costPerImage,
-            unit: "image",
-            maxDuration: 0,
-            supportsReference: true,
-            supportsAudio: false,
-          } satisfies ModelEndpoint,
-          fallbackNote: null as string | null,
-        };
-      } else {
-        generated = await generateWithFallback(
-          primary,
-          fallbacks,
-          finalPrompt,
-          negativePrompt,
-          aspect,
+    if (googleModel && googleSpec) {
+      const isPro = googleModel === "nano-banana-pro";
+      const { dataUri, model: usedSlug } = await geminiGenerateImage({
+        prompt: finalPrompt,
+        imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
+        model: googleModel,
+        // Only Pro takes a size/aspect; Nano Banana keeps its bare payload.
+        imageSize: isPro ? resolution : undefined,
+        aspectRatio: isPro ? aspect : undefined,
+      });
+      generated = {
+        output: {
+          url: dataUri,
           seed,
-          referenceUrls,
-          arkResolution
-        );
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Generation failed";
-      if (records.length === 0) {
-        return NextResponse.json({ error: message }, { status: 502 });
-      }
-      break;
+          requestId: null,
+          payload: { provider: "google", model: usedSlug },
+          kind: "image" as const,
+          durationS: null,
+        },
+        usedModel: {
+          provider: "google",
+          slug: usedSlug,
+          costPerUnit:
+            isPro && resolution === "4K"
+              ? (googleSpec.costPerImage4K ?? googleSpec.costPerImage)
+              : googleSpec.costPerImage,
+          unit: "image",
+          maxDuration: 0,
+          supportsReference: true,
+          supportsAudio: false,
+        } satisfies ModelEndpoint,
+        fallbackNote: null as string | null,
+      };
+    } else {
+      generated = await generateWithFallback(
+        primary,
+        fallbacks,
+        finalPrompt,
+        negativePrompt,
+        aspect,
+        seed,
+        referenceUrls,
+        arkResolution
+      );
     }
 
     const { output, usedModel, fallbackNote } = generated;
@@ -460,55 +455,68 @@ export async function POST(req: NextRequest) {
         ? usedModel.costPerUnit
         : usedModel.costPerUnit * (output.durationS ?? durationS);
 
-    try {
-      const { rows } = await pool.query(
-        `insert into generations
-           (mode, tier, model_endpoint, input_payload, final_prompt,
-            negative_prompt, seed, reference_urls, status, output_url,
-            fal_url, request_id, cost, aspect, duration_s, client_ready,
-            user_id, project_id, brand_kit_id, render_ms, completed_at)
-         values
-           ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-            $16, $17, $18, $19, $20, now())
-         returning *`,
-        [
-          mode,
-          editTier,
-          `${usedModel.provider}:${usedModel.slug}`,
-          JSON.stringify({
-            ...output.payload,
-            prompt_inputs: body.prompt,
-            fallback_note: fallbackNote,
-            duration_s: output.durationS,
-            is_edit: (body.referenceUrls ?? []).length > 0,
-            resolution: mode === "t2i" ? resolution : undefined,
-          }),
-          finalPrompt,
-          negativePrompt,
-          output.seed,
-          body.referenceUrls ?? [],
-          "ready",
-          outputUrl,
-          providerUrl,
-          output.requestId,
-          cost,
-          aspect,
-          output.durationS,
-          false,
-          sessionUser.id,
-          projectId,
-          brandKitId,
-          Date.now() - renderStart,
-        ]
-      );
-      records.push(rows[0]);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "unknown error";
-      return NextResponse.json(
-        { error: `Generated but failed to save record: ${message}` },
-        { status: 500 }
-      );
-    }
+    const { rows } = await pool.query(
+      `insert into generations
+         (mode, tier, model_endpoint, input_payload, final_prompt,
+          negative_prompt, seed, reference_urls, status, output_url,
+          fal_url, request_id, cost, aspect, duration_s, client_ready,
+          user_id, project_id, brand_kit_id, render_ms, completed_at)
+       values
+         ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+          $16, $17, $18, $19, $20, now())
+       returning *`,
+      [
+        mode,
+        editTier,
+        `${usedModel.provider}:${usedModel.slug}`,
+        JSON.stringify({
+          ...output.payload,
+          prompt_inputs: body.prompt,
+          fallback_note: fallbackNote,
+          duration_s: output.durationS,
+          is_edit: (body.referenceUrls ?? []).length > 0,
+          resolution: mode === "t2i" ? resolution : undefined,
+        }),
+        finalPrompt,
+        negativePrompt,
+        output.seed,
+        body.referenceUrls ?? [],
+        "ready",
+        outputUrl,
+        providerUrl,
+        output.requestId,
+        cost,
+        aspect,
+        output.durationS,
+        false,
+        sessionUser.id,
+        projectId,
+        brandKitId,
+        Date.now() - renderStart,
+      ]
+    );
+    return rows[0];
+  };
+
+  // Concurrently, not one after another: a batch of four used to take four
+  // renders back to back, which is how a set of variations outran the
+  // gateway's patience and surfaced as "Failed to fetch" in the browser.
+  const settled = await Promise.allSettled(
+    Array.from({ length: numOutputs }, (_, i) => renderOne(i))
+  );
+  const records = settled
+    .filter((r): r is PromiseFulfilledResult<GenerationRow> => r.status === "fulfilled")
+    .map((r) => r.value);
+
+  if (records.length === 0) {
+    const reason = settled.find((r) => r.status === "rejected") as
+      | PromiseRejectedResult
+      | undefined;
+    const message =
+      reason?.reason instanceof Error
+        ? reason.reason.message
+        : "Generation failed";
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 
   return NextResponse.json({ generation: records[0], generations: records });

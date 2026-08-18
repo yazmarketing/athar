@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn, readJson } from "@/lib/utils";
+import { cn, readJson, postFetch } from "@/lib/utils";
 
 const ASPECTS = ["16:9", "9:16", "1:1", "4:5"];
 
@@ -124,7 +124,7 @@ export function Orchestrator({
         // (correctly) rejects as circular.
         const anchor: string | null = keyFrameUrl;
         const isKeyFrame = anchor === null;
-        const res = await fetch("/api/generate", {
+        const res = await postFetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

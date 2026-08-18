@@ -31,7 +31,6 @@ import {
   Sun,
   Plug,
   Trash2,
-  Play,
   Wand2,
   Workflow,
   X,
@@ -48,7 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn, readJson } from "@/lib/utils";
+import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -87,6 +86,7 @@ import {
   type Tier,
 } from "@/config/models";
 import { ImageModelSelect } from "@/components/image-model-select";
+import { VideoThumb } from "@/components/video-thumb";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
 import type {
@@ -914,7 +914,7 @@ export function Studio() {
       const activeVideoEditSource =
         opts.sourceVideo !== undefined ? opts.sourceVideo : videoEditSource;
       try {
-        const res = await fetch("/api/generate", {
+        const res = await postFetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1209,7 +1209,7 @@ export function Studio() {
   }): Promise<GenerationRecord | null> => {
     setGenerating(true);
     try {
-      const res = await fetch("/api/generate", {
+      const res = await postFetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1250,7 +1250,7 @@ export function Studio() {
     if (!args.source.output_url) throw new Error("Source image missing");
     setGenerating(true);
     try {
-      const res = await fetch("/api/generate", {
+      const res = await postFetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1296,7 +1296,7 @@ export function Studio() {
         args.referenceUrl,
         ...(args.extraReferenceUrls ?? []),
       ].filter(Boolean);
-      const res = await fetch("/api/generate", {
+      const res = await postFetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1832,35 +1832,7 @@ export function Studio() {
       >
         {g.output_url ? (
           isVideo(g) ? (
-            <div className="relative">
-              <video
-                // #t=0.1 seeks a hair past the start so the browser paints a
-                // real frame. Without it Safari (and iOS especially) shows
-                // its own grey placeholder instead of the clip.
-                src={`${g.output_url}#t=0.1`}
-                className="aspect-video w-full bg-black object-cover"
-                playsInline
-                muted
-                loop
-                preload="metadata"
-                onMouseEnter={(e) => {
-                  const el = e.currentTarget;
-                  el.play().catch(() => {
-                    // Autoplay refused — the still frame is enough.
-                  });
-                }}
-                onMouseLeave={(e) => {
-                  const el = e.currentTarget;
-                  el.pause();
-                  el.currentTime = 0.1;
-                }}
-              />
-              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <span className="flex size-11 items-center justify-center rounded-full bg-black/45 ring-1 ring-white/25 backdrop-blur-sm transition group-hover:opacity-0">
-                  <Play className="size-4 translate-x-[1px] fill-white text-white" />
-                </span>
-              </span>
-            </div>
+            <VideoThumb src={g.output_url} />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -2388,12 +2360,10 @@ export function Studio() {
             }}
             onRemoveBackground={async (g) => {
               try {
-                const res = await fetch("/api/background/remove", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ generationId: g.id }),
-                });
-                const json = await res.json();
+                const { res, json } = await postJson(
+                  "/api/background/remove",
+                  { generationId: g.id }
+                );
                 if (!res.ok)
                   throw new Error(json.error ?? "Background removal failed");
                 toast.success("Background removed");
@@ -2767,7 +2737,7 @@ export function Studio() {
 
         {view === "assets" && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">Assets</h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -2791,7 +2761,7 @@ export function Studio() {
 
         {view === "orchestrate" && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">Campaign</h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -2815,7 +2785,7 @@ export function Studio() {
 
         {view === "team" && isManagement && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">Team</h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">
@@ -2831,7 +2801,7 @@ export function Studio() {
 
         {view === "usage" && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">
                   Usage &amp; cost
@@ -2849,7 +2819,7 @@ export function Studio() {
 
         {(view === "create" || view === "library") && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">
                   {view === "library"
@@ -3577,9 +3547,9 @@ export function Studio() {
                     </div>
                   ) : libraryAssets ? (
                     <p className="mb-2 px-1 py-1 text-[11px] text-muted-foreground">
-                      No assets yet — open an image in the Library and use
-                      &ldquo;Add to asset library&rdquo;, or paste an asset ID
-                      below.
+                      No characters yet — open an image in the Library and use
+                      &ldquo;Register as video character&rdquo;, or paste an
+                      asset ID below.
                     </p>
                   ) : null}
 
