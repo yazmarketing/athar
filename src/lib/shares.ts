@@ -104,3 +104,47 @@ export async function resolveShare(
   );
   return rows[0] ?? null;
 }
+
+export type ShareContext = {
+  generation: GenerationRecord;
+  /** Client the work belongs to, resolved through its project. */
+  clientName: string | null;
+  projectName: string | null;
+};
+
+/**
+ * Resolve a token to its generation plus who the work is for.
+ *
+ * A generation carries no client of its own — it inherits one through its
+ * project, with a freeform label on older rows. Both are resolved here so the
+ * public page and its preview card can name the client without a second
+ * round-trip.
+ */
+export async function resolveShareContext(
+  token: string
+): Promise<ShareContext | null> {
+  await ensureSharesTable();
+  const { rows } = await db().query<
+    GenerationRecord & { client_name: string | null; project_name: string | null }
+  >(
+    `select g.*,
+            coalesce(c.name, p.client) as client_name,
+            p.name as project_name
+     from public.generation_shares s
+     join public.generations g on g.id = s.generation_id
+     left join public.projects p on p.id = g.project_id
+     left join public.clients c on c.id = p.client_id
+     where s.token = $1
+       and s.revoked_at is null
+       and g.deleted_at is null`,
+    [token]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const { client_name, project_name, ...generation } = row;
+  return {
+    generation: generation as GenerationRecord,
+    clientName: client_name?.trim() || null,
+    projectName: project_name?.trim() || null,
+  };
+}

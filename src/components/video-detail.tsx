@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Heart,
   Loader2,
+  Share2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -20,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ShareDialog, ShareOption } from "@/components/share-dialog";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
@@ -118,6 +120,9 @@ export function VideoDetail({
   const sourceVideoGenerationId = payload.source_video_generation_id ?? null;
   const durationS =
     g.duration_s != null ? Number(g.duration_s) : (payload.duration_s ?? null);
+
+  const [shareOpen, setShareOpen] = useState(false);
+  const shareText = g.final_prompt.slice(0, 180);
 
   // Reset per-generation state during render (React "previous render" pattern)
   const [prevKey, setPrevKey] = useState<string | null>(null);
@@ -254,6 +259,12 @@ export function VideoDetail({
                 }
               >
                 <ExternalLink className="size-4" />
+              </IconBtn>
+              <IconBtn
+                label="Share"
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="size-4" />
               </IconBtn>
 
               <Button
@@ -484,6 +495,15 @@ export function VideoDetail({
                 </div>
               )}
               <Button
+                variant="outline"
+                className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                disabled={!videoUrl}
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="size-4" />
+                Share
+              </Button>
+              <Button
                 className="h-11 w-full justify-between rounded-xl bg-white text-black hover:bg-white/90"
                 onClick={() => {
                   if (onUsePrompt) {
@@ -500,6 +520,27 @@ export function VideoDetail({
             </div>
         </div>
       </aside>
+
+      <ShareDialog
+        open={shareOpen}
+        onOpenChange={setShareOpen}
+        generationId={g.id}
+        kind="video"
+        shareText={shareText}
+        mediaUrl={videoUrl}
+        onCopyPrompt={() => void copyPrompt()}
+        downloads={
+          <ShareOption
+            icon={<Download className="size-4" />}
+            label="Download MP4"
+            hint=".mp4"
+            onClick={() => {
+              void downloadMp4();
+              setShareOpen(false);
+            }}
+          />
+        }
+      />
     </div>
   );
 }
