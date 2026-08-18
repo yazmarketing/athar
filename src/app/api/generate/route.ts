@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { arkCreateVideoTask, arkGenerateImage } from "@/lib/byteplus-server";
-import {
-  geminiGenerateImage,
-  NANO_BANANA_MODEL,
-} from "@/lib/gemini-server";
+import { geminiGenerateImage } from "@/lib/gemini-server";
 import { db } from "@/lib/db";
 import { getBrandKit } from "@/lib/brand-kits";
 import { createJob } from "@/lib/jobs";
@@ -14,6 +11,9 @@ import { buildPrompt } from "@/lib/prompt";
 import {
   resolveModel,
   resolveFallbacks,
+  asGoogleImageModel,
+  maxReferenceImages,
+  GOOGLE_IMAGE_MODELS,
   type ModelEndpoint,
 } from "@/config/models";
 import type { GenerateRequest } from "@/lib/types";
@@ -265,7 +265,13 @@ export async function POST(req: NextRequest) {
   const aspect = body.aspect ?? "16:9";
   const numOutputs = Math.min(body.numOutputs ?? 1, mode === "t2v" ? 2 : 4);
   const baseSeed = body.seed ?? Math.floor(Math.random() * 2 ** 31);
-  let referenceUrls = (body.referenceUrls ?? []).filter(Boolean).slice(0, 8);
+  // Nano Banana Pro holds consistency across more references than Seedream
+  // fuses, so the ceiling follows the model the request is actually routed to.
+  const googleModel =
+    body.mode === "t2i" ? asGoogleImageModel(body.imageModel) : null;
+  let referenceUrls = (body.referenceUrls ?? [])
+    .filter(Boolean)
+    .slice(0, maxReferenceImages(googleModel));
 
   // BytePlus often can't fetch third-party CDNs; inline as data URIs for edits
   if (referenceUrls.length > 0) {
@@ -297,7 +303,14 @@ export async function POST(req: NextRequest) {
     Math.max(body.durationS ?? (mode === "t2v" ? 5 : 0), mode === "t2v" ? 4 : 0),
     primary.maxDuration || 30
   );
-  const resolution = body.resolution === "1K" ? "1K" : "2K";
+  // 4K only exists on the Nano Banana Pro path; Seedream renders it at 2K.
+  const resolution: "1K" | "2K" | "4K" =
+    body.resolution === "1K"
+      ? "1K"
+      : body.resolution === "4K" && googleModel === "nano-banana-pro"
+        ? "4K"
+        : "2K";
+  const arkResolution: "1K" | "2K" = resolution === "1K" ? "1K" : "2K";
 
   // Video: submit a Seedance task and return a durable job immediately.
   // The render keeps going server-side; the client polls /api/jobs/[id].
@@ -362,16 +375,7 @@ export async function POST(req: NextRequest) {
   const pool = db();
   const records = [];
 
-  const useNano = mode === "t2i" && body.imageModel === "nano-banana";
-  const nanoModel: ModelEndpoint = {
-    provider: "google",
-    slug: NANO_BANANA_MODEL,
-    costPerUnit: 0.039,
-    unit: "image",
-    maxDuration: 0,
-    supportsReference: true,
-    supportsAudio: false,
-  };
+  const googleSpec = googleModel ? GOOGLE_IMAGE_MODELS[googleModel] : null;
 
   for (let i = 0; i < numOutputs; i++) {
     const seed = baseSeed + i;
@@ -381,21 +385,37 @@ export async function POST(req: NextRequest) {
     const renderStart = Date.now();
     let generated;
     try {
-      if (useNano) {
-        const { dataUri } = await geminiGenerateImage({
+      if (googleModel && googleSpec) {
+        const isPro = googleModel === "nano-banana-pro";
+        const { dataUri, model: usedSlug } = await geminiGenerateImage({
           prompt: finalPrompt,
           imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
+          model: googleModel,
+          // Only Pro takes a size/aspect; Nano Banana keeps its bare payload.
+          imageSize: isPro ? resolution : undefined,
+          aspectRatio: isPro ? aspect : undefined,
         });
         generated = {
           output: {
             url: dataUri,
             seed,
             requestId: null,
-            payload: { provider: "google", model: NANO_BANANA_MODEL },
+            payload: { provider: "google", model: usedSlug },
             kind: "image" as const,
             durationS: null,
           },
-          usedModel: nanoModel,
+          usedModel: {
+            provider: "google",
+            slug: usedSlug,
+            costPerUnit:
+              isPro && resolution === "4K"
+                ? (googleSpec.costPerImage4K ?? googleSpec.costPerImage)
+                : googleSpec.costPerImage,
+            unit: "image",
+            maxDuration: 0,
+            supportsReference: true,
+            supportsAudio: false,
+          } satisfies ModelEndpoint,
           fallbackNote: null as string | null,
         };
       } else {
@@ -407,7 +427,7 @@ export async function POST(req: NextRequest) {
           aspect,
           seed,
           referenceUrls,
-          resolution
+          arkResolution
         );
       }
     } catch (err) {

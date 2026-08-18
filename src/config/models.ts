@@ -260,6 +260,74 @@ export const UPSCALE_MODELS: Record<UpscaleMode, ModelEndpoint> = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Google Gemini image models — priced per image, outside the tiered registry
+// ---------------------------------------------------------------------------
+
+export type GoogleImageModelId = "nano-banana" | "nano-banana-pro";
+
+/**
+ * The Gemini image models the studio can route a still to.
+ *
+ * `defaultSlug` is the published API id; the server may override it via
+ * GEMINI_IMAGE_MODEL / GEMINI_PRO_IMAGE_MODEL when Google promotes a preview
+ * to GA under a new id (see lib/gemini-server.ts). Kept here — free of any
+ * secret or process.env read — so the picker can import it on the client.
+ */
+export const GOOGLE_IMAGE_MODELS: Record<
+  GoogleImageModelId,
+  {
+    label: string;
+    defaultSlug: string;
+    /** USD per image. Pro is quoted per resolution — see costPerImage4K. */
+    costPerImage: number;
+    costPerImage4K?: number;
+    /** Reference images the model fuses in one call. */
+    maxReferenceImages: number;
+    notes: string;
+  }
+> = {
+  "nano-banana": {
+    label: "Nano Banana",
+    defaultSlug: "gemini-2.5-flash-image",
+    costPerImage: 0.039,
+    maxReferenceImages: 8,
+    notes: "Readable text/logos, precise edits, character consistency",
+  },
+  "nano-banana-pro": {
+    label: "Nano Banana Pro",
+    defaultSlug: "gemini-3-pro-image-preview",
+    costPerImage: 0.134,
+    costPerImage4K: 0.24,
+    maxReferenceImages: 14,
+    notes: "Gemini 3 Pro Image — 2K/4K, up to 14 references, best text",
+  },
+};
+
+export function asGoogleImageModel(
+  id: string | null | undefined
+): GoogleImageModelId | null {
+  return id === "nano-banana" || id === "nano-banana-pro" ? id : null;
+}
+
+/**
+ * How many reference images one request may carry.
+ *
+ * Seedream fuses up to 8; Nano Banana Pro holds consistency across 14. The
+ * dock and the API agree on this number so the UI never accepts an image the
+ * request would silently drop.
+ */
+export const MAX_REFERENCE_IMAGES = 8;
+
+export function maxReferenceImages(
+  imageModel: string | null | undefined
+): number {
+  const google = asGoogleImageModel(imageModel);
+  return google
+    ? GOOGLE_IMAGE_MODELS[google].maxReferenceImages
+    : MAX_REFERENCE_IMAGES;
+}
+
 /** Background removal — Seedream edit (subject cut out onto clean white). */
 export const BACKGROUND_REMOVE_MODEL: ModelEndpoint = {
   provider: "byteplus",
@@ -359,7 +427,11 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "dreamina-seedance-2-0-mini-260615": "Seedance 2.0 Mini",
   "dreamina-seedance-2-5-260628": "Seedance 2.5",
   "gemini-2-5-flash-image": "Nano Banana",
+  "gemini-2.5-flash-image": "Nano Banana",
   "nano-banana": "Nano Banana",
+  "gemini-3-pro-image-preview": "Nano Banana Pro",
+  "gemini-3-pro-image": "Nano Banana Pro",
+  "nano-banana-pro": "Nano Banana Pro",
 };
 
 export function friendlyModelName(endpoint: string | null | undefined): string {

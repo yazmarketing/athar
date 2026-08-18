@@ -74,7 +74,10 @@ import {
   estimateCost,
   listModelOptions,
   resolveModel,
+  maxReferenceImages,
+  GOOGLE_IMAGE_MODELS,
   type Capability,
+  type GoogleImageModelId,
   type Tier,
 } from "@/config/models";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
@@ -122,7 +125,25 @@ const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
 const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
   { value: "1K", label: "1K" },
   { value: "2K", label: "2K" },
+  { value: "4K", label: "4K" },
 ];
+
+/**
+ * The model picker speaks short ids ("nano-pro"); the API speaks Google's
+ * ("nano-banana-pro"). The recommend-model guide uses the short ids too, so
+ * both directions are needed.
+ */
+const GOOGLE_TO_MODEL_ID: Record<GoogleImageModelId, string> = {
+  "nano-banana": "nano",
+  "nano-banana-pro": "nano-pro",
+};
+const MODEL_ID_TO_GOOGLE: Record<string, GoogleImageModelId> = {
+  nano: "nano-banana",
+  "nano-pro": "nano-banana-pro",
+};
+const GOOGLE_MODEL_OPTIONS: { id: GoogleImageModelId; modelId: string }[] = (
+  ["nano-banana", "nano-banana-pro"] as GoogleImageModelId[]
+).map((id) => ({ id, modelId: GOOGLE_TO_MODEL_ID[id] }));
 const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
 const MAX_VIDEO_IMAGES = 9;
@@ -166,7 +187,9 @@ export function Studio() {
   const [brandTokens, setBrandTokens] = useState("");
   const [negativeAdditions, setNegativeAdditions] = useState("");
   const [tier, setTier] = useState<Tier>("draft");
-  const [nanoSelected, setNanoSelected] = useState(false);
+  // Which Google image model the dock is on, if any (Seedream otherwise).
+  const [googleModel, setGoogleModel] =
+    useState<GoogleImageModelId | null>(null);
   const [checkingModel, setCheckingModel] = useState(false);
   const [modelSuggestion, setModelSuggestion] = useState<{
     best: string;
@@ -302,15 +325,30 @@ export function Studio() {
   const isManagement = session?.user?.role === "admin";
 
   /**
-   * Live cost estimate for the current dock settings. Nano Banana is priced
-   * per image outside the tiered registry, so it's handled separately.
+   * References the selected model will actually fuse. Seedream takes 8; Nano
+   * Banana Pro holds consistency across 14. The dock matches the API cap so it
+   * never accepts an image the request would quietly drop.
+   */
+  const maxRefs = maxReferenceImages(googleModel);
+
+  /**
+   * Live cost estimate for the current dock settings. The Google models are
+   * priced per image outside the tiered registry, so they're handled
+   * separately.
    */
   const estimatedCost = useMemo(() => {
     if (!SHOW_COST_ESTIMATE) return null;
     // The dock only ever drives t2i or t2v; i2v/v2v are entered from an
     // existing asset and priced on their own paths.
     const capability: Capability = mode === "t2i" ? "t2i" : "t2v";
-    if (mode === "t2i" && nanoSelected) return 0.039 * numOutputs;
+    if (mode === "t2i" && googleModel) {
+      const spec = GOOGLE_IMAGE_MODELS[googleModel];
+      const per =
+        resolution === "4K"
+          ? (spec.costPerImage4K ?? spec.costPerImage)
+          : spec.costPerImage;
+      return per * numOutputs;
+    }
     try {
       return estimateCost(capability, tier, {
         numOutputs: mode === "t2i" ? numOutputs : 1,
@@ -321,7 +359,7 @@ export function Studio() {
       // number the team might budget against.
       return null;
     }
-  }, [mode, tier, nanoSelected, numOutputs, durationS]);
+  }, [mode, tier, googleModel, resolution, numOutputs, durationS]);
 
 
   /**
@@ -501,7 +539,9 @@ export function Studio() {
   ) => {
     setMode(next);
     if (next === "t2v" && tier === "draft") setTier("standard");
-    if (next === "t2v") setNanoSelected(false);
+    if (next === "t2v") setGoogleModel(null);
+    // 4K rides with Nano Banana Pro; video has its own resolution control.
+    if (next === "t2v" && resolution === "4K") setResolution("2K");
     if (next === "t2v") setNumOutputs(1);
     setSubject(seed?.subject ?? "");
     setAction(seed?.action ?? "");
@@ -845,8 +885,10 @@ export function Studio() {
         sourceVideo?: { url: string; generationId: string | null } | null;
         /** Stay on Home/Library instead of jumping to Create */
         stayOnView?: boolean;
-        /** Explicit image-model override — "nano-banana" or "seedream". */
-        imageModel?: "nano-banana" | "seedream";
+        /** Explicit image-model override — a Google model id or "seedream". */
+        imageModel?: GoogleImageModelId | "seedream";
+        /** Override the dock's resolution (model switch clamps 4K → 2K). */
+        resolution?: ImageResolution;
       } = {}
     ) => {
       setGenerating(true);
@@ -864,17 +906,14 @@ export function Studio() {
             imageModel:
               activeMode !== "t2i"
                 ? undefined
-                : opts.imageModel === "nano-banana"
-                  ? "nano-banana"
-                  : opts.imageModel === "seedream"
-                    ? undefined
-                    : nanoSelected
-                      ? "nano-banana"
-                      : undefined,
+                : opts.imageModel === "seedream"
+                  ? undefined
+                  : (opts.imageModel ?? googleModel ?? undefined),
             prompt,
             aspect,
             numOutputs: activeMode === "t2v" ? 1 : numOutputs,
-            resolution: activeMode === "t2i" ? resolution : undefined,
+            resolution:
+              activeMode === "t2i" ? (opts.resolution ?? resolution) : undefined,
             durationS:
               activeMode === "t2v" ? (opts.durationS ?? durationS) : undefined,
             videoResolution:
@@ -1036,7 +1075,7 @@ export function Studio() {
     [
       mode,
       tier,
-      nanoSelected,
+      googleModel,
       aspect,
       resolution,
       numOutputs,
@@ -1294,14 +1333,19 @@ export function Studio() {
     cameraId: mode === "t2v" ? camera : undefined,
   });
 
-  // Generate with a specific image model id (draft/standard/hero/nano).
+  // Generate with a specific image model id — a Seedream tier
+  // (draft/standard/hero) or a Google model ("nano" / "nano-pro").
   const runGenerate = (modelId: string) => {
-    const isNano = modelId === "nano";
-    setNanoSelected(isNano);
-    if (!isNano) setTier(modelId as Tier);
+    const google = MODEL_ID_TO_GOOGLE[modelId] ?? null;
+    const nextResolution =
+      google !== "nano-banana-pro" && resolution === "4K" ? "2K" : resolution;
+    setGoogleModel(google);
+    if (!google) setTier(modelId as Tier);
+    if (nextResolution !== resolution) setResolution(nextResolution);
     submit(buildPromptInputs(), {
-      tier: isNano ? undefined : (modelId as Tier),
-      imageModel: isNano ? "nano-banana" : "seedream",
+      tier: google ? undefined : (modelId as Tier),
+      imageModel: google ?? "seedream",
+      resolution: nextResolution,
     });
   };
 
@@ -1328,7 +1372,9 @@ export function Studio() {
       return;
     }
     // Ask the guide whether a different model fits this prompt better.
-    const currentModelId = nanoSelected ? "nano" : tier;
+    const currentModelId = googleModel
+      ? GOOGLE_TO_MODEL_ID[googleModel]
+      : tier;
     setCheckingModel(true);
     try {
       const rec = await fetch("/api/recommend-model", {
@@ -1370,16 +1416,16 @@ export function Studio() {
       toast.error("Only JPEG, PNG, or WebP images");
       return;
     }
-    const remaining = 4 - referenceUrls.length;
+    const remaining = maxRefs - referenceUrls.length;
     if (remaining <= 0) {
-      toast.error("Up to 4 reference images");
+      toast.error(`Up to ${maxRefs} reference images`);
       return;
     }
     const batch = list.slice(0, remaining);
     setUploadingRef(true);
     try {
       const urls = await Promise.all(batch.map((f) => uploadReference(f)));
-      setReferenceUrls((prev) => [...prev, ...urls].slice(0, 4));
+      setReferenceUrls((prev) => [...prev, ...urls].slice(0, maxRefs));
       toast.success(
         urls.length === 1 ? "Reference added" : `${urls.length} references added`
       );
@@ -3355,7 +3401,7 @@ export function Studio() {
                     <p className="text-[11px] text-muted-foreground">
                       {mode === "t2v"
                         ? `JPEG, PNG, or WebP · up to ${MAX_VIDEO_IMAGES} · 1 = first frame, 2+ = references`
-                        : "JPEG, PNG, or WebP · up to 4"}
+                        : `JPEG, PNG, or WebP · up to ${maxRefs}`}
                     </p>
                   </div>
                 </div>
@@ -3851,20 +3897,38 @@ export function Studio() {
 
                   <span data-tour="model" className="inline-flex">
                   <Select
-                  value={mode === "t2i" && nanoSelected ? "nano" : tier}
+                  value={
+                    mode === "t2i" && googleModel
+                      ? GOOGLE_TO_MODEL_ID[googleModel]
+                      : tier
+                  }
                   onValueChange={(v) => {
-                    if (v === "nano") {
-                      setNanoSelected(true);
-                    } else {
-                      setNanoSelected(false);
-                      setTier(v as Tier);
+                    const google = MODEL_ID_TO_GOOGLE[v] ?? null;
+                    setGoogleModel(google);
+                    if (!google) setTier(v as Tier);
+                    // 4K is Pro-only — don't leave it selected on a model
+                    // that would silently render 2K.
+                    if (google !== "nano-banana-pro" && resolution === "4K") {
+                      setResolution("2K");
+                    }
+                    // Same for references: dropping to a model that fuses
+                    // fewer should show the loss, not hide it.
+                    const nextMax = maxReferenceImages(google);
+                    if (referenceUrls.length > nextMax) {
+                      setReferenceUrls((prev) => prev.slice(0, nextMax));
+                      const name = google
+                        ? GOOGLE_IMAGE_MODELS[google].label
+                        : "Seedream";
+                      toast.error(
+                        `${name} takes ${nextMax} references — extras removed`
+                      );
                     }
                   }}
                 >
                   <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
                     <SelectValue>
-                      {mode === "t2i" && nanoSelected
-                        ? "Nano Banana"
+                      {mode === "t2i" && googleModel
+                        ? GOOGLE_IMAGE_MODELS[googleModel].label
                         : selectedModelLabel}
                     </SelectValue>
                 </SelectTrigger>
@@ -3879,16 +3943,17 @@ export function Studio() {
                         </span>
                     </SelectItem>
                   ))}
-                    {mode === "t2i" && (
-                      <SelectItem value="nano">
-                        <span className="flex flex-col items-start gap-0.5 py-0.5">
-                          <span>Nano Banana</span>
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            google · gemini-2.5-flash-image
+                    {mode === "t2i" &&
+                      GOOGLE_MODEL_OPTIONS.map(({ id, modelId }) => (
+                        <SelectItem key={modelId} value={modelId}>
+                          <span className="flex flex-col items-start gap-0.5 py-0.5">
+                            <span>{GOOGLE_IMAGE_MODELS[id].label}</span>
+                            <span className="font-mono text-[10px] text-muted-foreground">
+                              google · {GOOGLE_IMAGE_MODELS[id].defaultSlug}
+                            </span>
                           </span>
-                        </span>
-                      </SelectItem>
-                    )}
+                        </SelectItem>
+                      ))}
                 </SelectContent>
               </Select>
               </span>
@@ -4029,7 +4094,11 @@ export function Studio() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {RESOLUTIONS.map((r) => (
+                      {RESOLUTIONS.filter(
+                        (r) =>
+                          r.value !== "4K" ||
+                          googleModel === "nano-banana-pro"
+                      ).map((r) => (
                         <SelectItem key={r.value} value={r.value}>
                           {r.label}
                         </SelectItem>
@@ -4404,8 +4473,8 @@ export function Studio() {
                       setReferenceUrls((prev) => prev.filter((u) => u !== url));
                       return;
                     }
-                    if (referenceUrls.length >= 4) {
-                      toast.error("Up to 4 reference images");
+                    if (referenceUrls.length >= maxRefs) {
+                      toast.error(`Up to ${maxRefs} reference images`);
                       return;
                     }
                     setReferenceUrls((prev) => [...prev, url]);

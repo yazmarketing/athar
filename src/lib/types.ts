@@ -10,7 +10,8 @@ export type GenerationStatus =
 export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5" | "21:9";
 
 /** Seedream output resolution tier (maps to pixel sizes per aspect). */
-export type ImageResolution = "1K" | "2K";
+/** 4K is Nano Banana Pro only — Seedream paths clamp it back to 2K. */
+export type ImageResolution = "1K" | "2K" | "4K";
 
 /** Structured prompt inputs — never concatenate raw user text (§5.3). */
 export type PromptInputs = {

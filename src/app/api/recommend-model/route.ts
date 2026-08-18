@@ -26,6 +26,12 @@ export const IMAGE_MODELS = [
     bestFor:
       "images that need readable text/logos, precise edits, complex compositional instructions, and character/product consistency",
   },
+  {
+    id: "nano-pro",
+    label: "Nano Banana Pro",
+    bestFor:
+      "the hardest text-heavy work — infographics, slides, posters with long copy — plus 4K output and fusing many references (up to 14) or several people in one frame",
+  },
 ] as const;
 
 type Body = { prompt?: string; current?: string };
