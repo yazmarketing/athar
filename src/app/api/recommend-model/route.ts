@@ -1,38 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
+import { IMAGE_MODEL_CHOICES } from "@/config/models";
 
-/** Selectable image models and what each is genuinely best at. */
-export const IMAGE_MODELS = [
-  {
-    id: "draft",
-    label: "Seedream 4.0",
-    bestFor: "fast, cheap drafts, iterations and thumbnails",
-  },
-  {
-    id: "standard",
-    label: "Seedream 5.0",
-    bestFor: "balanced, general-purpose photorealistic images",
-  },
-  {
-    id: "hero",
-    label: "Seedream 5.0 Pro",
-    bestFor:
-      "highest-fidelity hero and brand stills, multi-reference fusion, crisp 2K",
-  },
-  {
-    id: "nano",
-    label: "Nano Banana",
-    bestFor:
-      "images that need readable text/logos, precise edits, complex compositional instructions, and character/product consistency",
-  },
-  {
-    id: "nano-pro",
-    label: "Nano Banana Pro",
-    bestFor:
-      "the hardest text-heavy work — infographics, slides, posters with long copy — plus 4K output and fusing many references (up to 14) or several people in one frame",
-  },
-] as const;
+/**
+ * Selectable image models, from the same list the pickers render — so the
+ * guide can never recommend a model the dock doesn't offer, or miss one it
+ * does.
+ */
+export const IMAGE_MODELS = IMAGE_MODEL_CHOICES.map((m) => ({
+  id: m.id,
+  label: m.label,
+  bestFor: m.bestFor,
+}));
 
 type Body = { prompt?: string; current?: string };
 

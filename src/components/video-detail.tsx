@@ -405,7 +405,7 @@ export function VideoDetail({
                   )}
                 >
                   <video
-                    src={sourceVideoUrl}
+                    src={`${sourceVideoUrl}#t=0.1`}
                     muted
                     playsInline
                     preload="metadata"

@@ -31,6 +31,7 @@ import {
   Sun,
   Plug,
   Trash2,
+  Play,
   Wand2,
   Workflow,
   X,
@@ -75,11 +76,17 @@ import {
   listModelOptions,
   resolveModel,
   maxReferenceImages,
-  GOOGLE_IMAGE_MODELS,
+  imageModelChoice,
+  imageModelCost,
+  imageModelRequest,
+  DEFAULT_IMAGE_MODEL_ID,
   type Capability,
   type GoogleImageModelId,
+  type ImageModelChoice,
+  type ImageResolutionOption,
   type Tier,
 } from "@/config/models";
+import { ImageModelSelect } from "@/components/image-model-select";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
 import type {
@@ -128,22 +135,6 @@ const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
   { value: "4K", label: "4K" },
 ];
 
-/**
- * The model picker speaks short ids ("nano-pro"); the API speaks Google's
- * ("nano-banana-pro"). The recommend-model guide uses the short ids too, so
- * both directions are needed.
- */
-const GOOGLE_TO_MODEL_ID: Record<GoogleImageModelId, string> = {
-  "nano-banana": "nano",
-  "nano-banana-pro": "nano-pro",
-};
-const MODEL_ID_TO_GOOGLE: Record<string, GoogleImageModelId> = {
-  nano: "nano-banana",
-  "nano-pro": "nano-banana-pro",
-};
-const GOOGLE_MODEL_OPTIONS: { id: GoogleImageModelId; modelId: string }[] = (
-  ["nano-banana", "nano-banana-pro"] as GoogleImageModelId[]
-).map((id) => ({ id, modelId: GOOGLE_TO_MODEL_ID[id] }));
 const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
 const MAX_VIDEO_IMAGES = 9;
@@ -187,7 +178,12 @@ export function Studio() {
   const [brandTokens, setBrandTokens] = useState("");
   const [negativeAdditions, setNegativeAdditions] = useState("");
   const [tier, setTier] = useState<Tier>("draft");
-  // Which Google image model the dock is on, if any (Seedream otherwise).
+  // Which still model the dock is on, as an IMAGE_MODEL_CHOICES id. Tier and
+  // googleModel below are what the request actually carries; this is the one
+  // the picker speaks, so every surface names models the same way.
+  const [imageModelId, setImageModelId] = useState<string>(
+    DEFAULT_IMAGE_MODEL_ID
+  );
   const [googleModel, setGoogleModel] =
     useState<GoogleImageModelId | null>(null);
   const [checkingModel, setCheckingModel] = useState(false);
@@ -207,7 +203,8 @@ export function Studio() {
   const [saveStyleTokens, setSaveStyleTokens] = useState("");
   const [savingStyle, setSavingStyle] = useState(false);
   const [aspect, setAspect] = useState<AspectRatio>("16:9");
-  const [resolution, setResolution] = useState<ImageResolution>("2K");
+  // 1K by default — cheaper and quicker; 2K/4K are a deliberate choice.
+  const [resolution, setResolution] = useState<ImageResolution>("1K");
   const [numOutputs, setNumOutputs] = useState(1);
   const [durationS, setDurationS] = useState(5);
   const [videoResolution, setVideoResolution] = useState<"480p" | "720p">(
@@ -325,11 +322,33 @@ export function Studio() {
   const isManagement = session?.user?.role === "admin";
 
   /**
+   * Move the dock onto a model, keeping everything that depends on it honest:
+   * the tier/provider the request carries, the resolution (4K exists on some
+   * models only) and the references it can actually fuse.
+   */
+  const applyImageModel = (id: string, choice: ImageModelChoice) => {
+    setImageModelId(id);
+    setGoogleModel(choice.imageModel);
+    if (choice.tier) setTier(choice.tier);
+    if (!choice.resolutions.includes(resolution as ImageResolutionOption)) {
+      setResolution(choice.resolutions[choice.resolutions.length - 1]);
+    }
+    if (referenceUrls.length > choice.maxReferenceImages) {
+      setReferenceUrls((prev) => prev.slice(0, choice.maxReferenceImages));
+      toast.error(
+        `${choice.label} takes ${choice.maxReferenceImages} references — extras removed`
+      );
+    }
+  };
+
+  /**
    * References the selected model will actually fuse. Seedream takes 8; Nano
    * Banana Pro holds consistency across 14. The dock matches the API cap so it
    * never accepts an image the request would quietly drop.
    */
-  const maxRefs = maxReferenceImages(googleModel);
+  const maxRefs =
+    imageModelChoice(imageModelId)?.maxReferenceImages ??
+    maxReferenceImages(googleModel);
 
   /**
    * Live cost estimate for the current dock settings. The Google models are
@@ -340,26 +359,21 @@ export function Studio() {
     if (!SHOW_COST_ESTIMATE) return null;
     // The dock only ever drives t2i or t2v; i2v/v2v are entered from an
     // existing asset and priced on their own paths.
-    const capability: Capability = mode === "t2i" ? "t2i" : "t2v";
-    if (mode === "t2i" && googleModel) {
-      const spec = GOOGLE_IMAGE_MODELS[googleModel];
-      const per =
-        resolution === "4K"
-          ? (spec.costPerImage4K ?? spec.costPerImage)
-          : spec.costPerImage;
-      return per * numOutputs;
+    if (mode === "t2i") {
+      return imageModelCost(
+        imageModelId,
+        resolution as ImageResolutionOption,
+        numOutputs
+      );
     }
     try {
-      return estimateCost(capability, tier, {
-        numOutputs: mode === "t2i" ? numOutputs : 1,
-        durationS,
-      });
+      return estimateCost("t2v", tier, { numOutputs: 1, durationS });
     } catch {
       // Unknown tier/capability pairing — better to show nothing than a wrong
       // number the team might budget against.
       return null;
     }
-  }, [mode, tier, googleModel, resolution, numOutputs, durationS]);
+  }, [mode, tier, imageModelId, resolution, numOutputs, durationS]);
 
 
   /**
@@ -539,9 +553,12 @@ export function Studio() {
   ) => {
     setMode(next);
     if (next === "t2v" && tier === "draft") setTier("standard");
-    if (next === "t2v") setGoogleModel(null);
-    // 4K rides with Nano Banana Pro; video has its own resolution control.
-    if (next === "t2v" && resolution === "4K") setResolution("2K");
+    if (next === "t2v") {
+      setGoogleModel(null);
+      setImageModelId(DEFAULT_IMAGE_MODEL_ID);
+      // 4K rides with Nano Banana Pro; video has its own resolution control.
+      if (resolution === "4K") setResolution("2K");
+    }
     if (next === "t2v") setNumOutputs(1);
     setSubject(seed?.subject ?? "");
     setAction(seed?.action ?? "");
@@ -1185,7 +1202,7 @@ export function Studio() {
 
   const submitCreate = async (args: {
     prompt: PromptInputs;
-    tier: Tier;
+    imageModelId: string;
     aspect: AspectRatio;
     resolution: ImageResolution;
     referenceUrls?: string[];
@@ -1197,7 +1214,7 @@ export function Studio() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "t2i",
-          tier: args.tier,
+          ...imageModelRequest(args.imageModelId),
           prompt: args.prompt,
           aspect: args.aspect,
           numOutputs: 1,
@@ -1224,7 +1241,7 @@ export function Studio() {
     source: GenerationRecord;
     strength: VaryStrength;
     count: number;
-    tier: Tier;
+    imageModelId: string;
     aspect: AspectRatio;
     resolution: ImageResolution;
     prompt: PromptInputs;
@@ -1238,7 +1255,7 @@ export function Studio() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "t2i",
-          tier: args.tier,
+          ...imageModelRequest(args.imageModelId),
           prompt: args.prompt,
           aspect: args.aspect,
           numOutputs: args.count,
@@ -1269,7 +1286,7 @@ export function Studio() {
     referenceUrl: string;
     extraReferenceUrls?: string[];
     basePrompt: PromptInputs;
-    tier: Tier;
+    imageModelId: string;
     aspect: AspectRatio;
     resolution: ImageResolution;
   }): Promise<GenerationRecord | null> => {
@@ -1284,7 +1301,7 @@ export function Studio() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode: "t2i",
-          tier: args.tier,
+          ...imageModelRequest(args.imageModelId),
           prompt: {
             subject: [
               "Image editing task. Apply this change to the reference image:",
@@ -1340,15 +1357,17 @@ export function Studio() {
   // Generate with a specific image model id — a Seedream tier
   // (draft/standard/hero) or a Google model ("nano" / "nano-pro").
   const runGenerate = (modelId: string) => {
-    const google = MODEL_ID_TO_GOOGLE[modelId] ?? null;
-    const nextResolution =
-      google !== "nano-banana-pro" && resolution === "4K" ? "2K" : resolution;
-    setGoogleModel(google);
-    if (!google) setTier(modelId as Tier);
-    if (nextResolution !== resolution) setResolution(nextResolution);
+    const choice = imageModelChoice(modelId);
+    if (!choice) return;
+    const nextResolution = choice.resolutions.includes(
+      resolution as ImageResolutionOption
+    )
+      ? resolution
+      : choice.resolutions[choice.resolutions.length - 1];
+    applyImageModel(modelId, choice);
     submit(buildPromptInputs(), {
-      tier: google ? undefined : (modelId as Tier),
-      imageModel: google ?? "seedream",
+      tier: choice.tier ?? undefined,
+      imageModel: choice.imageModel ?? "seedream",
       resolution: nextResolution,
     });
   };
@@ -1376,9 +1395,7 @@ export function Studio() {
       return;
     }
     // Ask the guide whether a different model fits this prompt better.
-    const currentModelId = googleModel
-      ? GOOGLE_TO_MODEL_ID[googleModel]
-      : tier;
+    const currentModelId = imageModelId;
     setCheckingModel(true);
     try {
       const rec = await fetch("/api/recommend-model", {
@@ -1815,14 +1832,35 @@ export function Studio() {
       >
         {g.output_url ? (
           isVideo(g) ? (
-            <video
-              src={g.output_url}
-              className="aspect-video w-full object-cover"
-              playsInline
-              muted
-              loop
-              preload="metadata"
-            />
+            <div className="relative">
+              <video
+                // #t=0.1 seeks a hair past the start so the browser paints a
+                // real frame. Without it Safari (and iOS especially) shows
+                // its own grey placeholder instead of the clip.
+                src={`${g.output_url}#t=0.1`}
+                className="aspect-video w-full bg-black object-cover"
+                playsInline
+                muted
+                loop
+                preload="metadata"
+                onMouseEnter={(e) => {
+                  const el = e.currentTarget;
+                  el.play().catch(() => {
+                    // Autoplay refused — the still frame is enough.
+                  });
+                }}
+                onMouseLeave={(e) => {
+                  const el = e.currentTarget;
+                  el.pause();
+                  el.currentTime = 0.1;
+                }}
+              />
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <span className="flex size-11 items-center justify-center rounded-full bg-black/45 ring-1 ring-white/25 backdrop-blur-sm transition group-hover:opacity-0">
+                  <Play className="size-4 translate-x-[1px] fill-white text-white" />
+                </span>
+              </span>
+            </div>
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -3573,7 +3611,7 @@ export function Studio() {
               {mode === "t2v" && videoEditSource && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <video
-                    src={videoEditSource.url}
+                    src={`${videoEditSource.url}#t=0.1`}
                     muted
                     playsInline
                     preload="metadata"
@@ -3933,67 +3971,37 @@ export function Studio() {
                   )}
 
                   <span data-tour="model" className="inline-flex">
-                  <Select
-                  value={
-                    mode === "t2i" && googleModel
-                      ? GOOGLE_TO_MODEL_ID[googleModel]
-                      : tier
-                  }
-                  onValueChange={(v) => {
-                    const google = MODEL_ID_TO_GOOGLE[v] ?? null;
-                    setGoogleModel(google);
-                    if (!google) setTier(v as Tier);
-                    // 4K is Pro-only — don't leave it selected on a model
-                    // that would silently render 2K.
-                    if (google !== "nano-banana-pro" && resolution === "4K") {
-                      setResolution("2K");
-                    }
-                    // Same for references: dropping to a model that fuses
-                    // fewer should show the loss, not hide it.
-                    const nextMax = maxReferenceImages(google);
-                    if (referenceUrls.length > nextMax) {
-                      setReferenceUrls((prev) => prev.slice(0, nextMax));
-                      const name = google
-                        ? GOOGLE_IMAGE_MODELS[google].label
-                        : "Seedream";
-                      toast.error(
-                        `${name} takes ${nextMax} references — extras removed`
-                      );
-                    }
-                  }}
-                >
-                  <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                    <SelectValue>
-                      {mode === "t2i" && googleModel
-                        ? GOOGLE_IMAGE_MODELS[googleModel].label
-                        : selectedModelLabel}
-                    </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                    {modelOptions.map((m) => (
-                      <SelectItem key={m.tier} value={m.tier}>
-                        <span className="flex flex-col items-start gap-0.5 py-0.5">
-                          <span>{m.label}</span>
-                          <span className="font-mono text-[10px] text-muted-foreground">
-                            {m.slug}
-                          </span>
-                        </span>
-                    </SelectItem>
-                  ))}
-                    {mode === "t2i" &&
-                      GOOGLE_MODEL_OPTIONS.map(({ id, modelId }) => (
-                        <SelectItem key={modelId} value={modelId}>
-                          <span className="flex flex-col items-start gap-0.5 py-0.5">
-                            <span>{GOOGLE_IMAGE_MODELS[id].label}</span>
-                            <span className="font-mono text-[10px] text-muted-foreground">
-                              google · {GOOGLE_IMAGE_MODELS[id].defaultSlug}
-                            </span>
-                          </span>
-                        </SelectItem>
-                      ))}
-                </SelectContent>
-              </Select>
-              </span>
+                    {mode === "t2i" ? (
+                      <ImageModelSelect
+                        value={imageModelId}
+                        onChange={applyImageModel}
+                        className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3"
+                      />
+                    ) : (
+                      // Video renders on Seedance, whose tiers aren't part of
+                      // the still-model list.
+                      <Select
+                        value={tier}
+                        onValueChange={(v) => setTier(v as Tier)}
+                      >
+                        <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
+                          <SelectValue>{selectedModelLabel}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {modelOptions.map((m) => (
+                            <SelectItem key={m.tier} value={m.tier}>
+                              <span className="flex flex-col items-start gap-0.5 py-0.5">
+                                <span>{m.label}</span>
+                                <span className="font-mono text-[10px] text-muted-foreground">
+                                  {m.slug}
+                                </span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </span>
 
               {mode === "t2i" && (
                 <span data-tour="style" className="inline-flex">

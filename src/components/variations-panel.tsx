@@ -19,11 +19,10 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
-  estimateCost,
-  listModelOptions,
-  resolveModel,
-  type Tier,
+  imageModelCost,
+  imageModelIdFromEndpoint,
 } from "@/config/models";
+import { ImageModelSelect } from "@/components/image-model-select";
 import type {
   AspectRatio,
   GenerationRecord,
@@ -74,7 +73,8 @@ type Props = {
     source: GenerationRecord;
     strength: VaryStrength;
     count: number;
-    tier: Tier;
+    /** IMAGE_MODEL_CHOICES id — the caller maps it to tier / imageModel. */
+    imageModelId: string;
     aspect: AspectRatio;
     resolution: ImageResolution;
     prompt: PromptInputs;
@@ -108,20 +108,21 @@ export function VariationsPanel({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [strength, setStrength] = useState<VaryStrength>("medium");
   const [count, setCount] = useState<(typeof COUNTS)[number]>(3);
-  const [tier, setTier] = useState<Tier>(
-    source.tier === "draft" ? "standard" : source.tier
+  // Open on whatever made the original, so a re-roll starts from the same
+  // model rather than a default.
+  const [imageModelId, setImageModelId] = useState<string>(() =>
+    imageModelIdFromEndpoint(
+      source.model_endpoint,
+      source.tier === "draft" ? "standard" : source.tier
+    )
   );
   const [aspect, setAspect] = useState<AspectRatio>(asAspect(source.aspect));
-  const [resolution, setResolution] = useState<ImageResolution>("2K");
+  const [resolution, setResolution] = useState<ImageResolution>("1K");
   const [results, setResults] = useState<GenerationRecord[]>([]);
 
-  const modelOptions = useMemo(() => listModelOptions("t2i"), []);
-  const model = useMemo(() => resolveModel("t2i", tier), [tier]);
-  const selectedModelLabel =
-    modelOptions.find((m) => m.tier === tier)?.label ?? model.slug;
   const cost = useMemo(
-    () => estimateCost("t2i", tier, { numOutputs: count }),
-    [tier, count]
+    () => imageModelCost(imageModelId, resolution, count) ?? 0,
+    [imageModelId, resolution, count]
   );
 
   const run = async () => {
@@ -147,7 +148,7 @@ export function VariationsPanel({
         source,
         strength,
         count,
-        tier,
+        imageModelId,
         aspect,
         resolution,
         prompt,
@@ -308,18 +309,16 @@ export function VariationsPanel({
               </SelectContent>
             </Select>
 
-            <Select value={tier} onValueChange={(v) => setTier(v as Tier)}>
-              <SelectTrigger className="h-8 w-auto min-w-[8rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                <SelectValue>{selectedModelLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {modelOptions.map((m) => (
-                  <SelectItem key={m.tier} value={m.tier}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ImageModelSelect
+              value={imageModelId}
+              onChange={(id, choice) => {
+                setImageModelId(id);
+                if (!choice.resolutions.includes(resolution)) {
+                  setResolution(choice.resolutions[choice.resolutions.length - 1]);
+                }
+              }}
+              className="h-8 w-auto min-w-[8rem] rounded-full border-white/10 bg-white/5 px-3"
+            />
 
             <Select
               value={aspect}

@@ -328,6 +328,187 @@ export function maxReferenceImages(
     : MAX_REFERENCE_IMAGES;
 }
 
+// ---------------------------------------------------------------------------
+// The image-model list every picker reads from
+// ---------------------------------------------------------------------------
+
+/**
+ * One selectable still model, whichever provider serves it.
+ *
+ * This is the single source for every image-model picker in the app — the
+ * dock, variations, the chat composer — and for the routing guide that
+ * recommends one. Add a model here and it appears in all of them, with the
+ * right request shape, price, reference ceiling and resolutions; nothing
+ * else needs editing.
+ */
+export type ImageModelChoice = {
+  /** Stable id the UI and the routing guide speak. */
+  id: string;
+  label: string;
+  /** Provider model id, shown under the label so the team can see it. */
+  slug: string;
+  provider: Provider;
+  /** Tier to send to /api/generate — null for models outside the registry. */
+  tier: Tier | null;
+  /** imageModel to send to /api/generate — null for Seedream tiers. */
+  imageModel: GoogleImageModelId | null;
+  maxReferenceImages: number;
+  resolutions: ImageResolutionOption[];
+  /** What this model is genuinely best at — used by the routing guide. */
+  bestFor: string;
+};
+
+export type ImageResolutionOption = "1K" | "2K" | "4K";
+
+const SEEDREAM_RESOLUTIONS: ImageResolutionOption[] = ["1K", "2K"];
+
+export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
+  {
+    id: "draft",
+    label: "Seedream 4.0",
+    slug: T2I.tiers.draft.slug,
+    provider: "byteplus",
+    tier: "draft",
+    imageModel: null,
+    maxReferenceImages: MAX_REFERENCE_IMAGES,
+    resolutions: SEEDREAM_RESOLUTIONS,
+    bestFor: "fast, cheap drafts, iterations and thumbnails",
+  },
+  {
+    id: "standard",
+    label: "Seedream 5.0",
+    slug: T2I.tiers.standard.slug,
+    provider: "byteplus",
+    tier: "standard",
+    imageModel: null,
+    maxReferenceImages: MAX_REFERENCE_IMAGES,
+    resolutions: SEEDREAM_RESOLUTIONS,
+    bestFor: "balanced, general-purpose photorealistic images",
+  },
+  {
+    id: "hero",
+    label: "Seedream 5.0 Pro",
+    slug: T2I.tiers.hero.slug,
+    provider: "byteplus",
+    tier: "hero",
+    imageModel: null,
+    maxReferenceImages: MAX_REFERENCE_IMAGES,
+    resolutions: SEEDREAM_RESOLUTIONS,
+    bestFor:
+      "highest-fidelity hero and brand stills, multi-reference fusion, crisp 2K",
+  },
+  {
+    id: "nano",
+    label: GOOGLE_IMAGE_MODELS["nano-banana"].label,
+    slug: GOOGLE_IMAGE_MODELS["nano-banana"].defaultSlug,
+    provider: "google",
+    tier: null,
+    imageModel: "nano-banana",
+    maxReferenceImages: GOOGLE_IMAGE_MODELS["nano-banana"].maxReferenceImages,
+    resolutions: SEEDREAM_RESOLUTIONS,
+    bestFor:
+      "images that need readable text/logos, precise edits, complex compositional instructions, and character/product consistency",
+  },
+  {
+    id: "nano-pro",
+    label: GOOGLE_IMAGE_MODELS["nano-banana-pro"].label,
+    slug: GOOGLE_IMAGE_MODELS["nano-banana-pro"].defaultSlug,
+    provider: "google",
+    tier: null,
+    imageModel: "nano-banana-pro",
+    maxReferenceImages:
+      GOOGLE_IMAGE_MODELS["nano-banana-pro"].maxReferenceImages,
+    resolutions: ["1K", "2K", "4K"],
+    bestFor:
+      "the hardest text-heavy work — infographics, slides, posters with long copy — plus 4K output and fusing many references (up to 14) or several people in one frame",
+  },
+];
+
+export const DEFAULT_IMAGE_MODEL_ID = "standard";
+
+export function imageModelChoice(id: string | null | undefined) {
+  return IMAGE_MODEL_CHOICES.find((m) => m.id === id) ?? null;
+}
+
+/**
+ * Which choice a stored generation came from, so re-runs (variations, chat)
+ * open on the model that made the original rather than a default.
+ */
+export function imageModelIdFrom(
+  tier: string | null | undefined,
+  imageModel?: string | null
+): string {
+  const google = asGoogleImageModel(imageModel);
+  if (google) {
+    return (
+      IMAGE_MODEL_CHOICES.find((m) => m.imageModel === google)?.id ??
+      DEFAULT_IMAGE_MODEL_ID
+    );
+  }
+  // Guard the null: Google choices carry `tier: null`, so a missing tier
+  // would otherwise match one of them and quietly switch provider.
+  return (
+    (tier ? IMAGE_MODEL_CHOICES.find((m) => m.tier === tier)?.id : null) ??
+    DEFAULT_IMAGE_MODEL_ID
+  );
+}
+
+/**
+ * Which choice produced a stored generation, from its `model_endpoint`
+ * ("google:gemini-3-pro-image-preview", "byteplus:seedream-5-0-260128") with
+ * the tier as fallback. Lets a re-run open on the model that made the
+ * original instead of a default.
+ */
+export function imageModelIdFromEndpoint(
+  endpoint: string | null | undefined,
+  tier?: string | null
+): string {
+  const slug = (endpoint ?? "").replace(/^[a-z0-9_-]+:/i, "").trim();
+  const bySlug = IMAGE_MODEL_CHOICES.find((m) => m.slug === slug);
+  if (bySlug) return bySlug.id;
+  // A Google slug we don't recognise (an env override, or a GA rename) is
+  // still a Google render — keep it on that provider rather than a Seedream
+  // tier the endpoint never used.
+  if (/^google:/i.test(endpoint ?? "") || /^gemini-/i.test(slug)) {
+    return /pro/i.test(slug) ? "nano-pro" : "nano";
+  }
+  return imageModelIdFrom(tier);
+}
+
+/** The request fields a choice implies. */
+export function imageModelRequest(id: string): {
+  tier: Tier | undefined;
+  imageModel: GoogleImageModelId | undefined;
+} {
+  const choice = imageModelChoice(id);
+  return {
+    tier: choice?.tier ?? undefined,
+    imageModel: choice?.imageModel ?? undefined,
+  };
+}
+
+/** Per-image cost for a choice, honouring 4K pricing where it applies. */
+export function imageModelCost(
+  id: string,
+  resolution: ImageResolutionOption,
+  numOutputs = 1
+): number | null {
+  const choice = imageModelChoice(id);
+  if (!choice) return null;
+  if (choice.imageModel) {
+    const spec = GOOGLE_IMAGE_MODELS[choice.imageModel];
+    const per =
+      resolution === "4K" ? (spec.costPerImage4K ?? spec.costPerImage) : spec.costPerImage;
+    return per * numOutputs;
+  }
+  if (!choice.tier) return null;
+  try {
+    return estimateCost("t2i", choice.tier, { numOutputs });
+  } catch {
+    return null;
+  }
+}
+
 /** Background removal — Seedream edit (subject cut out onto clean white). */
 export const BACKGROUND_REMOVE_MODEL: ModelEndpoint = {
   provider: "byteplus",

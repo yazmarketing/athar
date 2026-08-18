@@ -26,10 +26,11 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { GenerationPlaceholderCard } from "@/components/generation-progress";
+import { ImageModelSelect } from "@/components/image-model-select";
 import {
-  estimateCost,
-  listModelOptions,
-  resolveModel,
+  imageModelChoice,
+  imageModelCost,
+  imageModelIdFromEndpoint,
   type Tier,
 } from "@/config/models";
 import type {
@@ -81,14 +82,15 @@ export type AssistantEditArgs = {
   referenceUrl: string;
   extraReferenceUrls?: string[];
   basePrompt: PromptInputs;
-  tier: Tier;
+  /** IMAGE_MODEL_CHOICES id — the caller maps it to tier / imageModel. */
+  imageModelId: string;
   aspect: AspectRatio;
   resolution: ImageResolution;
 };
 
 export type AssistantCreateArgs = {
   prompt: PromptInputs;
-  tier: Tier;
+  imageModelId: string;
   aspect: AspectRatio;
   resolution: ImageResolution;
   referenceUrls?: string[];
@@ -136,15 +138,19 @@ export function ImageChat({
   const [dragOver, setDragOver] = useState(false);
   const [improving, setImproving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [tier, setTier] = useState<Tier>(
-    generation?.tier === "draft" || !generation
-      ? "standard"
-      : generation.tier
+  // Open on the model that made the image being edited.
+  const [imageModelId, setImageModelId] = useState<string>(() =>
+    imageModelIdFromEndpoint(
+      generation?.model_endpoint,
+      generation?.tier === "draft" || !generation
+        ? "standard"
+        : generation.tier
+    )
   );
   const [aspect, setAspect] = useState<AspectRatio>(
     asAspect(generation?.aspect)
   );
-  const [resolution, setResolution] = useState<ImageResolution>("2K");
+  const [resolution, setResolution] = useState<ImageResolution>("1K");
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     generation?.output_url
       ? [
@@ -173,13 +179,11 @@ export function ImageChat({
   const refFileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
-  const modelOptions = useMemo(() => listModelOptions("t2i"), []);
-  const model = useMemo(() => resolveModel("t2i", tier), [tier]);
   const selectedModelLabel =
-    modelOptions.find((m) => m.tier === tier)?.label ?? model.slug;
+    imageModelChoice(imageModelId)?.label ?? "Model";
   const cost = useMemo(
-    () => estimateCost("t2i", tier, { numOutputs: 1 }),
-    [tier]
+    () => imageModelCost(imageModelId, resolution, 1) ?? 0,
+    [imageModelId, resolution]
   );
   const hasImage = Boolean(current?.output_url);
 
@@ -200,7 +204,12 @@ export function ImageChat({
           suggestions: true,
         },
       ]);
-      setTier(generation.tier === "draft" ? "standard" : generation.tier);
+      setImageModelId(
+        imageModelIdFromEndpoint(
+          generation.model_endpoint,
+          generation.tier === "draft" ? "standard" : generation.tier
+        )
+      );
       setAspect(asAspect(generation.aspect));
     } else if (!generation) {
       setMessages([
@@ -345,7 +354,7 @@ export function ImageChat({
         referenceUrl: current.output_url,
         extraReferenceUrls: attached.length > 0 ? attached : undefined,
         basePrompt: promptFrom(current),
-        tier,
+        imageModelId,
         aspect,
         resolution,
       });
@@ -354,7 +363,7 @@ export function ImageChat({
         prompt: {
           subject: instruction,
         },
-        tier,
+        imageModelId,
         aspect,
         resolution,
         referenceUrls: attached.length > 0 ? attached : undefined,
@@ -622,23 +631,16 @@ export function ImageChat({
               {extraRefs.length > 0 ? `${extraRefs.length} ref` : "Attach"}
             </button>
 
-            <Select value={tier} onValueChange={(v) => setTier(v as Tier)}>
-              <SelectTrigger className="h-8 w-auto min-w-[8.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                <SelectValue>{selectedModelLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {modelOptions.map((m) => (
-                  <SelectItem key={m.tier} value={m.tier}>
-                    <span className="flex flex-col items-start gap-0.5 py-0.5">
-                      <span>{m.label}</span>
-                      <span className="font-mono text-[10px] text-muted-foreground">
-                        {m.slug}
-                      </span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <ImageModelSelect
+              value={imageModelId}
+              onChange={(id, choice) => {
+                setImageModelId(id);
+                if (!choice.resolutions.includes(resolution)) {
+                  setResolution(choice.resolutions[choice.resolutions.length - 1]);
+                }
+              }}
+              className="h-8 w-auto min-w-[8.5rem] rounded-full border-white/10 bg-white/5 px-3"
+            />
 
             <Select
               value={aspect}

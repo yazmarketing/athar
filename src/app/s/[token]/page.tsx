@@ -18,23 +18,6 @@ function isVideo(generation: GenerationRecord) {
   );
 }
 
-/**
- * A one-line description of the work, drawn from the prompt's subject rather
- * than the full engineered prompt — enough to recognise the shot in a chat
- * preview, without pasting the negative prompt and quality tokens along
- * with it.
- */
-function subjectLine(generation: GenerationRecord): string | null {
-  const payload = generation.input_payload as {
-    prompt_inputs?: { subject?: string };
-  } | null;
-  const subject = payload?.prompt_inputs?.subject?.trim();
-  const source = subject || generation.final_prompt?.trim() || "";
-  if (!source) return null;
-  const oneLine = source.replace(/\s+/g, " ");
-  return oneLine.length > 150 ? `${oneLine.slice(0, 149).trimEnd()}…` : oneLine;
-}
-
 /** "Ajman Tourism · Ramadan 2026" — whichever of the two we know. */
 function attribution(context: ShareContext): string | null {
   return (
@@ -61,13 +44,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const video = isVideo(generation);
   const noun = video ? "Film" : "Image";
   const who = attribution(context);
-  const subject = subjectLine(generation);
 
   // `title.template` on the root layout appends " · Athar".
   const title = who ? `${who} — ${noun}` : `${noun} from Athar`;
-  const description =
-    subject ??
-    `A ${video ? "clip" : "still"} from Athar, YAZ Media's AI film and image studio.`;
+  // Deliberately generic: the prompt is our working material, and a share
+  // link is often forwarded well past the people it was sent to.
+  const description = `A ${video ? "clip" : "still"} from Athar, YAZ Media's AI film and image studio.`;
 
   const media = `/s/${token}/image`;
   // A clip has no poster frame to offer, so the card falls back to the Athar
@@ -83,7 +65,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       siteName: "Athar",
       title,
       description,
-      images: [{ url: cardImage, alt: subject ?? "Shared from Athar" }],
+      images: [{ url: cardImage, alt: "Shared from Athar" }],
       ...(video
         ? { videos: [{ url: media, type: "video/mp4" }] }
         : {}),
@@ -110,7 +92,6 @@ export default async function SharePage({ params }: Props) {
   const src = `/s/${token}/image`;
   const video = isVideo(generation);
   const who = attribution(context);
-  const subject = subjectLine(generation);
 
   return (
     <div className="flex min-h-dvh flex-col bg-background">
@@ -138,22 +119,15 @@ export default async function SharePage({ params }: Props) {
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={src}
-            alt={subject ?? "Shared generation"}
+            alt="Shared generation"
             className="max-h-[72vh] max-w-full rounded-xl object-contain shadow-2xl"
           />
         )}
 
-        {(who || subject) && (
-          <div className="max-w-xl text-center">
-            {who && (
-              <p className="text-[10px] tracking-[0.2em] text-gold uppercase">
-                {who}
-              </p>
-            )}
-            {subject && (
-              <p className="mt-1.5 text-sm text-foreground/80">{subject}</p>
-            )}
-          </div>
+        {who && (
+          <p className="max-w-xl text-center text-[10px] tracking-[0.2em] text-gold uppercase">
+            {who}
+          </p>
         )}
       </main>
 
