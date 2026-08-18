@@ -1952,6 +1952,27 @@ export function Studio() {
 
   const showDock = view === "create";
 
+  /**
+   * The dock grows a long way past its resting height — an open asset
+   * library, an attached first frame, a long prompt — and a fixed pb-52 left
+   * the render area hidden behind it. Measure it instead and pad the scroll
+   * area by what it actually occupies.
+   */
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [dockHeight, setDockHeight] = useState(0);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el || !showDock) {
+      setDockHeight(0);
+      return;
+    }
+    const observer = new ResizeObserver(([entry]) => {
+      setDockHeight(entry.contentRect.height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [showDock]);
+
   return (
     <div className="relative flex h-dvh overflow-hidden bg-background text-foreground">
       {/* Dims the app while the mobile drawer is open. */}
@@ -2816,8 +2837,15 @@ export function Studio() {
             <div
               className={cn(
                 "flex-1 overflow-y-auto px-6 sm:px-8",
+                // pb-52 is the floor for the first paint, before the dock has
+                // been measured; the inline value takes over from there.
                 showDock ? "pb-52" : "pb-8"
               )}
+              style={
+                showDock && dockHeight
+                  ? { paddingBottom: dockHeight + 48 }
+                  : undefined
+              }
             >
               {view === "create" ? (
                 <>
@@ -3383,9 +3411,14 @@ export function Studio() {
           <>
           <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-4 pb-4 sm:pb-6">
             <div
+              ref={dockRef}
               data-tour="dock"
               className={cn(
                 "animate-dock-in dock-glass pointer-events-auto relative w-full max-w-[56rem] rounded-2xl p-3 sm:p-4",
+                // However much it holds, the dock never takes the whole
+                // screen — past this it scrolls inside itself and the render
+                // above stays visible.
+                "max-h-[72dvh] overflow-y-auto overscroll-contain",
                 dragOver && "ring-2 ring-gold/50"
               )}
               onDragEnter={onDockDragEnter}
