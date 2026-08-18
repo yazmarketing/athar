@@ -101,8 +101,17 @@ export function coerceShots(raw: unknown, fallbackAspect = "4:5"): PlannedShot[]
     .filter((s) => s.prompt.length > 0);
 }
 
-/** Render the locked look as a sentence every shot prompt can carry. */
-export function continuityLine(look: PlannedLook | null): string {
+/**
+ * The locked look, written for a PLANNER — a text model that is producing a
+ * whole set and can act on "identical in every shot".
+ *
+ * Never send this to an image model. It renders one frame and has no notion of
+ * a set, so the labels are noise at best; and at ~900 characters it buries a
+ * fifteen-word shot description under a boilerplate that is itself a picture
+ * ("a boy in a white kandura in a farm at dawn"), which is how six different
+ * frames came back as the same photograph.
+ */
+export function continuityBrief(look: PlannedLook | null): string {
   if (!look) return "";
   return [
     look.subject && `Subject (identical in every shot): ${look.subject}.`,
@@ -115,17 +124,91 @@ export function continuityLine(look: PlannedLook | null): string {
     .join(" ");
 }
 
+/** Longest identity tail we will append to a single image prompt. */
+const IDENTITY_TAIL_MAX = 260;
+
 /**
- * Fold the locked look into every shot so continuity survives even though
- * each shot is generated as its own request. Without this the model
- * re-invents the person, their clothes and the room on every frame — the
- * single reason the old shot lists never read as one campaign.
+ * The minimum needed to keep one person recognisable across frames, as plain
+ * prose in whatever language the look was written in — no labels, no
+ * meta-instructions, and only who they are and what they wear.
+ *
+ * Location, lighting and grade are deliberately left out: those belong to the
+ * shot, which is allowed to move between frames. Repeating them is what
+ * pinned every frame to the same establishing wide.
+ */
+export function identityTail(look: PlannedLook | null): string {
+  if (!look) return "";
+  const tail = [look.subject, look.wardrobe]
+    .map((v) => (v ?? "").trim())
+    .filter(Boolean)
+    .join(" ");
+  if (tail.length <= IDENTITY_TAIL_MAX) return tail;
+  // Trim on a word boundary rather than mid-word.
+  const cut = tail.slice(0, IDENTITY_TAIL_MAX);
+  return cut.slice(0, cut.lastIndexOf(" ")).trim();
+}
+
+/**
+ * Boards planned before the split have the full `continuityBrief` baked into
+ * every stored frame prompt. The label below is a stable, unambiguous marker
+ * for where that block starts, so an existing board is cleaned up on the next
+ * render instead of needing a re-plan that would throw away hand edits.
+ */
+const LEGACY_CONTINUITY_MARKER = /\s*Subject \(identical in every shot\):[\s\S]*$/;
+
+export function stripLegacyContinuity(prompt: string): string {
+  return prompt.replace(LEGACY_CONTINUITY_MARKER, "").trim();
+}
+
+/** Standard framing, sent as a short leading clause the model acts on. */
+const SHOT_SIZE_PREFIX: Record<string, string> = {
+  Wide: "Wide shot.",
+  Medium: "Medium shot.",
+  "Close-up": "Close-up shot.",
+  "Extreme close-up": "Extreme close-up shot.",
+  "Over-the-shoulder": "Over-the-shoulder shot.",
+};
+
+/**
+ * Build the prompt for one frame: framing first, the shot itself next, and the
+ * identity tail last and only when it is actually carrying weight.
+ *
+ * With reference images attached the tail is dropped entirely — the pictures
+ * hold identity far better than a paragraph of description, and leaving both
+ * in simply re-creates the crowding this whole split exists to remove.
+ */
+export function composeFramePrompt(opts: {
+  prompt: string;
+  shotSize?: string | null;
+  look?: PlannedLook | null;
+  /** True when the render already carries reference images. */
+  hasReferences: boolean;
+}): string {
+  const shot = stripLegacyContinuity(opts.prompt);
+  return [
+    opts.shotSize ? SHOT_SIZE_PREFIX[opts.shotSize] : "",
+    shot,
+    opts.hasReferences ? "" : identityTail(opts.look ?? null),
+  ]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+/**
+ * Fold the locked look into every shot. Used by Campaign, where the whole
+ * point is one person in one place across a handful of shots and the frames
+ * are generated immediately without anywhere to persist the look.
+ *
+ * Storyboards deliberately do NOT use this — they keep the look on the board
+ * and compose per frame via `composeFramePrompt`, because a board's frames are
+ * supposed to differ.
  */
 export function applyContinuity(
   shots: PlannedShot[],
   look: PlannedLook | null
 ): PlannedShot[] {
-  const line = continuityLine(look);
+  const line = continuityBrief(look);
   if (!line) return shots;
   return shots.map((shot) => ({ ...shot, prompt: `${shot.prompt} ${line}` }));
 }

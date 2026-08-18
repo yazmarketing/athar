@@ -18,6 +18,8 @@ export type FramePatch = Partial<
     | "notes"
     | "aspect"
     | "duration_s"
+    | "lock_to_anchor"
+    | "is_blank"
     | "image_url"
     | "video_url"
     | "generation_id"
@@ -66,6 +68,8 @@ export async function ensureStoryboardTables() {
       notes text not null default '',
       aspect text,
       duration_s integer,
+      lock_to_anchor boolean not null default true,
+      is_blank boolean not null default false,
       image_url text,
       video_url text,
       generation_id uuid references public.generations (id) on delete set null,
@@ -73,6 +77,14 @@ export async function ensureStoryboardTables() {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
+  `);
+  await db().query(`
+    alter table public.storyboard_frames
+      add column if not exists lock_to_anchor boolean not null default true
+  `);
+  await db().query(`
+    alter table public.storyboard_frames
+      add column if not exists is_blank boolean not null default false
   `);
   await db().query(`
     create index if not exists storyboard_frames_board_idx
@@ -85,8 +97,8 @@ export async function ensureStoryboardTables() {
 }
 
 const FRAME_COLUMNS = `id, storyboard_id, position, title, prompt, motion,
-  shot_size, dialogue, notes, aspect, duration_s, image_url, video_url,
-  generation_id, video_job_id, created_at, updated_at`;
+  shot_size, dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank,
+  image_url, video_url, generation_id, video_job_id, created_at, updated_at`;
 
 export async function listStoryboards(opts: {
   clientId?: string | null;
@@ -266,12 +278,12 @@ export async function addFrame(
   const { rows } = await db().query<StoryboardFrameRecord>(
     `insert into storyboard_frames
        (storyboard_id, position, title, prompt, motion, shot_size, dialogue,
-        notes, aspect, duration_s)
+        notes, aspect, duration_s, lock_to_anchor, is_blank)
      values (
        $1,
        coalesce((select max(position) + 1 from storyboard_frames
                   where storyboard_id = $1), 0),
-       $2, $3, $4, $5, $6, $7, $8, $9
+       $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
      )
      returning ${FRAME_COLUMNS}`,
     [
@@ -284,6 +296,8 @@ export async function addFrame(
       frame.notes ?? "",
       frame.aspect ?? null,
       frame.duration_s ?? null,
+      frame.lock_to_anchor ?? true,
+      frame.is_blank ?? false,
     ]
   );
   if (!rows[0]) throw new Error("Could not add the frame");
@@ -311,8 +325,8 @@ export async function replaceFrames(
       await client.query(
         `insert into storyboard_frames
            (storyboard_id, position, title, prompt, motion, shot_size,
-            dialogue, notes, aspect, duration_s)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           storyboardId,
           index,
@@ -324,6 +338,8 @@ export async function replaceFrames(
           frame.notes ?? "",
           frame.aspect ?? null,
           frame.duration_s ?? null,
+          frame.lock_to_anchor ?? true,
+          frame.is_blank ?? false,
         ]
       );
     }
@@ -356,6 +372,8 @@ export async function updateFrame(
     "notes",
     "aspect",
     "duration_s",
+    "lock_to_anchor",
+    "is_blank",
     "image_url",
     "video_url",
     "generation_id",

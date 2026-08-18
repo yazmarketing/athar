@@ -3,7 +3,6 @@ import { getBrandKit } from "@/lib/brand-kits";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
 import {
-  applyContinuity,
   coerceLook,
   coerceShots,
   parsePlannerJson,
@@ -156,6 +155,8 @@ export async function planShots(
     throw new PlannerError("No shots came back — try a more specific brief");
   }
 
-  const look = coerceLook(parsed);
-  return { shots: applyContinuity(shots, look), look };
+  // Raw shots and the look, kept apart. Campaign folds the look into every
+  // prompt; a storyboard stores it on the board and composes per frame, since
+  // a board's frames are meant to differ from one another.
+  return { shots, look: coerceLook(parsed) };
 }

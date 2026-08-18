@@ -228,6 +228,13 @@ export type StoryboardFrameRecord = {
   aspect: string | null;
   /** Intended screen time in seconds — also the clip length when animated. */
   duration_s: number | null;
+  /**
+   * Render this frame against the board's first rendered frame. Holds identity
+   * but also drags composition, so inserts and macros want it off.
+   */
+  lock_to_anchor: boolean;
+  /** A deliberate non-image beat — a black screen. Never generated. */
+  is_blank: boolean;
   image_url: string | null;
   video_url: string | null;
   generation_id: string | null;

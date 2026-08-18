@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReferenceLibrary } from "@/components/reference-library";
+import { composeFramePrompt, stripLegacyContinuity } from "@/lib/shot-plan";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
@@ -389,7 +390,8 @@ export function Storyboards({
    */
   const keyFrameUrl = useCallback(
     (exceptId?: string) =>
-      frames.find((f) => f.image_url && f.id !== exceptId)?.image_url ?? null,
+      frames.find((f) => f.image_url && !f.is_blank && f.id !== exceptId)
+        ?.image_url ?? null,
     [frames]
   );
 
@@ -409,11 +411,26 @@ export function Storyboards({
   const renderFrame = useCallback(
     async (frame: StoryboardFrameRecord, anchor: string | null) => {
       if (!board) return null;
+      // A black frame is a real beat, not an unfinished one — nothing to make.
+      if (frame.is_blank) return null;
       if (!frame.prompt.trim()) {
         setErrors((e) => ({ ...e, [frame.id]: "Describe the frame first" }));
         setFrameStatus(frame.id, "error");
         return null;
       }
+
+      const refs = board.reference_urls ?? [];
+      /**
+       * The anchor holds identity but also drags composition — it is a whole
+       * picture, and the model treats it as one. Two rules keep it useful:
+       * attached references do the identity job better, so the anchor stands
+       * down when they exist; and any frame can opt out, which is what an
+       * insert or a macro needs.
+       */
+      const useAnchor = Boolean(anchor) && frame.lock_to_anchor && refs.length === 0;
+      const referenceUrls = [...refs, useAnchor ? anchor : null].filter(
+        (u): u is string => Boolean(u)
+      );
 
       setFrameStatus(frame.id, "rendering");
       setErrors((e) => ({ ...e, [frame.id]: "" }));
@@ -423,18 +440,21 @@ export function Storyboards({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: "t2i",
-            // The anchor frame sets the look everything else inherits, so it's
-            // the one frame worth paying more for.
-            tier: anchor ? "standard" : "hero",
-            prompt: { subject: frame.prompt },
+            // Whatever the rest of the board inherits from is worth paying
+            // more for: the reference-less anchor frame, or nothing.
+            tier: referenceUrls.length === 0 ? "hero" : "standard",
+            prompt: {
+              subject: composeFramePrompt({
+                prompt: frame.prompt,
+                shotSize: frame.shot_size,
+                look: board.look,
+                hasReferences: referenceUrls.length > 0,
+              }),
+            },
             aspect: frame.aspect || board.aspect,
             numOutputs: 1,
             resolution: "2K",
-            // The board's own references come first — they are what holds the
-            // character, product and look — with the anchor frame after them.
-            referenceUrls: [...(board.reference_urls ?? []), anchor].filter(
-              (u): u is string => Boolean(u)
-            ),
+            referenceUrls,
             projectId: board.project_id ?? undefined,
             brandKitId: board.brand_kit_id ?? undefined,
           }),
@@ -470,11 +490,17 @@ export function Storyboards({
     setRenderingAll(true);
     // Sequential so cost and rate stay predictable, the board renders in
     // order, and the anchor exists before anything references it.
-    let anchor = keyFrameUrl();
+    //
+    // Until this run produces one, the anchor is looked up per frame with that
+    // frame excluded: anchoring a frame to its OWN previous render guarantees
+    // it comes back unchanged, which is indistinguishable from the re-render
+    // having done nothing.
+    let anchor: string | null = null;
     for (const frame of frames) {
+      if (frame.is_blank) continue;
       if (onlyMissing && frame.image_url) continue;
       if (!frame.prompt.trim()) continue;
-      const url = await renderFrame(frame, anchor);
+      const url = await renderFrame(frame, anchor ?? keyFrameUrl(frame.id));
       if (!anchor && url) anchor = url;
     }
     setRenderingAll(false);
@@ -580,9 +606,9 @@ export function Storyboards({
       "",
       ...frames.map((f, i) =>
         [
-          `${i + 1}. ${f.title || "Untitled frame"}`,
+          `${i + 1}. ${f.title || "Untitled frame"}${f.is_blank ? " — BLACK FRAME" : ""}`,
           f.shot_size ? `   Shot: ${f.shot_size}` : "",
-          `   ${f.prompt}`,
+          `   ${stripLegacyContinuity(f.prompt)}`,
           f.motion ? `   Camera: ${f.motion}` : "",
           f.dialogue ? `   VO/Dialogue: ${f.dialogue}` : "",
           f.duration_s ? `   Duration: ${f.duration_s}s` : "",
@@ -634,6 +660,7 @@ export function Storyboards({
   .frame { break-inside: avoid; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
   .thumb { width: 100%; aspect-ratio: ${ratio}; background: #f2f2f2; border-radius: 4px; object-fit: cover; display: block; }
   .no-thumb { display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 11px; }
+  .black { display: flex; align-items: center; justify-content: center; background: #111; color: #777; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
   .n { font-weight: 700; }
   .label { color: #888; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; margin-top: 8px; }
   p { margin: 2px 0 0; }
@@ -651,14 +678,16 @@ ${frames
   .map(
     (f, i) => `<div class="frame">
   ${
-    f.image_url && !isVideoUrl(f.image_url)
-      ? `<img class="thumb" src="${esc(f.image_url)}" alt="">`
-      : `<div class="thumb no-thumb">Not rendered</div>`
+    f.is_blank
+      ? `<div class="thumb black">Black frame</div>`
+      : f.image_url && !isVideoUrl(f.image_url)
+        ? `<img class="thumb" src="${esc(f.image_url)}" alt="">`
+        : `<div class="thumb no-thumb">Not rendered</div>`
   }
   <p style="margin-top:10px"><span class="n">${i + 1}.</span> ${esc(f.title || "Untitled frame")}${
     f.shot_size ? ` — ${esc(f.shot_size)}` : ""
   }${f.duration_s ? ` · ${f.duration_s}s` : ""}</p>
-  <div class="label">Frame</div><p>${esc(f.prompt)}</p>
+  <div class="label">Frame</div><p>${esc(stripLegacyContinuity(f.prompt))}</p>
   ${f.motion ? `<div class="label">Camera</div><p>${esc(f.motion)}</p>` : ""}
   ${f.dialogue ? `<div class="label">VO / Dialogue</div><p>${esc(f.dialogue)}</p>` : ""}
   ${f.notes ? `<div class="label">Notes</div><p>${esc(f.notes)}</p>` : ""}
@@ -713,7 +742,8 @@ ${frames
     );
   }
 
-  const rendered = frames.filter((f) => f.image_url).length;
+  const renderable = frames.filter((f) => !f.is_blank);
+  const rendered = renderable.filter((f) => f.image_url).length;
   const busy = renderingAll || planning;
 
   return (
@@ -744,7 +774,7 @@ ${frames
           />
           <p className="mt-0.5 px-1 text-[11px] text-muted-foreground">
             {board.project_name ? `${board.project_name} · ` : ""}
-            {rendered}/{frames.length} rendered
+            {rendered}/{renderable.length} rendered
             {board.brand_kit_id ? " · brand kit applied" : ""}
           </p>
         </div>
@@ -959,7 +989,7 @@ ${frames
               Frames <span className="text-muted-foreground">({frames.length})</span>
             </p>
             <div className="flex items-center gap-2">
-              {rendered > 0 && rendered < frames.length && (
+              {rendered > 0 && rendered < renderable.length && (
                 <Button
                   variant="outline"
                   className="gap-2"
@@ -967,7 +997,7 @@ ${frames
                   onClick={() => void renderAll(true)}
                 >
                   <ImageIcon className="size-4" />
-                  Render the {frames.length - rendered} missing
+                  Render the {renderable.length - rendered} missing
                 </Button>
               )}
               <Button
@@ -980,7 +1010,7 @@ ${frames
                 ) : (
                   <Sparkles className="size-4" />
                 )}
-                Render all {frames.length}
+                Render all {renderable.length}
               </Button>
             </div>
           </div>
@@ -993,6 +1023,7 @@ ${frames
                 index={i}
                 total={frames.length}
                 boardAspect={board.aspect}
+                anchorInUse={(board.reference_urls ?? []).length === 0}
                 status={status[frame.id] ?? "idle"}
                 error={errors[frame.id]}
                 canGenerate={canGenerate}
@@ -1381,6 +1412,7 @@ function FrameCard({
   index,
   total,
   boardAspect,
+  anchorInUse,
   status,
   error,
   canGenerate,
@@ -1395,6 +1427,8 @@ function FrameCard({
   index: number;
   total: number;
   boardAspect: string;
+  /** False when the board's own references have replaced the key frame. */
+  anchorInUse: boolean;
   status: FrameStatus;
   error?: string;
   canGenerate: boolean;
@@ -1423,7 +1457,11 @@ function FrameCard({
         className="relative flex items-center justify-center bg-secondary"
         style={{ aspectRatio: aspectStyle(frame.aspect, boardAspect) }}
       >
-        {frame.video_url ? (
+        {frame.is_blank ? (
+          <span className="flex size-full items-center justify-center bg-black text-[11px] tracking-[0.2em] text-white/40 uppercase">
+            Black
+          </span>
+        ) : frame.video_url ? (
           <video
             src={frame.video_url}
             className="size-full object-cover"
@@ -1502,7 +1540,7 @@ function FrameCard({
         </div>
 
         <Textarea
-          value={frame.prompt}
+          value={stripLegacyContinuity(frame.prompt)}
           onChange={(e) => onChange({ prompt: e.target.value })}
           placeholder="Describe the still frame — subject, setting, light."
           className="min-h-20 bg-background text-xs"
@@ -1560,37 +1598,78 @@ function FrameCard({
 
         {error && <p className="text-[11px] text-red-400">{error}</p>}
 
-        <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
-          <Button
-            size="sm"
-            variant={frame.image_url ? "outline" : "default"}
-            className={cn(
-              "h-8 flex-1 gap-1.5",
-              !frame.image_url &&
-                "bg-gold text-primary-foreground hover:bg-gold/90"
-            )}
-            disabled={working || busy || !canGenerate || !frame.prompt.trim()}
-            onClick={onRender}
-          >
-            <ImageIcon className="size-3.5" />
-            {frame.image_url ? "Re-render" : "Render"}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 gap-1.5"
-            title={
-              frame.image_url
-                ? "Animate this still into a clip"
-                : "Render the still first"
-            }
-            disabled={!frame.image_url || working || busy || !canGenerate}
-            onClick={onAnimate}
-          >
-            <Clapperboard className="size-3.5" />
-            Animate
-          </Button>
+        {/* Consistency controls. Matching the anchor holds the subject but
+            also copies its framing, so an insert or a macro wants it off. */}
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
+          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <input
+              type="checkbox"
+              checked={frame.is_blank}
+              onChange={(e) => onChange({ is_blank: e.target.checked })}
+              className="size-3.5 accent-current"
+            />
+            Black frame
+          </label>
+          {!frame.is_blank && (
+            <label
+              className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              title={
+                anchorInUse
+                  ? "Render this frame against the board's first frame"
+                  : "Not in use — the board's own references are holding the look"
+              }
+            >
+              <input
+                type="checkbox"
+                checked={frame.lock_to_anchor}
+                disabled={!anchorInUse}
+                onChange={(e) => onChange({ lock_to_anchor: e.target.checked })}
+                className="size-3.5 accent-current disabled:opacity-40"
+              />
+              <span className={cn(!anchorInUse && "opacity-40")}>
+                Match frame 1
+              </span>
+            </label>
+          )}
         </div>
+
+        {frame.is_blank ? (
+          <p className="mt-auto pt-1 text-[11px] text-muted-foreground">
+            Nothing is generated for this beat.
+          </p>
+        ) : (
+          <div className="mt-auto flex flex-wrap gap-1.5 pt-1">
+            <Button
+              size="sm"
+              variant={frame.image_url ? "outline" : "default"}
+              className={cn(
+                "h-8 flex-1 gap-1.5",
+                !frame.image_url &&
+                  "bg-gold text-primary-foreground hover:bg-gold/90"
+              )}
+              disabled={working || busy || !canGenerate || !frame.prompt.trim()}
+              onClick={onRender}
+            >
+              <ImageIcon className="size-3.5" />
+              {frame.image_url ? "Re-render" : "Render"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1.5"
+              title={
+                frame.image_url
+                  ? "Animate this still into a clip"
+                  : "Render the still first"
+              }
+              disabled={!frame.image_url || working || busy || !canGenerate}
+              onClick={onAnimate}
+            >
+              <Clapperboard className="size-3.5" />
+              Animate
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

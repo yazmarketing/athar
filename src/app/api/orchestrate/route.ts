@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
+import { applyContinuity } from "@/lib/shot-plan";
 import {
   isPlannerUnavailable,
   PLANNER_UNAVAILABLE_MESSAGE,
@@ -32,7 +33,9 @@ export async function POST(req: NextRequest) {
       shotCount: body.shotCount,
       brandKitId: body.brandKitId,
     });
-    return NextResponse.json({ shots, look });
+    // Campaign generates straight from this response with nowhere to persist
+    // the look, so it travels inside each prompt.
+    return NextResponse.json({ shots: applyContinuity(shots, look), look });
   } catch (err) {
     if (err instanceof PlannerError) {
       return NextResponse.json({ error: err.message }, { status: err.status });

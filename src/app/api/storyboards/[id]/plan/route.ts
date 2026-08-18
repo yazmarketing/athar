@@ -6,7 +6,7 @@ import {
   PlannerError,
   planShots,
 } from "@/lib/shot-planner";
-import { continuityLine } from "@/lib/shot-plan";
+import { continuityBrief } from "@/lib/shot-plan";
 import { describeReferences } from "@/lib/reference-assets";
 import {
   addFrame,
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     // appending must not re-invent the world the board already established.
     const direction = [
       await describeReferences(board.reference_urls ?? []),
-      append ? continuityLine(board.look) : "",
+      append ? continuityBrief(board.look) : "",
     ]
       .filter(Boolean)
       .join(" ");
