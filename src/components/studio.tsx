@@ -10,6 +10,7 @@ import {
   CheckSquare,
   ChevronDown,
   Clapperboard,
+  Film,
   FolderKanban,
   Heart,
   HelpCircle,
@@ -51,9 +52,12 @@ import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
+import { Storyboards } from "@/components/storyboard";
+import { WelcomeCelebration } from "@/components/welcome-celebration";
 import {
   OnboardingTour,
-  TOUR_STORAGE_KEY,
+  persistTourCompleted,
+  shouldRunTour,
   type TourStep,
 } from "@/components/onboarding-tour";
 import { SidebarUser } from "@/components/sidebar-user";
@@ -158,6 +162,7 @@ type View =
   | "usage"
   | "assets"
   | "orchestrate"
+  | "storyboard"
   | "team";
 
 function isVideo(g: GenerationRecord) {
@@ -274,6 +279,7 @@ export function Studio() {
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [refAdviceOpen, setRefAdviceOpen] = useState(false);
   const [refAdviceDismissed, setRefAdviceDismissed] = useState(false);
 
@@ -506,6 +512,13 @@ export function Studio() {
         body: "Campaign takes one brief and fans it out into a full set of on-brand shots, instead of prompting them one at a time.",
         placement: "right",
       },
+      {
+        target: "storyboard",
+        onEnter: toSidebar,
+        title: "Storyboard the piece",
+        body: "For anything with a sequence — a film, a reel, an ad — plan it here first. The brief breaks into numbered frames you can rewrite and reorder, each with its own camera move, and the whole board renders anchored to one look. Animate any frame into a clip when it's right.",
+        placement: "right",
+      },
     ];
 
     if (isManagement) {
@@ -641,30 +654,35 @@ export function Studio() {
     setProjectsReady(true);
 
     // Onboarding runs on every sign-in until it is explicitly completed.
-    // Skipping it doesn't count, so it comes back next time.
-    let done = false;
-    try {
-      done = Boolean(localStorage.getItem(TOUR_STORAGE_KEY));
-    } catch {
-      // private mode — treat as not completed
-    }
-    if (!done) {
+    // Skipping it doesn't count, so it comes back next time. "Completed" is
+    // answered by the server (users.onboarded_at) with localStorage as a fast
+    // path, so a new browser or a cleared cache doesn't replay a tour this
+    // person already finished.
+    let cancelled = false;
+    let waitForAnchors = 0;
+    void shouldRunTour().then((run) => {
+      if (cancelled || !run) return;
       setView("create");
       setMode("t2i");
       // Wait for the dock to exist rather than guessing a delay: a fixed
       // timeout raced the first paint on slower loads and the tour opened
       // with nothing to point at.
       let tries = 0;
-      const waitForAnchors = window.setInterval(() => {
+      waitForAnchors = window.setInterval(() => {
         tries += 1;
         if (document.querySelector('[data-tour="prompt"]')) {
           window.clearInterval(waitForAnchors);
-          setTourOpen(true);
+          if (!cancelled) setTourOpen(true);
         } else if (tries > 40) {
           window.clearInterval(waitForAnchors);
         }
       }, 100);
-    }
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(waitForAnchors);
+    };
   }, []);
 
   useEffect(() => {
@@ -2140,6 +2158,13 @@ export function Studio() {
             "Campaign",
             "campaign"
           )}
+          {navBtn(
+            view === "storyboard",
+            () => setView("storyboard"),
+            <Film className="size-4" />,
+            "Storyboard",
+            "storyboard"
+          )}
           {isManagement &&
             navBtn(
               view === "usage",
@@ -2783,6 +2808,28 @@ export function Studio() {
           </>
         )}
 
+        {view === "storyboard" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Storyboard</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Plan the piece frame by frame, then render the whole board
+                </p>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
+              <Storyboards
+                clients={clients}
+                defaultClientId={activeClientId}
+                defaultProjectId={activeProjectId}
+                defaultBrandKitId={activeBrandKitId}
+                onGenerated={() => void loadGallery()}
+              />
+            </div>
+          </>
+        )}
+
         {view === "team" && isManagement && (
           <>
             <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
@@ -2794,7 +2841,7 @@ export function Studio() {
               </div>
             </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
-              <TeamManagement />
+              <TeamManagement onOpenGeneration={openDetail} />
             </div>
           </>
         )}
@@ -3244,7 +3291,21 @@ export function Studio() {
             // The tour moves through Create and Library; put people back on
             // Home, which is where landing should always leave them.
             setView("home");
-            if (completed) toast.success("You're all set — welcome to Athar");
+            if (completed) {
+              // Server-side too, so it doesn't come back on another device.
+              void persistTourCompleted();
+              setWelcomeOpen(true);
+            }
+          }}
+        />
+
+        {/* Finishing onboarding deserves more than a toast in the corner. */}
+        <WelcomeCelebration
+          open={welcomeOpen}
+          onClose={() => setWelcomeOpen(false)}
+          onStart={() => {
+            setWelcomeOpen(false);
+            setView("home");
           }}
         />
 

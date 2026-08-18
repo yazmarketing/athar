@@ -36,42 +36,87 @@ export async function openaiChat(opts: {
   // temperature, so we send max_completion_tokens universally (forward-safe)
   // and only pass temperature for the older families.
   const legacyParams = /^(gpt-4o|gpt-4\.1|gpt-4-|gpt-4$|gpt-3)/.test(model);
-  const payload: Record<string, unknown> = {
-    model,
-    messages: opts.messages,
-    max_completion_tokens: opts.maxTokens ?? 1200,
-  };
-  if (legacyParams) payload.temperature = opts.temperature ?? 0.4;
+  const want = opts.maxTokens ?? 1200;
 
-  const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify(payload),
-  });
+  /**
+   * On a reasoning model `max_completion_tokens` is a budget for thinking AND
+   * writing, and thinking is billed first. Ask for exactly the output size and
+   * a long brief can burn the whole allowance before a single visible token is
+   * emitted — the response comes back `finish_reason: "length"` with empty
+   * content, which is what "OpenAI returned empty text" actually was.
+   *
+   * So reasoning models get headroom on top of the caller's output budget,
+   * and a truncated first attempt is retried once with a lot more.
+   */
+  const REASONING_HEADROOM = 6000;
+  const budget = legacyParams ? want : want + REASONING_HEADROOM;
 
-  if (!res.ok) {
-    // Surface OpenAI's own error message (e.g. invalid_api_key, model_not_found)
-    let detail = "";
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? "";
-    } catch {
-      detail = await res.text().catch(() => "");
+  const send = async (maxCompletionTokens: number) => {
+    const payload: Record<string, unknown> = {
+      model,
+      messages: opts.messages,
+      max_completion_tokens: maxCompletionTokens,
+    };
+    if (legacyParams) payload.temperature = opts.temperature ?? 0.4;
+
+    const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      // Surface OpenAI's own error message (invalid_api_key, model_not_found…)
+      let detail = "";
+      try {
+        const body = (await res.json()) as { error?: { message?: string } };
+        detail = body.error?.message ?? "";
+      } catch {
+        detail = await res.text().catch(() => "");
+      }
+      throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
     }
-    throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
+
+    const json = (await res.json()) as {
+      choices?: {
+        finish_reason?: string;
+        message?: { content?: string; refusal?: string };
+      }[];
+      usage?: { completion_tokens_details?: { reasoning_tokens?: number } };
+    };
+    const choice = json.choices?.[0];
+    return {
+      text: choice?.message?.content?.trim() ?? "",
+      refusal: choice?.message?.refusal ?? "",
+      finish: choice?.finish_reason ?? "",
+      reasoning: json.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+    };
+  };
+
+  let out = await send(budget);
+  if (!out.text && out.finish === "length" && !legacyParams) {
+    out = await send(budget * 2);
   }
 
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const text = json.choices?.[0]?.message?.content?.trim();
-  if (!text) {
-    throw new Error("OpenAI returned empty text — check OPENAI_CHAT_MODEL");
+  if (!out.text) {
+    if (out.refusal) {
+      throw new Error(`OpenAI declined this request: ${out.refusal.slice(0, 200)}`);
+    }
+    if (out.finish === "length") {
+      throw new Error(
+        `${model} used its whole token budget thinking and returned nothing ` +
+          `(${out.reasoning} reasoning tokens). Shorten the request, or set ` +
+          `OPENAI_CHAT_MODEL to a non-reasoning model such as gpt-4.1.`
+      );
+    }
+    throw new Error(
+      `OpenAI returned empty text (finish_reason: ${out.finish || "unknown"}) — check OPENAI_CHAT_MODEL`
+    );
   }
-  return text;
+  return out.text;
 }
 
 export type ImageScore = { index: number; score: number; reason: string };

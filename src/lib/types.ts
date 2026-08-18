@@ -211,3 +211,66 @@ export type GenerationRecord = {
   created_at: string;
   completed_at: string | null;
 };
+
+/** One frame of a storyboard — a still prompt plus the move that follows it. */
+export type StoryboardFrameRecord = {
+  id: string;
+  storyboard_id: string;
+  position: number;
+  title: string;
+  /** Still-frame description only; camera language lives in `motion`. */
+  prompt: string;
+  motion: string;
+  shot_size: string;
+  dialogue: string;
+  notes: string;
+  /** Overrides the board's aspect when set. */
+  aspect: string | null;
+  /** Intended screen time in seconds — also the clip length when animated. */
+  duration_s: number | null;
+  image_url: string | null;
+  video_url: string | null;
+  generation_id: string | null;
+  /** Set while an animate-to-clip job is in flight. */
+  video_job_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** The locked look a whole board inherits, so every frame reads as one piece. */
+export type StoryboardLook = {
+  subject: string;
+  wardrobe: string;
+  location: string;
+  lighting: string;
+  grade: string;
+};
+
+/** Mirrors the `storyboards` table. */
+export type StoryboardRecord = {
+  id: string;
+  title: string;
+  brief: string;
+  look: StoryboardLook | null;
+  client_id: string | null;
+  project_id: string | null;
+  brand_kit_id: string | null;
+  aspect: string;
+  /**
+   * Images every frame is rendered against — the character, the product, the
+   * look. Text alone will not hold a face across twelve frames.
+   */
+  reference_urls: string[];
+  created_by: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Present on list responses. */
+  frame_count?: number;
+  rendered_count?: number;
+  cover_url?: string | null;
+  client_name?: string | null;
+  project_name?: string | null;
+  /** Present on single-board responses. */
+  frames?: StoryboardFrameRecord[];
+};

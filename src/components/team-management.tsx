@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Loader2, Check, X, SquarePen } from "lucide-react";
+import { Loader2, Check, X, SquarePen, Activity } from "lucide-react";
 import { toast } from "sonner";
 import {
   Select,
@@ -11,7 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MemberActivity } from "@/components/member-activity";
 import { cn } from "@/lib/utils";
+import type { GenerationRecord } from "@/lib/types";
 
 type TeamUser = {
   id: string;
@@ -71,10 +73,17 @@ function initials(name: string | null, email: string) {
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
 }
 
-export function TeamManagement() {
+export function TeamManagement({
+  onOpenGeneration,
+}: {
+  /** Lets an activity row open the studio's existing detail modals. */
+  onOpenGeneration?: (g: GenerationRecord) => void;
+} = {}) {
   const { data: session } = useSession();
   const myId = session?.user?.id;
   const [users, setUsers] = useState<TeamUser[] | null>(null);
+  /** Set while drilling into one member's activity; null shows the roster. */
+  const [activityId, setActivityId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editTeamId, setEditTeamId] = useState<string | null>(null);
   const [teamDraft, setTeamDraft] = useState("");
@@ -121,6 +130,16 @@ export function TeamManagement() {
 
   const activeCount = users?.filter((u) => u.active).length ?? 0;
 
+  if (activityId) {
+    return (
+      <MemberActivity
+        userId={activityId}
+        onBack={() => setActivityId(null)}
+        onOpenGeneration={onOpenGeneration}
+      />
+    );
+  }
+
   return (
     <div className="mx-auto max-w-4xl">
       <p className="mb-4 text-xs text-muted-foreground">
@@ -128,6 +147,7 @@ export function TeamManagement() {
         Team is read from a member&rsquo;s Google Workspace Department, and only
         when they sign in <em>with Google</em> — signing in with the shared
         password can&rsquo;t read the directory. Set it here for anyone blank.
+        Click a member to see everything they have generated.
       </p>
 
       {users === null ? (
@@ -160,13 +180,21 @@ export function TeamManagement() {
                   !u.active && "opacity-60"
                 )}
               >
-                {/* member */}
-                <div className="flex min-w-0 items-center gap-3">
-                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-foreground">
-                    {initials(u.name, u.email)}
+                {/* member — the whole cell opens their activity */}
+                <button
+                  type="button"
+                  onClick={() => setActivityId(u.id)}
+                  title={`See everything ${u.name || u.email.split("@")[0]} has generated`}
+                  className="group flex min-w-0 items-center gap-3 text-left"
+                >
+                  <span className="relative flex size-9 shrink-0 items-center justify-center rounded-full bg-secondary text-[11px] font-semibold text-foreground">
+                    <span className="transition group-hover:opacity-0">
+                      {initials(u.name, u.email)}
+                    </span>
+                    <Activity className="absolute size-4 opacity-0 transition group-hover:opacity-100" />
                   </span>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground">
+                    <p className="truncate text-sm font-medium text-foreground group-hover:underline">
                       {u.name || u.email.split("@")[0]}
                       {isMe && (
                         <span className="ml-1.5 text-[10px] text-muted-foreground">
@@ -178,7 +206,7 @@ export function TeamManagement() {
                       {u.email}
                     </p>
                   </div>
-                </div>
+                </button>
 
                 {/* team (inline edit) */}
                 <div className="min-w-0">

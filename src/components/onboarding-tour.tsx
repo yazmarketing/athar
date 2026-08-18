@@ -6,11 +6,70 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Set only when the walkthrough is actually completed — not merely seen.
- * Bumping the suffix re-runs onboarding for everyone, which is the intended
- * way to reintroduce it after a significant UI change.
+ * Local mirror of the server's `users.onboarded_at`. It exists purely so a
+ * returning user never sees a flash of the tour while the check is in flight —
+ * the DB row is the source of truth. Bumping the suffix re-runs onboarding for
+ * everyone, which is the intended way to reintroduce it after a significant UI
+ * change (clear `users.onboarded_at` alongside it to replay it team-wide).
  */
-export const TOUR_STORAGE_KEY = "athar-onboarding-completed-v2";
+const TOUR_STORAGE_KEY = "athar-onboarding-completed-v2";
+
+/** Read the local mirror. Never throws — private mode has no storage. */
+function readLocalTourCompleted(): boolean {
+  try {
+    return Boolean(localStorage.getItem(TOUR_STORAGE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+function writeLocalTourCompleted(done: boolean) {
+  try {
+    if (done) localStorage.setItem(TOUR_STORAGE_KEY, "1");
+    else localStorage.removeItem(TOUR_STORAGE_KEY);
+  } catch {
+    // private mode — the server row still carries the answer
+  }
+}
+
+/**
+ * Should the walkthrough run for this sign-in?
+ *
+ * The local mirror short-circuits the common case. Otherwise ask the server:
+ * a new browser, a private window or cleared storage must NOT replay a tour
+ * the person already finished. A failed request answers "don't run it" —
+ * showing the tour again is the worse failure.
+ */
+export async function shouldRunTour(): Promise<boolean> {
+  if (readLocalTourCompleted()) return false;
+  try {
+    const res = await fetch("/api/me/onboarding", { cache: "no-store" });
+    if (!res.ok) return false;
+    const json = (await res.json()) as { completed?: boolean };
+    if (json.completed) {
+      // Seed the mirror so later loads skip the round trip.
+      writeLocalTourCompleted(true);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Persist completion in both places. Fire-and-forget on the network half. */
+export async function persistTourCompleted(): Promise<void> {
+  writeLocalTourCompleted(true);
+  try {
+    await fetch("/api/me/onboarding", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch {
+    // Offline — the mirror covers this browser; the next completion syncs it.
+  }
+}
 
 export type TourStep = {
   /** Matches a `data-tour="…"` attribute in the app. */
@@ -161,13 +220,11 @@ export function OnboardingTour({
     };
   }, [open, targetId, steps]);
 
-  /** Finished the walkthrough — remember it and don't show it again. */
+  /**
+   * Finished the walkthrough. Persisting is the caller's job (it goes to the
+   * server as well as localStorage), so this only reports the outcome.
+   */
   const complete = useCallback(() => {
-    try {
-      localStorage.setItem(TOUR_STORAGE_KEY, "1");
-    } catch {
-      // private mode — the tour just shows again next visit
-    }
     setIndex(0);
     onClose(true);
   }, [onClose]);

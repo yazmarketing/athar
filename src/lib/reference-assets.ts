@@ -163,3 +163,41 @@ export async function archiveReferenceAsset(id: string): Promise<void> {
     [id]
   );
 }
+
+/**
+ * A one-line description of the attached references, for a text-only planner.
+ *
+ * The images themselves go to the image model; the planner only needs to know
+ * *what* they are so it writes the brief around the right character, product
+ * or look rather than inventing its own. Unknown URLs (a direct upload that
+ * was never saved to the library) are counted but not named.
+ */
+export async function describeReferences(urls: string[]): Promise<string> {
+  const wanted = urls.map((u) => u.trim()).filter(Boolean);
+  if (wanted.length === 0) return "";
+  await ensureReferenceAssetsTable();
+
+  const { rows } = await db().query<{
+    name: string;
+    kind: string;
+    notes: string;
+  }>(
+    `select name, kind, notes from reference_assets
+     where url = any($1::text[]) and archived_at is null`,
+    [wanted]
+  );
+
+  const named = rows.map((r) =>
+    [`${r.name} (${r.kind})`, r.notes.trim()].filter(Boolean).join(" — ")
+  );
+  const unnamed = wanted.length - rows.length;
+  if (unnamed > 0) {
+    named.push(`${unnamed} attached image${unnamed === 1 ? "" : "s"}`);
+  }
+
+  return (
+    "Reference images are attached and every frame will be rendered against " +
+    `them: ${named.join("; ")}. Write the shots around exactly these — do not ` +
+    "invent a different subject, product or look."
+  );
+}

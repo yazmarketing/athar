@@ -53,9 +53,38 @@ async function ensureUsersTable() {
   await db().query(`
     alter table public.users add column if not exists password_hash text
   `);
+  // Onboarding completion lives on the user row, not in the browser — see
+  // db/migrations/018_user_onboarding.sql.
+  await db().query(`
+    alter table public.users add column if not exists onboarded_at timestamptz
+  `);
   await db().query(`
     create index if not exists users_email_idx on public.users (email)
   `);
+}
+
+/** Has this user finished the guided walkthrough (on any device)? */
+export async function hasCompletedOnboarding(userId: string): Promise<boolean> {
+  await ensureUsersTable();
+  const { rows } = await db().query<{ onboarded_at: string | null }>(
+    `select onboarded_at from public.users where id = $1`,
+    [userId]
+  );
+  return Boolean(rows[0]?.onboarded_at);
+}
+
+/**
+ * Mark the walkthrough finished. First completion wins — re-running the tour
+ * voluntarily later must not move the timestamp around.
+ */
+export async function markOnboardingComplete(userId: string): Promise<void> {
+  await ensureUsersTable();
+  await db().query(
+    `update public.users
+     set onboarded_at = coalesce(onboarded_at, now())
+     where id = $1`,
+    [userId]
+  );
 }
 
 export type UserAuthRecord = AppUser & {
