@@ -172,11 +172,20 @@ async function generateWithFallback(
     : new Error("All models failed");
 }
 
+/**
+ * Copy the render into our own storage.
+ *
+ * Returns the stored URL plus the provider reference worth keeping. Gemini
+ * hands back the image inline as a base64 data URI rather than a link — that
+ * is the whole payload, not a reference, so it must never reach `fal_url` or
+ * the JSON response. A 2K still runs to several MB of base64 and a 4K one to
+ * tens; echoed back through the gateway it fails the request outright.
+ */
 async function persistOutput(
   output: ProviderOutput,
   mode: "t2i" | "t2v"
-): Promise<string> {
-  let outputUrl = output.url;
+): Promise<{ url: string; providerUrl: string | null }> {
+  const inlineData = output.url.startsWith("data:");
   try {
     const res = await fetch(output.url);
     const blob = await res.arrayBuffer();
@@ -192,11 +201,17 @@ async function persistOutput(
             ? "jpg"
             : "png";
     const path = `${mode}/${Date.now()}-${output.seed ?? "v"}.${ext}`;
-    outputUrl = await uploadPublicObject(path, blob, contentType);
-  } catch {
-    // Keep the provider URL as fallback reference if the copy fails.
+    const url = await uploadPublicObject(path, blob, contentType);
+    return { url, providerUrl: inlineData ? null : output.url };
+  } catch (err) {
+    // A provider URL still works as a fallback; inline data has nowhere to
+    // live, so say so rather than returning megabytes of base64 as a "URL".
+    if (inlineData) {
+      const detail = err instanceof Error ? err.message : "unknown error";
+      throw new Error(`Could not store the generated image — ${detail}`);
+    }
+    return { url: output.url, providerUrl: output.url };
   }
-  return outputUrl;
 }
 
 export async function POST(req: NextRequest) {
@@ -439,7 +454,7 @@ export async function POST(req: NextRequest) {
     }
 
     const { output, usedModel, fallbackNote } = generated;
-    const outputUrl = await persistOutput(output, mode);
+    const { url: outputUrl, providerUrl } = await persistOutput(output, mode);
     const cost =
       usedModel.unit === "image"
         ? usedModel.costPerUnit
@@ -474,7 +489,7 @@ export async function POST(req: NextRequest) {
           body.referenceUrls ?? [],
           "ready",
           outputUrl,
-          output.url,
+          providerUrl,
           output.requestId,
           cost,
           aspect,

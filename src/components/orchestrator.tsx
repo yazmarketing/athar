@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, readJson } from "@/lib/utils";
 
 const ASPECTS = ["16:9", "9:16", "1:1", "4:5"];
 
@@ -145,7 +145,7 @@ export function Orchestrator({
         const json: {
           error?: string;
           generation?: { output_url?: string | null };
-        } = await res.json();
+        } = await readJson(res);
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
         const url: string | null = json.generation?.output_url ?? null;
         // Only promote a real URL — a failed key frame must not leave the

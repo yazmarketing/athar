@@ -47,7 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, readJson } from "@/lib/utils";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -942,7 +942,7 @@ export function Studio() {
                 : null,
           }),
         });
-        const json = await res.json();
+        const json = await readJson(res);
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
         if (json.job) {
           // Video renders run as durable jobs — track and poll instead
@@ -1205,7 +1205,7 @@ export function Studio() {
           referenceUrls: args.referenceUrls,
         }),
       });
-      const json = await res.json();
+      const json = await readJson(res);
       if (!res.ok) throw new Error(json.error ?? "Create failed");
       toast.success("Generated");
       await loadGallery();
@@ -1248,7 +1248,11 @@ export function Studio() {
           projectId: activeProjectId,
         }),
       });
-      const json = await res.json();
+      const json = await readJson<{
+        error?: string;
+        generations?: GenerationRecord[];
+        generation?: GenerationRecord;
+      }>(res);
       if (!res.ok) throw new Error(json.error ?? "Variations failed");
       await loadGallery();
       const list = (json.generations ?? [json.generation]).filter(
@@ -1306,7 +1310,7 @@ export function Studio() {
           projectId: activeProjectId,
         }),
       });
-      const json = await res.json();
+      const json = await readJson(res);
       if (!res.ok) throw new Error(json.error ?? "Edit failed");
       toast.success("Image updated");
       await loadGallery();
