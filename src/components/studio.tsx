@@ -679,6 +679,20 @@ export function Studio() {
       }, 100);
     });
 
+    // Clients belong to the whole app, not to the generate dock. They used to
+    // be fetched only by the ClientPicker, which lives inside the dock and is
+    // mounted only on the Create view — so anything else needing the list
+    // (Storyboard's client dropdown) found it empty.
+    void (async () => {
+      try {
+        const res = await fetch("/api/clients", { cache: "no-store" });
+        const json = await res.json();
+        if (!cancelled && res.ok) setClients(json.clients as ClientRecord[]);
+      } catch {
+        // The pickers still work; they just start empty until a retry.
+      }
+    })();
+
     return () => {
       cancelled = true;
       window.clearInterval(waitForAnchors);

@@ -1,8 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { StylePresetRecord } from "@/lib/types";
 
-export async function ensureStylePresetsTable() {
+async function ensureStylePresetsTableUncached() {
   await db().query(`
     create table if not exists public.style_presets (
       id uuid primary key default gen_random_uuid(),
@@ -17,6 +17,9 @@ export async function ensureStylePresetsTable() {
     )
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureStylePresetsTable = onceProcess(ensureStylePresetsTableUncached);
 
 export async function listStylePresets(
   clientId?: string | null

@@ -1,8 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { ProjectRecord } from "@/lib/types";
 
-export async function ensureProjectsTable() {
+async function ensureProjectsTableUncached() {
   await db().query(`
     create table if not exists public.projects (
       id uuid primary key default gen_random_uuid(),
@@ -23,6 +23,9 @@ export async function ensureProjectsTable() {
       on public.projects (created_at desc)
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureProjectsTable = onceProcess(ensureProjectsTableUncached);
 
 export async function listProjects(
   includeArchived = false,

@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { ReferenceAssetRecord } from "@/lib/types";
 
 export type ReferenceKind =
@@ -17,7 +17,7 @@ const KINDS: ReferenceKind[] = [
   "reference",
 ];
 
-export async function ensureReferenceAssetsTable() {
+async function ensureReferenceAssetsTableUncached() {
   await db().query(`
     create table if not exists public.reference_assets (
       id uuid primary key default gen_random_uuid(),
@@ -41,6 +41,9 @@ export async function ensureReferenceAssetsTable() {
       on public.reference_assets (client_id, archived_at)
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureReferenceAssetsTable = onceProcess(ensureReferenceAssetsTableUncached);
 
 /** Current (non-archived) references, optionally scoped by client and kind. */
 export async function listReferenceAssets(opts: {

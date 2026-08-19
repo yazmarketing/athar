@@ -1,8 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { ClientRecord } from "@/lib/types";
 
-export async function ensureClientsTable() {
+async function ensureClientsTableUncached() {
   await db().query(`
     create table if not exists public.clients (
       id uuid primary key default gen_random_uuid(),
@@ -18,6 +18,9 @@ export async function ensureClientsTable() {
       on public.clients (lower(name))
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureClientsTable = onceProcess(ensureClientsTableUncached);
 
 export async function listClients(
   includeArchived = false

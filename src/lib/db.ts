@@ -33,3 +33,30 @@ export function db(): Pool {
   }
   return pool;
 }
+
+/**
+ * Run a schema-guard exactly once per process.
+ *
+ * Every store guards itself with `create table if not exists` on each call, so
+ * a fresh database works without anyone remembering to run migrations. The
+ * guards are near-free on the server and expensive on the wire: each one is a
+ * separate round trip, and against DigitalOcean Managed Postgres a round trip
+ * is ~200ms. Listing the reference library was three trips — two of them
+ * guards — which is why the picker sat empty for most of a second.
+ *
+ * Wrapping them here keeps the self-healing behaviour on the first call and
+ * removes it from every call after. A failure is not cached, so a transient
+ * error still retries.
+ */
+export function onceProcess<T>(fn: () => Promise<T>): () => Promise<T> {
+  let inFlight: Promise<T> | null = null;
+  return () => {
+    if (!inFlight) {
+      inFlight = fn().catch((err) => {
+        inFlight = null;
+        throw err;
+      });
+    }
+    return inFlight;
+  };
+}

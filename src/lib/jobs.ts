@@ -1,8 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { GenerationJobRecord } from "@/lib/types";
 
-export async function ensureJobsTable() {
+async function ensureJobsTableUncached() {
   await db().query(`
     create table if not exists public.generation_jobs (
       id uuid primary key default gen_random_uuid(),
@@ -46,6 +46,9 @@ export async function ensureJobsTable() {
     end $$
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureJobsTable = onceProcess(ensureJobsTableUncached);
 
 export async function createJob(input: {
   kind: "t2v" | "i2v" | "v2v";

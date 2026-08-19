@@ -1,8 +1,8 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type { BrandKitRecord } from "@/lib/types";
 
-export async function ensureBrandKitsTable() {
+async function ensureBrandKitsTableUncached() {
   await db().query(`
     create table if not exists public.brand_kits (
       id uuid primary key default gen_random_uuid(),
@@ -27,6 +27,9 @@ export async function ensureBrandKitsTable() {
       on public.brand_kits (created_at desc)
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureBrandKitsTable = onceProcess(ensureBrandKitsTableUncached);
 
 export async function listBrandKits(
   includeArchived = false,

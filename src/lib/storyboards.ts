@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import type {
   StoryboardCastMember,
   StoryboardFrameRecord,
@@ -34,7 +34,7 @@ export type FramePatch = Partial<
  * so a fresh database works without anyone remembering to run migrations.
  * Mirrors db/migrations/019_storyboards.sql.
  */
-export async function ensureStoryboardTables() {
+async function ensureStoryboardTablesUncached() {
   await db().query(`
     create table if not exists public.storyboards (
       id uuid primary key default gen_random_uuid(),
@@ -121,6 +121,9 @@ export async function ensureStoryboardTables() {
       on public.storyboards (created_at desc)
   `);
 }
+
+/** Memoised per process — see `onceProcess`. */
+export const ensureStoryboardTables = onceProcess(ensureStoryboardTablesUncached);
 
 const FRAME_COLUMNS = `id, storyboard_id, position, title, prompt, motion,
   shot_size, dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank,

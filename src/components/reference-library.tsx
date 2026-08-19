@@ -51,6 +51,11 @@ type Props = {
   selectedUrls?: string[];
   /** manage: projects (of the active client) to offer as a filter. */
   projects?: { id: string; name: string }[];
+  /**
+   * Reports whether a fetch is in flight, so a caller that renders this inside
+   * a collapsible panel can put a spinner on the control that opened it.
+   */
+  onLoadingChange?: (loading: boolean) => void;
   className?: string;
 };
 
@@ -60,9 +65,16 @@ export function ReferenceLibrary({
   onPick,
   selectedUrls = [],
   projects,
+  onLoadingChange,
   className,
 }: Props) {
   const [refs, setRefs] = useState<ReferenceAssetRecord[] | null>(null);
+  /**
+   * True while any fetch is in flight — including a re-filter, where `refs` is
+   * already populated and the grid would otherwise sit showing stale results
+   * with no sign that anything is happening.
+   */
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("all");
   const [projectFilter, setProjectFilter] = useState<string>("all");
   const [uploading, setUploading] = useState(false);
@@ -80,6 +92,8 @@ export function ReferenceLibrary({
     if (filter !== "all") params.set("kind", filter);
     if (projectFilter !== "all") params.set("projectId", projectFilter);
     const qs = params.size ? `?${params.toString()}` : "";
+    setLoading(true);
+    onLoadingChange?.(true);
     try {
       const res = await fetch(`/api/reference-assets${qs}`);
       const json = await res.json();
@@ -88,8 +102,11 @@ export function ReferenceLibrary({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Load failed");
       setRefs([]);
+    } finally {
+      setLoading(false);
+      onLoadingChange?.(false);
     }
-  }, [clientId, filter, projectFilter]);
+  }, [clientId, filter, projectFilter, onLoadingChange]);
 
   useEffect(() => {
     void load();
@@ -467,7 +484,12 @@ export function ReferenceLibrary({
           generation.
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+        <div
+          className={cn(
+            "grid grid-cols-2 gap-3 transition-opacity sm:grid-cols-3 md:grid-cols-4",
+            loading && "pointer-events-none opacity-40"
+          )}
+        >
           {refs.map((r) => {
             const picked = selectedUrls.includes(r.url);
             const clickable = mode === "picker";

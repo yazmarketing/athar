@@ -136,6 +136,7 @@ export function Storyboards({
   const [planCount, setPlanCount] = useState(6);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [refsOpen, setRefsOpen] = useState(false);
+  const [refsLoading, setRefsLoading] = useState(false);
 
   const setFrameStatus = useCallback((id: string, next: FrameStatus) => {
     setStatus((prev) => ({ ...prev, [id]: next }));
@@ -686,79 +687,176 @@ export function Storyboards({
   }
 
   /**
-   * Export as a printable board sheet. Written into a new window rather than
-   * printing this page: the studio is a fixed, scroll-locked layout that
-   * prints as a single clipped page, and a standalone document also gives a
-   * clean PDF to send to a client.
+   * Export as a printable storyboard sheet.
+   *
+   * Written into a new window rather than printing this page: the studio is a
+   * fixed, scroll-locked layout that prints as one clipped page, and a
+   * standalone document also gives a clean PDF to send to a client.
+   *
+   * The layout is a system, not a pile of images — every panel carries the
+   * same furniture in the same place (shot code, framing, duration, action,
+   * camera, VO, notes), the image well is the board's aspect on every panel so
+   * nothing is letterboxed differently, and the sheet is version-stamped and
+   * paginated. Landscape, because a 16:9 well wastes half a portrait page.
    */
   function printBoard() {
     if (!board) return;
-    const win = window.open("", "_blank", "width=1024,height=768");
+    const win = window.open("", "_blank", "width=1280,height=800");
     if (!win) {
       toast.error("Allow pop-ups to export the board");
       return;
     }
-    const esc = (s: string) =>
-      s.replace(/[&<>"]/g, (c) =>
+    const esc = (v: string) =>
+      String(v ?? "").replace(/[&<>"]/g, (c) =>
         ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string
       );
     const ratio = aspectStyle(board.aspect, "16:9");
+    const style = resolveStoryboardStyle(board.style_id);
+    const stamp = new Date().toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    });
+    const castName = (id: string) =>
+      board.cast_members?.find((c) => c.id === id)?.name ?? id;
 
-    win.document.write(`<!doctype html><html><head><meta charset="utf-8">
-<title>${esc(board.title)}</title>
+    /** One labelled row inside a panel. Skipped entirely when empty. */
+    const field = (label: string, value?: string | null) =>
+      value && value.trim()
+        ? `<div class="row"><span class="k">${esc(label)}</span><span class="v">${esc(value)}</span></div>`
+        : "";
+
+    const panels = frames
+      .map((f, i) => {
+        const code = String(i + 1).padStart(2, "0");
+        const well = f.is_blank
+          ? `<div class="well black">BLACK FRAME</div>`
+          : f.image_url && !isVideoUrl(f.image_url)
+            ? `<div class="well"><img src="${esc(f.image_url)}" alt=""></div>`
+            : `<div class="well empty">Not rendered</div>`;
+        const people = (f.cast_ids ?? []).map(castName).join(", ");
+        return `<article class="panel">
+  <header class="phead">
+    <span class="code">${code}</span>
+    <span class="ptitle">${esc(f.title || "Untitled frame")}</span>
+    <span class="meta">${esc(f.shot_size || "—")}${f.duration_s ? ` · ${f.duration_s}s` : ""}</span>
+  </header>
+  ${well}
+  <div class="body">
+    ${field("Action", f.is_blank ? "No image — black screen." : stripLegacyContinuity(f.prompt))}
+    ${field("Camera", f.motion)}
+    ${field("VO / Dialogue", f.dialogue)}
+    ${field("In frame", people)}
+    ${field("Notes", f.notes)}
+  </div>
+</article>`;
+      })
+      .join("\n");
+
+    win.document.write(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>${esc(board.title)} — storyboard</title>
 <style>
-  * { box-sizing: border-box; }
-  body { margin: 0; padding: 32px; font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; color: #111; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  .meta { color: #666; font-size: 12px; margin-bottom: 4px; }
-  .brief { color: #333; max-width: 60ch; margin: 12px 0 24px; }
-  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-  .frame { break-inside: avoid; border: 1px solid #ddd; border-radius: 8px; padding: 12px; }
-  .thumb { width: 100%; aspect-ratio: ${ratio}; background: #f2f2f2; border-radius: 4px; object-fit: cover; display: block; }
-  .no-thumb { display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 11px; }
-  .black { display: flex; align-items: center; justify-content: center; background: #111; color: #777; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
-  .n { font-weight: 700; }
-  .label { color: #888; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; margin-top: 8px; }
-  p { margin: 2px 0 0; }
-  @page { margin: 14mm; }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 14mm;
+    font: 11px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;
+    color: #111; background: #fff;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* Landscape: a 16:9 well wastes half a portrait page. */
+  @page { size: A4 landscape; margin: 10mm; }
+
+  .sheet-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 16px; border-bottom: 1.5px solid #111; padding-bottom: 8px;
+    margin-bottom: 14px;
+  }
+  h1 { font-size: 19px; margin: 0 0 2px; letter-spacing: -0.01em; }
+  .sub { color: #555; font-size: 11px; }
+  .stamp { color: #777; font-size: 10px; text-align: right; white-space: nowrap; }
+  .brief {
+    color: #333; max-width: 90ch; margin: 0 0 16px;
+    padding-left: 10px; border-left: 2px solid #ddd;
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+
+  .panel {
+    break-inside: avoid; page-break-inside: avoid;
+    border: 1px solid #cfcfcf; border-radius: 6px; overflow: hidden;
+    display: flex; flex-direction: column; background: #fff;
+  }
+  .phead {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 6px 8px; border-bottom: 1px solid #e6e6e6; background: #fafafa;
+  }
+  .code {
+    font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #111; color: #fff; padding: 3px 5px; border-radius: 3px;
+  }
+  .ptitle { font-weight: 700; flex: 1; min-width: 0; }
+  .meta { color: #666; font-size: 10px; white-space: nowrap; }
+
+  /* Identical well on every panel, so nothing is letterboxed differently. */
+  .well { width: 100%; aspect-ratio: ${ratio}; background: #f2f2f2; overflow: hidden; }
+  .well img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .well.empty, .well.black {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  }
+  .well.empty { color: #aaa; }
+  .well.black { background: #111; color: #888; }
+
+  .body { padding: 7px 8px 8px; }
+  .row { display: flex; gap: 6px; margin-top: 4px; }
+  .row:first-child { margin-top: 0; }
+  .k {
+    flex: 0 0 62px; color: #888; font-size: 9px; letter-spacing: .1em;
+    text-transform: uppercase; padding-top: 1px;
+  }
+  .v { flex: 1; min-width: 0; }
+
+  .foot {
+    margin-top: 14px; padding-top: 6px; border-top: 1px solid #e6e6e6;
+    color: #999; font-size: 9px; display: flex; justify-content: space-between;
+  }
   @media print { body { padding: 0; } }
 </style></head><body>
-<h1>${esc(board.title)}</h1>
-<div class="meta">${esc(
+
+<div class="sheet-head">
+  <div>
+    <h1>${esc(board.title)}</h1>
+    <div class="sub">${esc(
       [board.client_name, board.project_name].filter(Boolean).join(" ▸ ") ||
         "Athar storyboard"
-    )} · ${frames.length} frame${frames.length === 1 ? "" : "s"} · ${esc(board.aspect)}</div>
-${board.brief ? `<div class="brief">${esc(board.brief)}</div>` : ""}
-<div class="grid">
-${frames
-  .map(
-    (f, i) => `<div class="frame">
-  ${
-    f.is_blank
-      ? `<div class="thumb black">Black frame</div>`
-      : f.image_url && !isVideoUrl(f.image_url)
-        ? `<img class="thumb" src="${esc(f.image_url)}" alt="">`
-        : `<div class="thumb no-thumb">Not rendered</div>`
-  }
-  <p style="margin-top:10px"><span class="n">${i + 1}.</span> ${esc(f.title || "Untitled frame")}${
-    f.shot_size ? ` — ${esc(f.shot_size)}` : ""
-  }${f.duration_s ? ` · ${f.duration_s}s` : ""}</p>
-  <div class="label">Frame</div><p>${esc(stripLegacyContinuity(f.prompt))}</p>
-  ${f.motion ? `<div class="label">Camera</div><p>${esc(f.motion)}</p>` : ""}
-  ${f.dialogue ? `<div class="label">VO / Dialogue</div><p>${esc(f.dialogue)}</p>` : ""}
-  ${f.notes ? `<div class="label">Notes</div><p>${esc(f.notes)}</p>` : ""}
-</div>`
-  )
-  .join("\n")}
+    )}</div>
+  </div>
+  <div class="stamp">
+    ${frames.length} frame${frames.length === 1 ? "" : "s"} · ${esc(board.aspect)}<br>
+    ${esc(style.label)}<br>
+    ${esc(stamp)} · draft
+  </div>
 </div>
+
+${board.brief ? `<p class="brief">${esc(board.brief)}</p>` : ""}
+
+<div class="grid">
+${panels}
+</div>
+
+<div class="foot">
+  <span>${esc(board.title)}</span>
+  <span>Athar · YAZ Media</span>
+</div>
+
 </body></html>`);
     win.document.close();
     // Driven from here rather than an inline <script> in the written markup:
     // a literal closing script tag inside a JS string is a footgun, and the
     // window is same-origin so calling print on it directly works. The delay
     // gives the thumbnails a chance to decode — print too early and the sheet
-    // comes out with empty boxes.
-    win.setTimeout(() => win.print(), 600);
+    // comes out with empty wells.
+    win.setTimeout(() => win.print(), 700);
   }
 
   /* -------------------------------------------------------------- rendering */
@@ -998,8 +1096,12 @@ ${frames
             className="gap-1.5"
             onClick={() => setRefsOpen((o) => !o)}
           >
-            <Paperclip className="size-3.5" />
-            {refsOpen ? "Done" : "Attach references"}
+            {refsOpen && refsLoading ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Paperclip className="size-3.5" />
+            )}
+            {refsOpen ? (refsLoading ? "Loading…" : "Done") : "Attach references"}
           </Button>
         </div>
 
@@ -1033,6 +1135,7 @@ ${frames
               clientId={board.client_id}
               selectedUrls={board.reference_urls ?? []}
               onPick={(url) => toggleBoardRef(url)}
+              onLoadingChange={setRefsLoading}
             />
           </div>
         )}
@@ -1408,6 +1511,7 @@ function CreateDialog({
   onCreate: () => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerLoading, setPickerLoading] = useState(false);
 
   const toggle = (url: string) =>
     setRefs(
@@ -1507,7 +1611,11 @@ function CreateDialog({
               className="gap-1.5"
               onClick={() => setPickerOpen((o) => !o)}
             >
-              <Paperclip className="size-3.5" />
+              {pickerOpen && pickerLoading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Paperclip className="size-3.5" />
+              )}
               References
               {refs.length > 0 ? ` (${refs.length})` : ""}
             </Button>
@@ -1543,6 +1651,7 @@ function CreateDialog({
                 clientId={clientId}
                 selectedUrls={refs}
                 onPick={(url) => toggle(url)}
+                onLoadingChange={setPickerLoading}
               />
             </div>
           )}
