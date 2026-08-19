@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import type {
+  StoryboardCastMember,
   StoryboardFrameRecord,
   StoryboardLook,
   StoryboardRecord,
@@ -20,6 +21,7 @@ export type FramePatch = Partial<
     | "duration_s"
     | "lock_to_anchor"
     | "is_blank"
+    | "cast_ids"
     | "image_url"
     | "video_url"
     | "generation_id"
@@ -43,6 +45,10 @@ export async function ensureStoryboardTables() {
       project_id uuid references public.projects (id) on delete set null,
       brand_kit_id uuid references public.brand_kits (id) on delete set null,
       aspect text not null default '16:9',
+      style_id text not null default 'raw',
+      cast_members jsonb not null default '[]'::jsonb,
+      banned_elements text[] not null default '{}',
+      look_locked boolean not null default false,
       reference_urls text[] not null default '{}',
       created_by uuid references public.users (id) on delete set null,
       archived_at timestamptz,
@@ -53,6 +59,22 @@ export async function ensureStoryboardTables() {
   await db().query(`
     alter table public.storyboards
       add column if not exists reference_urls text[] not null default '{}'
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists style_id text not null default 'raw'
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists cast_members jsonb not null default '[]'::jsonb
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists banned_elements text[] not null default '{}'
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists look_locked boolean not null default false
   `);
   await db().query(`
     create table if not exists public.storyboard_frames (
@@ -87,6 +109,10 @@ export async function ensureStoryboardTables() {
       add column if not exists is_blank boolean not null default false
   `);
   await db().query(`
+    alter table public.storyboard_frames
+      add column if not exists cast_ids text[] not null default '{}'
+  `);
+  await db().query(`
     create index if not exists storyboard_frames_board_idx
       on public.storyboard_frames (storyboard_id, position)
   `);
@@ -98,7 +124,8 @@ export async function ensureStoryboardTables() {
 
 const FRAME_COLUMNS = `id, storyboard_id, position, title, prompt, motion,
   shot_size, dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank,
-  image_url, video_url, generation_id, video_job_id, created_at, updated_at`;
+  cast_ids, image_url, video_url, generation_id, video_job_id, created_at,
+  updated_at`;
 
 export async function listStoryboards(opts: {
   clientId?: string | null;
@@ -174,6 +201,7 @@ export async function createStoryboard(input: {
   projectId?: string | null;
   brandKitId?: string | null;
   aspect?: string;
+  styleId?: string;
   referenceUrls?: string[];
   createdBy: string | null;
 }): Promise<StoryboardRecord> {
@@ -183,9 +211,9 @@ export async function createStoryboard(input: {
 
   const { rows } = await db().query<StoryboardRecord>(
     `insert into storyboards
-       (title, brief, client_id, project_id, brand_kit_id, aspect,
+       (title, brief, client_id, project_id, brand_kit_id, aspect, style_id,
         reference_urls, created_by)
-     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      returning *`,
     [
       title,
@@ -194,6 +222,7 @@ export async function createStoryboard(input: {
       input.projectId ?? null,
       input.brandKitId ?? null,
       input.aspect ?? "16:9",
+      input.styleId ?? "raw",
       cleanUrls(input.referenceUrls),
       input.createdBy,
     ]
@@ -211,8 +240,12 @@ export async function updateStoryboard(
     projectId?: string | null;
     brandKitId?: string | null;
     aspect?: string;
+    styleId?: string;
     referenceUrls?: string[];
     look?: StoryboardLook | null;
+    cast?: StoryboardCastMember[];
+    bannedElements?: string[];
+    lookLocked?: boolean;
     archived?: boolean;
   }
 ): Promise<StoryboardRecord | null> {
@@ -236,9 +269,17 @@ export async function updateStoryboard(
   if (patch.projectId !== undefined) set("project_id = $?", patch.projectId);
   if (patch.brandKitId !== undefined) set("brand_kit_id = $?", patch.brandKitId);
   if (patch.aspect !== undefined) set("aspect = $?", patch.aspect);
+  if (patch.styleId !== undefined) set("style_id = $?", patch.styleId);
   if (patch.referenceUrls !== undefined) {
     set("reference_urls = $?::text[]", cleanUrls(patch.referenceUrls));
   }
+  if (patch.cast !== undefined) {
+    set("cast_members = $?::jsonb", JSON.stringify(patch.cast));
+  }
+  if (patch.bannedElements !== undefined) {
+    set("banned_elements = $?::text[]", patch.bannedElements);
+  }
+  if (patch.lookLocked !== undefined) set("look_locked = $?", patch.lookLocked);
   if (patch.look !== undefined) {
     set("look = $?::jsonb", patch.look ? JSON.stringify(patch.look) : null);
   }
@@ -278,12 +319,12 @@ export async function addFrame(
   const { rows } = await db().query<StoryboardFrameRecord>(
     `insert into storyboard_frames
        (storyboard_id, position, title, prompt, motion, shot_size, dialogue,
-        notes, aspect, duration_s, lock_to_anchor, is_blank)
+        notes, aspect, duration_s, lock_to_anchor, is_blank, cast_ids)
      values (
        $1,
        coalesce((select max(position) + 1 from storyboard_frames
                   where storyboard_id = $1), 0),
-       $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+       $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
      )
      returning ${FRAME_COLUMNS}`,
     [
@@ -298,6 +339,7 @@ export async function addFrame(
       frame.duration_s ?? null,
       frame.lock_to_anchor ?? true,
       frame.is_blank ?? false,
+      frame.cast_ids ?? [],
     ]
   );
   if (!rows[0]) throw new Error("Could not add the frame");
@@ -325,8 +367,9 @@ export async function replaceFrames(
       await client.query(
         `insert into storyboard_frames
            (storyboard_id, position, title, prompt, motion, shot_size,
-            dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            dialogue, notes, aspect, duration_s, lock_to_anchor, is_blank,
+            cast_ids)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
         [
           storyboardId,
           index,
@@ -340,6 +383,7 @@ export async function replaceFrames(
           frame.duration_s ?? null,
           frame.lock_to_anchor ?? true,
           frame.is_blank ?? false,
+          frame.cast_ids ?? [],
         ]
       );
     }
@@ -374,6 +418,7 @@ export async function updateFrame(
     "duration_s",
     "lock_to_anchor",
     "is_blank",
+    "cast_ids",
     "image_url",
     "video_url",
     "generation_id",

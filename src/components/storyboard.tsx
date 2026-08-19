@@ -37,10 +37,19 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReferenceLibrary } from "@/components/reference-library";
-import { composeFramePrompt, stripLegacyContinuity } from "@/lib/shot-plan";
+import {
+  composeFrameNegative,
+  composeFramePrompt,
+  stripLegacyContinuity,
+} from "@/lib/shot-plan";
+import {
+  resolveStoryboardStyle,
+  STORYBOARD_STYLES,
+} from "@/config/storyboard-styles";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
+  StoryboardCastMember,
   StoryboardFrameRecord,
   StoryboardRecord,
 } from "@/lib/types";
@@ -388,11 +397,43 @@ export function Storyboards({
    * wardrobe each time. Anchoring to real pixels is what holds a person across
    * frames.
    */
-  const keyFrameUrl = useCallback(
-    (exceptId?: string) =>
-      frames.find((f) => f.image_url && !f.is_blank && f.id !== exceptId)
-        ?.image_url ?? null,
+  /**
+   * The image this frame can actually inherit identity from: the first
+   * rendered frame that shares a character with it.
+   *
+   * Sharing matters. Anchoring a frame containing the boy to a landscape that
+   * contains no one carries nothing — and it used to also suppress the written
+   * identity, so the character arrived described by neither picture nor text.
+   * `extra` holds frames rendered earlier in this same run.
+   */
+  const identityAnchor = useCallback(
+    (frame: StoryboardFrameRecord, extra?: Map<string, string>) => {
+      const ids = frame.cast_ids ?? [];
+      if (ids.length === 0) return null;
+      for (const other of frames) {
+        if (other.id === frame.id || other.is_blank) continue;
+        if (!(other.cast_ids ?? []).some((c) => ids.includes(c))) continue;
+        const url = extra?.get(other.id) ?? other.image_url;
+        if (url) return url;
+      }
+      return null;
+    },
     [frames]
+  );
+
+  /**
+   * Edit one cast member. Changes land on every frame that names them and
+   * nowhere else, and take effect on the next render without a re-plan.
+   */
+  const patchCast = useCallback(
+    (index: number, patch: Partial<StoryboardCastMember>) => {
+      if (!board) return;
+      const next = (board.cast_members ?? []).map((m, i) =>
+        i === index ? { ...m, ...patch } : m
+      );
+      void patchBoard({ cast: next }, { cast_members: next });
+    },
+    [board, patchBoard]
   );
 
   /** Toggle a reference on the open board and persist it. */
@@ -420,6 +461,7 @@ export function Storyboards({
       }
 
       const refs = board.reference_urls ?? [];
+      const style = resolveStoryboardStyle(board.style_id);
       /**
        * The anchor holds identity but also drags composition — it is a whole
        * picture, and the model treats it as one. Two rules keep it useful:
@@ -427,10 +469,16 @@ export function Storyboards({
        * down when they exist; and any frame can opt out, which is what an
        * insert or a macro needs.
        */
+      // The caller has already checked that the anchor shares a character.
       const useAnchor = Boolean(anchor) && frame.lock_to_anchor && refs.length === 0;
       const referenceUrls = [...refs, useAnchor ? anchor : null].filter(
         (u): u is string => Boolean(u)
       );
+      /**
+       * Written identity is dropped only when an image genuinely carrying this
+       * character is attached — board references, or a cast-sharing anchor.
+       */
+      const identityInPictures = refs.length > 0 || useAnchor;
 
       setFrameStatus(frame.id, "rendering");
       setErrors((e) => ({ ...e, [frame.id]: "" }));
@@ -447,9 +495,17 @@ export function Storyboards({
               subject: composeFramePrompt({
                 prompt: frame.prompt,
                 shotSize: frame.shot_size,
-                look: board.look,
-                hasReferences: referenceUrls.length > 0,
+                // Only the people actually in THIS frame. A landscape beat
+                // gets nobody, which is the point.
+                cast: board.cast_members ?? [],
+                castIds: frame.cast_ids ?? [],
+                stylePositive: style.positive,
+                hasReferences: identityInPictures,
               }),
+              negativeAdditions: composeFrameNegative(
+                board.banned_elements ?? [],
+                style.negative
+              ),
             },
             aspect: frame.aspect || board.aspect,
             numOutputs: 1,
@@ -495,13 +551,13 @@ export function Storyboards({
     // frame excluded: anchoring a frame to its OWN previous render guarantees
     // it comes back unchanged, which is indistinguishable from the re-render
     // having done nothing.
-    let anchor: string | null = null;
+    const justRendered = new Map<string, string>();
     for (const frame of frames) {
       if (frame.is_blank) continue;
       if (onlyMissing && frame.image_url) continue;
       if (!frame.prompt.trim()) continue;
-      const url = await renderFrame(frame, anchor ?? keyFrameUrl(frame.id));
-      if (!anchor && url) anchor = url;
+      const url = await renderFrame(frame, identityAnchor(frame, justRendered));
+      if (url) justRendered.set(frame.id, url);
     }
     setRenderingAll(false);
     await flushFrames();
@@ -821,6 +877,28 @@ ${frames
               ))}
             </SelectContent>
           </Select>
+          {/* Style is board-level and safe to change after planning: the frame
+              text is untouched, so switching and re-rendering is cheap. */}
+          <Select
+            value={board.style_id || "raw"}
+            onValueChange={(v) =>
+              void patchBoard({ styleId: v }, { style_id: v })
+            }
+          >
+            <SelectTrigger className="h-8 w-auto min-w-[10rem] text-xs">
+              <SelectValue placeholder="Visual style" />
+            </SelectTrigger>
+            <SelectContent className="max-w-sm">
+              {STORYBOARD_STYLES.map((st) => (
+                <SelectItem key={st.id} value={st.id}>
+                  <span className="block">{st.label}</span>
+                  <span className="block text-[11px] text-muted-foreground">
+                    {st.description}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copyShotList}>
             <Copy className="size-3.5" />
             Copy
@@ -965,6 +1043,93 @@ ${frames
         </p>
       </div>
 
+      {/* Cast. Each entry is the fixed identity string reused wherever that
+          character appears — and nowhere else. */}
+      {(board.cast_members ?? []).length > 0 && (
+        <div className="rounded-2xl bg-card p-5 ring-1 ring-border">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+              Cast
+            </label>
+            <span className="text-[11px] text-muted-foreground">
+              Only added to the frames that name them
+            </span>
+            <div className="flex-1" />
+            <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={board.look_locked}
+                onChange={(e) =>
+                  void patchBoard(
+                    { lookLocked: e.target.checked },
+                    { look_locked: e.target.checked }
+                  )
+                }
+                className="size-3.5 accent-current"
+              />
+              Keep on re-plan
+            </label>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {(board.cast_members ?? []).map((member, i) => (
+              <div
+                key={member.id}
+                className="rounded-xl bg-background p-2.5 ring-1 ring-border"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="rounded-md bg-secondary px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    {member.id}
+                  </span>
+                  <Input
+                    value={member.name}
+                    onChange={(e) => patchCast(i, { name: e.target.value })}
+                    className="h-7 flex-1 border-0 bg-transparent px-1 text-sm font-medium"
+                  />
+                </div>
+                <Textarea
+                  value={member.description}
+                  onChange={(e) =>
+                    patchCast(i, { description: e.target.value })
+                  }
+                  placeholder="Age, build, hair, distinguishing features, exact wardrobe."
+                  className="mt-1.5 max-h-32 min-h-14 overflow-y-auto bg-card text-xs"
+                />
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Fix a description once here and every frame that character appears
+            in picks it up — no re-plan needed. Tick “Keep on re-plan” so a new
+            plan can’t re-dress them.
+          </p>
+        </div>
+      )}
+
+      {(board.banned_elements ?? []).length > 0 && (
+        <div className="rounded-2xl bg-card p-5 ring-1 ring-border">
+          <label className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+            Never in frame
+          </label>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {board.banned_elements.map((b) => (
+              <span
+                key={b}
+                className="rounded-full bg-secondary px-2.5 py-1 text-[11px] text-muted-foreground"
+              >
+                {b}
+              </span>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Sent as a negative prompt on every frame, alongside a standing ban
+            on invented text, signage, logos and Arabic script — those are
+            composited in post.
+          </p>
+        </div>
+      )}
+
       {/* Frames */}
       {loadingBoard ? (
         <div className="flex justify-center py-16">
@@ -1023,13 +1188,14 @@ ${frames
                 index={i}
                 total={frames.length}
                 boardAspect={board.aspect}
+                cast={board.cast_members ?? []}
                 anchorInUse={(board.reference_urls ?? []).length === 0}
                 status={status[frame.id] ?? "idle"}
                 error={errors[frame.id]}
                 canGenerate={canGenerate}
                 busy={busy}
                 onChange={(patch) => patchFrame(frame.id, patch)}
-                onRender={() => void renderFrame(frame, keyFrameUrl(frame.id))}
+                onRender={() => void renderFrame(frame, identityAnchor(frame))}
                 onAnimate={() => void animateFrame(frame)}
                 onMove={(delta) => void moveFrame(frame.id, delta)}
                 onRemove={() => void removeFrame(frame.id)}
@@ -1412,6 +1578,7 @@ function FrameCard({
   index,
   total,
   boardAspect,
+  cast,
   anchorInUse,
   status,
   error,
@@ -1427,6 +1594,8 @@ function FrameCard({
   index: number;
   total: number;
   boardAspect: string;
+  /** The board's cast, so a frame can say which of them it contains. */
+  cast: StoryboardCastMember[];
   /** False when the board's own references have replaced the key frame. */
   anchorInUse: boolean;
   status: FrameStatus;
@@ -1597,6 +1766,46 @@ function FrameCard({
         </div>
 
         {error && <p className="text-[11px] text-red-400">{error}</p>}
+
+        {/* Who is in this frame. An empty row is normal — a landscape or an
+            insert has nobody in it, and adding one flattens the sequence. */}
+        {!frame.is_blank && cast.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+              In frame
+            </span>
+            {cast.map((member) => {
+              const on = (frame.cast_ids ?? []).includes(member.id);
+              return (
+                <button
+                  key={member.id}
+                  type="button"
+                  title={member.description}
+                  onClick={() =>
+                    onChange({
+                      cast_ids: on
+                        ? (frame.cast_ids ?? []).filter((c) => c !== member.id)
+                        : [...(frame.cast_ids ?? []), member.id],
+                    })
+                  }
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[11px] ring-1 transition",
+                    on
+                      ? "bg-gold text-primary-foreground ring-transparent"
+                      : "text-muted-foreground ring-border hover:text-foreground"
+                  )}
+                >
+                  {member.name}
+                </button>
+              );
+            })}
+            {(frame.cast_ids ?? []).length === 0 && (
+              <span className="text-[11px] text-muted-foreground">
+                nobody — landscape or insert
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Consistency controls. Matching the anchor holds the subject but
             also copies its framing, so an insert or a macro wants it off. */}

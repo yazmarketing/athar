@@ -14,6 +14,7 @@ import {
   Loader2,
   Share2,
   Shuffle,
+  SquarePen,
   Wand2,
   X,
 } from "lucide-react";
@@ -394,8 +395,7 @@ export function ImageDetail({
               <div className="relative ml-auto" ref={downloadMenuRef}>
                 <Button
                   size="sm"
-                  variant="secondary"
-                  className="h-9 gap-1.5 rounded-lg bg-white/10"
+                  className="h-9 gap-1.5 rounded-lg bg-white text-black hover:bg-white/90"
                   disabled={!imageUrl || downloading}
                   onClick={() => setDownloadOpen((o) => !o)}
                   aria-haspopup="menu"
@@ -551,7 +551,8 @@ export function ImageDetail({
                 style (13px black caps) is too loud repeated 9x */}
             <div className="mt-auto space-y-2 pt-6 [&_button]:text-[11px] [&_button]:font-semibold [&_button]:tracking-[0.08em]">
               <Button
-                className="h-11 w-full justify-between rounded-xl bg-white text-black hover:bg-white/90"
+                variant="outline"
+                className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
                 onClick={() => {
                   if (onUsePrompt) {
                     onUsePrompt(g);
@@ -561,8 +562,8 @@ export function ImageDetail({
                   toast.message("Prompt copied");
                 }}
               >
+                <SquarePen className="size-4" />
                 Use prompt
-                <span className="text-black/50">→</span>
               </Button>
               <Button
                 variant="outline"

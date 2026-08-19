@@ -235,6 +235,11 @@ export type StoryboardFrameRecord = {
   lock_to_anchor: boolean;
   /** A deliberate non-image beat — a black screen. Never generated. */
   is_blank: boolean;
+  /**
+   * Which cast members appear in this frame. Empty is normal and correct for
+   * landscapes, textures and inserts.
+   */
+  cast_ids: string[];
   image_url: string | null;
   video_url: string | null;
   generation_id: string | null;
@@ -244,7 +249,18 @@ export type StoryboardFrameRecord = {
   updated_at: string;
 };
 
-/** The locked look a whole board inherits, so every frame reads as one piece. */
+/**
+ * A recurring character on a board. `description` is the fixed identity string
+ * reused verbatim wherever they appear — per the image guide, never
+ * re-described from memory shot to shot.
+ */
+export type StoryboardCastMember = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+/** The world a whole board shares: where it is, how it is lit, how it is graded. */
 export type StoryboardLook = {
   subject: string;
   wardrobe: string;
@@ -263,6 +279,14 @@ export type StoryboardRecord = {
   project_id: string | null;
   brand_kit_id: string | null;
   aspect: string;
+  /** Board-level finish level — see config/storyboard-styles. */
+  style_id: string;
+  /** Recurring characters. Frames name which of them they contain. */
+  cast_members: StoryboardCastMember[];
+  /** Things that must not appear, fed to every frame's negative prompt. */
+  banned_elements: string[];
+  /** True once the look and cast are approved; re-planning keeps them. */
+  look_locked: boolean;
   /**
    * Images every frame is rendered against — the character, the product, the
    * look. Text alone will not hold a face across twelve frames.

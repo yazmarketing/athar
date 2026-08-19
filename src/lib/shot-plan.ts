@@ -6,6 +6,17 @@
 
 export const PLAN_ASPECTS = ["16:9", "9:16", "1:1", "4:5"] as const;
 
+/**
+ * A recurring character. `description` is the fixed identity string reused
+ * verbatim in every frame this character appears in — never re-described from
+ * memory shot to shot, which is what lets a face survive to frame twelve.
+ */
+export type PlannedCastMember = {
+  id: string;
+  name: string;
+  description: string;
+};
+
 export type PlannedShot = {
   title: string;
   /** Describes a STILL FRAME. Never contains camera movement. */
@@ -19,6 +30,14 @@ export type PlannedShot = {
   motion?: string;
   /** Wide / medium / close-up etc., when the planner names one. */
   shotSize?: string;
+  /**
+   * Which cast members are in THIS frame. Empty is the common and correct
+   * answer for landscape, texture and insert shots — a treatment whose first
+   * beats are pure land should not have a person standing in them.
+   */
+  cast: string[];
+  /** A deliberate non-image beat: a black screen. */
+  isBlank?: boolean;
 };
 
 /** The locked look every shot inherits, so the set reads as one piece. */
@@ -69,6 +88,65 @@ export function coerceLook(raw: unknown): PlannedLook | null {
   return Object.values(look).some(Boolean) ? look : null;
 }
 
+/**
+ * Things that must not appear, as short noun phrases fit for a negative
+ * prompt. A model obeys "buildings, vehicles" in the negative far more
+ * reliably than "there are no buildings" in the positive, so leading negations
+ * are stripped rather than passed through.
+ */
+/** Stable, prompt-safe id for a cast member. */
+function slug(value: string, fallback: string): string {
+  const out = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return out || fallback;
+}
+
+export function coerceCast(raw: unknown): PlannedCastMember[] {
+  const arr =
+    raw && typeof raw === "object" && Array.isArray((raw as { cast?: unknown[] }).cast)
+      ? (raw as { cast: unknown[] }).cast
+      : [];
+  const seen = new Set<string>();
+  const out: PlannedCastMember[] = [];
+  arr.forEach((entry, i) => {
+    const o = (entry ?? {}) as Record<string, unknown>;
+    const name = typeof o.name === "string" ? o.name.trim() : "";
+    const description =
+      typeof o.description === "string" ? o.description.trim() : "";
+    if (!description) return;
+    const id = slug(
+      typeof o.id === "string" && o.id.trim() ? o.id : name,
+      `character-${i + 1}`
+    );
+    if (seen.has(id)) return;
+    seen.add(id);
+    out.push({ id, name: name || id, description });
+  });
+  return out.slice(0, 8);
+}
+
+export function coerceBanned(raw: unknown): string[] {
+  const arr =
+    raw && typeof raw === "object" && Array.isArray((raw as { banned?: unknown[] }).banned)
+      ? (raw as { banned: unknown[] }).banned
+      : [];
+  const cleaned = arr
+    .filter((v): v is string => typeof v === "string")
+    .map((v) =>
+      v
+        .trim()
+        .replace(/^(no|not|never|without|avoid|exclude)\s+/i, "")
+        .replace(/[.]+$/, "")
+        .trim()
+        .toLowerCase()
+    )
+    .filter((v) => v.length > 0 && v.length <= 60);
+  return Array.from(new Set(cleaned)).slice(0, 20);
+}
+
 export function coerceShots(raw: unknown, fallbackAspect = "4:5"): PlannedShot[] {
   const arr =
     raw && typeof raw === "object" && Array.isArray((raw as { shots?: unknown[] }).shots)
@@ -85,6 +163,12 @@ export function coerceShots(raw: unknown, fallbackAspect = "4:5"): PlannedShot[]
       const rawPrompt = typeof o.prompt === "string" ? o.prompt.trim() : "";
       const { still, motion } = stripMotion(rawPrompt);
       const declared = typeof o.motion === "string" ? o.motion.trim() : "";
+      const cast = Array.isArray(o.cast)
+        ? (o.cast as unknown[])
+            .filter((c): c is string => typeof c === "string")
+            .map((c) => slug(c, ""))
+            .filter(Boolean)
+        : [];
       return {
         title: typeof o.title === "string" ? o.title.slice(0, 80) : "Shot",
         prompt: still,
@@ -96,9 +180,13 @@ export function coerceShots(raw: unknown, fallbackAspect = "4:5"): PlannedShot[]
             : typeof o.shot_size === "string"
               ? (o.shot_size as string).slice(0, 40)
               : undefined,
+        cast,
+        isBlank: o.isBlank === true || o.is_blank === true,
       };
     })
-    .filter((s) => s.prompt.length > 0);
+    // A black frame has no picture to describe, so an empty prompt is valid
+    // for it and only for it.
+    .filter((s) => s.prompt.length > 0 || s.isBlank);
 }
 
 /**
@@ -124,27 +212,30 @@ export function continuityBrief(look: PlannedLook | null): string {
     .join(" ");
 }
 
-/** Longest identity tail we will append to a single image prompt. */
-const IDENTITY_TAIL_MAX = 260;
+/** Longest identity text we will append to a single image prompt. */
+const IDENTITY_MAX = 320;
 
 /**
- * The minimum needed to keep one person recognisable across frames, as plain
- * prose in whatever language the look was written in — no labels, no
- * meta-instructions, and only who they are and what they wear.
+ * The identity strings for the characters actually in this frame.
  *
- * Location, lighting and grade are deliberately left out: those belong to the
- * shot, which is allowed to move between frames. Repeating them is what
- * pinned every frame to the same establishing wide.
+ * Only the named cast members are included. A frame with an empty cast gets
+ * nothing — which is the correct and common answer for a landscape, a texture
+ * or an insert, and the reason a treatment opening on bare land no longer
+ * comes back with a child standing in it.
  */
-export function identityTail(look: PlannedLook | null): string {
-  if (!look) return "";
-  const tail = [look.subject, look.wardrobe]
-    .map((v) => (v ?? "").trim())
-    .filter(Boolean)
-    .join(" ");
-  if (tail.length <= IDENTITY_TAIL_MAX) return tail;
-  // Trim on a word boundary rather than mid-word.
-  const cut = tail.slice(0, IDENTITY_TAIL_MAX);
+export function castTail(
+  cast: PlannedCastMember[],
+  ids: string[]
+): string {
+  if (ids.length === 0) return "";
+  const present = ids
+    .map((id) => cast.find((c) => c.id === id))
+    .filter((c): c is PlannedCastMember => Boolean(c));
+  if (present.length === 0) return "";
+
+  const tail = present.map((c) => c.description.trim()).join(" ");
+  if (tail.length <= IDENTITY_MAX) return tail;
+  const cut = tail.slice(0, IDENTITY_MAX);
   return cut.slice(0, cut.lastIndexOf(" ")).trim();
 }
 
@@ -160,27 +251,47 @@ export function stripLegacyContinuity(prompt: string): string {
   return prompt.replace(LEGACY_CONTINUITY_MARKER, "").trim();
 }
 
-/** Standard framing, sent as a short leading clause the model acts on. */
+/**
+ * Standard framing, plus the focus logic that belongs with it: a wide is about
+ * the environment and wants deep focus; a close-up is about one thing and
+ * wants the background to fall away. Stating it stops the model pairing a
+ * locked-off establishing wide with a heavily blurred background, which reads
+ * immediately as a mismatch.
+ */
 const SHOT_SIZE_PREFIX: Record<string, string> = {
-  Wide: "Wide shot.",
-  Medium: "Medium shot.",
-  "Close-up": "Close-up shot.",
-  "Extreme close-up": "Extreme close-up shot.",
-  "Over-the-shoulder": "Over-the-shoulder shot.",
+  Wide: "Wide shot, deep focus — the environment is the subject.",
+  Medium: "Medium shot, moderate depth of field.",
+  "Close-up": "Close-up, shallow depth of field, background falling away.",
+  "Extreme close-up":
+    "Extreme close-up macro, very shallow depth of field.",
+  "Over-the-shoulder": "Over-the-shoulder shot, subject in focus.",
 };
 
 /**
- * Build the prompt for one frame: framing first, the shot itself next, and the
- * identity tail last and only when it is actually carrying weight.
- *
- * With reference images attached the tail is dropped entirely — the pictures
- * hold identity far better than a paragraph of description, and leaving both
- * in simply re-creates the crowding this whole split exists to remove.
+ * Craft floor applied to every frame: three readable depth planes and a
+ * composition that is not dead-centre by default. Short on purpose — this sits
+ * alongside the shot description, it does not compete with it.
  */
+const CRAFT_TAIL =
+  "Composed in three readable depth planes — foreground, midground, background.";
+
+/**
+ * Never let the model invent language. Garbled Arabic script or a
+ * reinterpreted logo in a client frame is both immediately visible and
+ * genuinely damaging; text and marks are composited in post instead.
+ */
+export const ALWAYS_BANNED =
+  "text, lettering, signage, captions, subtitles, watermark, logo, emblem, " +
+  "flag, arabic script, garbled writing";
+
 export function composeFramePrompt(opts: {
   prompt: string;
   shotSize?: string | null;
-  look?: PlannedLook | null;
+  /** The board's cast, and which of them are in this frame. */
+  cast?: PlannedCastMember[];
+  castIds?: string[];
+  /** Positive tokens from the board's visual style. */
+  stylePositive?: string;
   /** True when the render already carries reference images. */
   hasReferences: boolean;
 }): string {
@@ -188,21 +299,33 @@ export function composeFramePrompt(opts: {
   return [
     opts.shotSize ? SHOT_SIZE_PREFIX[opts.shotSize] : "",
     shot,
-    opts.hasReferences ? "" : identityTail(opts.look ?? null),
+    // With reference images attached the pictures hold identity far better
+    // than a paragraph, and keeping both simply crowds the shot again.
+    opts.hasReferences ? "" : castTail(opts.cast ?? [], opts.castIds ?? []),
+    CRAFT_TAIL,
+    opts.stylePositive ?? "",
   ]
-    .map((part) => part.trim())
+    .map((part) => (part ?? "").trim())
     .filter(Boolean)
     .join(" ");
 }
 
+/** Everything this frame must not contain, ready for the negative prompt. */
+export function composeFrameNegative(banned: string[], styleNegative?: string) {
+  return [ALWAYS_BANNED, banned.join(", "), styleNegative]
+    .map((p) => (p ?? "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
 /**
- * Fold the locked look into every shot. Used by Campaign, where the whole
- * point is one person in one place across a handful of shots and the frames
- * are generated immediately without anywhere to persist the look.
+ * Fold the look into every shot. Used by Campaign, where the whole point is
+ * one person in one place across a handful of shots and the frames are
+ * generated immediately with nowhere to persist a look.
  *
- * Storyboards deliberately do NOT use this — they keep the look on the board
- * and compose per frame via `composeFramePrompt`, because a board's frames are
- * supposed to differ.
+ * Storyboards deliberately do NOT use this — they keep a cast on the board and
+ * compose per frame via `composeFramePrompt`, because a board's frames are
+ * supposed to differ and most of them may contain no one at all.
  */
 export function applyContinuity(
   shots: PlannedShot[],

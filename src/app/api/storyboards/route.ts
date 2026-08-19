@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       projectId?: string | null;
       brandKitId?: string | null;
       aspect?: string;
+      styleId?: string;
       referenceUrls?: string[];
     };
 
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
       projectId: body.projectId ?? null,
       brandKitId: body.brandKitId ?? null,
       aspect: body.aspect,
+      styleId: body.styleId,
       referenceUrls: body.referenceUrls,
       createdBy: auth.user.id,
     });

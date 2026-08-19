@@ -73,12 +73,19 @@ export async function POST(req: NextRequest, { params }: Params) {
       .filter(Boolean)
       .join(" ");
 
-    const { shots, look } = await planShots({
+    // An approved look and cast are settled facts, not suggestions — without
+    // this, re-planning re-rolls the wardrobe and a correct kandura becomes a
+    // cotton shirt on the next pass.
+    const locked = board.look_locked;
+
+    const { shots, look, cast, banned } = await planShots({
       brief,
       shotCount: body.shotCount,
       brandKitId: board.brand_kit_id,
       aspect: board.aspect,
       extraDirection: direction,
+      lockedLook: locked ? board.look : null,
+      lockedCast: locked ? board.cast_members : null,
     });
 
     const patches: FramePatch[] = shots.map((shot) => ({
@@ -88,6 +95,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       shot_size: shot.shotSize ?? "",
       aspect: shot.aspect,
       duration_s: DEFAULT_FRAME_SECONDS,
+      is_blank: shot.isBlank ?? false,
+      cast_ids: shot.cast,
+      // A frame with nobody in it has no identity to inherit, so nothing to
+      // anchor to either.
+      lock_to_anchor: shot.cast.length > 0,
     }));
 
     if (append) {
@@ -102,6 +114,8 @@ export async function POST(req: NextRequest, { params }: Params) {
     await updateStoryboard(id, {
       brief,
       ...(append || !look ? {} : { look }),
+      ...(append || cast.length === 0 ? {} : { cast }),
+      ...(append || banned.length === 0 ? {} : { bannedElements: banned }),
     });
 
     const storyboard = await getStoryboard(id);
