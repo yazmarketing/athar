@@ -87,6 +87,7 @@ import {
 } from "@/config/models";
 import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
+import { WelcomeMoment } from "@/components/welcome-moment";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
 import type {
@@ -274,6 +275,7 @@ export function Studio() {
   );
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
   const [refAdviceOpen, setRefAdviceOpen] = useState(false);
   const [refAdviceDismissed, setRefAdviceDismissed] = useState(false);
 
@@ -640,15 +642,39 @@ export function Studio() {
     }
     setProjectsReady(true);
 
-    // Onboarding runs on every sign-in until it is explicitly completed.
-    // Skipping it doesn't count, so it comes back next time.
+    // Onboarding runs until it is explicitly completed. Skipping doesn't
+    // count, so it comes back next time.
+    //
+    // The local flag is only a fast path that stops the tour flashing before
+    // the server answers; the record on the member is what decides, so
+    // finishing on a laptop also counts on a phone.
     let done = false;
     try {
       done = Boolean(localStorage.getItem(TOUR_STORAGE_KEY));
     } catch {
-      // private mode — treat as not completed
+      // private mode — fall back to the server answer
     }
     if (!done) {
+      // One flag both the server answer and the anchor poll respect, so a
+      // late "already onboarded" can't be overtaken by the tour opening.
+      const seen = { already: false };
+      void fetch("/api/onboarding")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (!j?.onboarded) return;
+          seen.already = true;
+          setTourOpen(false);
+          try {
+            localStorage.setItem(TOUR_STORAGE_KEY, "1");
+          } catch {
+            // private mode — re-checked on the next load
+          }
+        })
+        .catch(() => {
+          // Unreachable: showing the tour is the safe default for someone
+          // who genuinely hasn't seen it.
+        });
+
       setView("create");
       setMode("t2i");
       // Wait for the dock to exist rather than guessing a delay: a fixed
@@ -657,15 +683,18 @@ export function Studio() {
       let tries = 0;
       const waitForAnchors = window.setInterval(() => {
         tries += 1;
-        if (document.querySelector('[data-tour="prompt"]')) {
+        if (seen.already) {
           window.clearInterval(waitForAnchors);
-          setTourOpen(true);
+        } else if (document.querySelector('[data-tour="prompt"]')) {
+          window.clearInterval(waitForAnchors);
+          if (!seen.already) setTourOpen(true);
         } else if (tries > 40) {
           window.clearInterval(waitForAnchors);
         }
       }, 100);
     }
   }, []);
+
 
   useEffect(() => {
     if (!projectsReady) return;
@@ -3244,8 +3273,13 @@ export function Studio() {
             // The tour moves through Create and Library; put people back on
             // Home, which is where landing should always leave them.
             setView("home");
-            if (completed) toast.success("You're all set — welcome to Athar");
+            if (completed) setWelcomeOpen(true);
           }}
+        />
+
+        <WelcomeMoment
+          open={welcomeOpen}
+          onDone={() => setWelcomeOpen(false)}
         />
 
         {/* Offered before spending: attach the real artwork instead of

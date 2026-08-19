@@ -161,13 +161,22 @@ export function OnboardingTour({
     };
   }, [open, targetId, steps]);
 
-  /** Finished the walkthrough — remember it and don't show it again. */
+  /**
+   * Finished the walkthrough — remember it against the member, not the
+   * browser. localStorage is kept too, so the tour doesn't flash on the next
+   * load before the server answers, but the server copy is the one that
+   * counts: it survives a new device and Safari clearing site storage.
+   */
   const complete = useCallback(() => {
     try {
       localStorage.setItem(TOUR_STORAGE_KEY, "1");
     } catch {
-      // private mode — the tour just shows again next visit
+      // private mode — the server record still holds
     }
+    void fetch("/api/onboarding", { method: "POST" }).catch(() => {
+      // Offline: the local flag covers this session, and the next completion
+      // will write through.
+    });
     setIndex(0);
     onClose(true);
   }, [onClose]);
