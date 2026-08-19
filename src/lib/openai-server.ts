@@ -235,3 +235,80 @@ export async function openaiBrandCheck(opts: {
     violations,
   };
 }
+
+export type ContinuityCheck = { score: number; notes: string };
+
+/**
+ * Continuity check for a storyboard panel.
+ *
+ * The first image is the rendered panel; the rest are the approved reference
+ * sheets it is supposed to match. This is what turns "usually consistent"
+ * into "reliably consistent" — a panel that fails is re-rendered with the
+ * reason fed back, and one that keeps failing is flagged rather than shipped.
+ */
+export async function openaiContinuityCheck(opts: {
+  panelUrl: string;
+  referenceUrls: string[];
+  expectation: string;
+}): Promise<ContinuityCheck> {
+  const key = process.env.OPENAI_API_KEY?.trim();
+  if (!key) throw new Error("Missing OPENAI_API_KEY env var");
+
+  const system = [
+    "You are a continuity supervisor checking a storyboard panel against the",
+    "production's approved reference sheets.",
+    "The FIRST image is the rendered panel. Every image after it is a",
+    "reference sheet the panel must match.",
+    "Judge ONLY continuity: same person (face, hair, build), same clothing,",
+    "same location, same drawing or rendering style.",
+    "Framing, pose, expression and camera angle are SUPPOSED to differ between",
+    "panels — never penalise those.",
+    'Return ONLY JSON: {"score":0.0,"notes":"…"}. score is 0 to 1, where 1 is',
+    "a perfect match. notes names what does not match, in under 25 words, and",
+    "is an empty string when everything matches.",
+  ].join(" ");
+
+  const content: Record<string, unknown>[] = [
+    { type: "text", text: `The panel should show: ${opts.expectation}` },
+    { type: "image_url", image_url: { url: opts.panelUrl } },
+  ];
+  // Cap the sheets: a long tail of references costs tokens without changing
+  // the verdict, and the panel's own entities come first anyway.
+  for (const url of opts.referenceUrls.slice(0, 6)) {
+    content.push({ type: "image_url", image_url: { url } });
+  }
+
+  const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      model: openaiModel(),
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content },
+      ],
+      max_completion_tokens: 300,
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 200)}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const parsed = JSON.parse(
+    json.choices?.[0]?.message?.content?.trim() ?? "{}"
+  ) as { score?: unknown; notes?: unknown };
+  const score = Number(parsed.score);
+  return {
+    score: Number.isFinite(score) ? Math.min(Math.max(score, 0), 1) : 0.5,
+    notes: typeof parsed.notes === "string" ? parsed.notes.slice(0, 300) : "",
+  };
+}

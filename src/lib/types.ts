@@ -211,3 +211,76 @@ export type GenerationRecord = {
   created_at: string;
   completed_at: string | null;
 };
+
+// ---------------------------------------------------------------------------
+// Storyboards
+// ---------------------------------------------------------------------------
+
+/**
+ * How the board is drawn. Sketch and line are for approving the sequence —
+ * a client looking at a photoreal frame critiques the actor's face instead
+ * of the cut. Photoreal is for pitch boards, where selling the idea is the
+ * job.
+ */
+export type StoryboardRegister = "sketch" | "line" | "mono" | "photoreal";
+
+export type StoryboardRecord = {
+  id: string;
+  title: string;
+  source_text: string;
+  register: StoryboardRegister;
+  aspect: string;
+  look: Record<string, unknown> | null;
+  status: "draft" | "bible" | "panels" | "ready";
+  client_id: string | null;
+  project_id: string | null;
+  brand_kit_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  panel_count?: number;
+  ready_count?: number;
+};
+
+export type StoryboardEntityKind = "character" | "location" | "prop";
+
+export type StoryboardEntityRecord = {
+  id: string;
+  storyboard_id: string;
+  slug: string;
+  kind: StoryboardEntityKind;
+  name: string;
+  description: string;
+  wardrobe: string;
+  reference_url: string | null;
+  approved_at: string | null;
+  seed: string | number | null;
+  position: number;
+  created_at: string;
+};
+
+export type StoryboardPanelRecord = {
+  id: string;
+  storyboard_id: string;
+  number: number;
+  shot_size: string;
+  angle: string;
+  lens: string;
+  screen_direction: "left" | "right" | "neutral" | "to-camera";
+  action: string;
+  dialogue: string;
+  motion: string;
+  duration_s: string | number | null;
+  entity_slugs: string[];
+  prompt: string;
+  status: "pending" | "rendering" | "ready" | "failed" | "flagged";
+  error: string | null;
+  image_url: string | null;
+  generation_id: string | null;
+  continuity_score: string | number | null;
+  continuity_notes: string | null;
+  attempts: number;
+  created_at: string;
+  updated_at: string;
+};

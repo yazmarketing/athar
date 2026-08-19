@@ -3,6 +3,9 @@ import { requireCreator } from "@/lib/authz";
 import { getBrandKit } from "@/lib/brand-kits";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
+// Shared with the storyboard planner: both hand still prompts to an image
+// model, and both need camera language kept out of them.
+import { stripMotion } from "@/lib/storyboard-prompt";
 
 export const maxDuration = 60;
 
@@ -35,27 +38,6 @@ type Look = {
   grade: string;
 };
 
-/**
- * Camera/transition language that belongs in `motion`, not in a still prompt.
- * Planners leak it even when told not to, and the image model then renders
- * the instruction instead of the frame.
- */
-const MOTION_RE =
-  /\b(camera\s+(sweeps?|pans?|tilts?|pushes?|pulls?|tracks?|dollies|glides?|moves?)|sweeps?\s+(from|down|into|across)|pans?\s+(to|across)|zoom(s|ing)?\s+(in|out)|push(es|ing)?\s+in|pull(s|ing)?\s+back|dolly|crane\s+shot|whip\s+pan|match\s+cut|cuts?\s+to|transition(ing|s)?( to)?|slow\s+motion)\b[^.]*\.?/gi;
-
-function stripMotion(text: string): { still: string; motion: string } {
-  const found = text.match(MOTION_RE) ?? [];
-  const still = text
-    .replace(MOTION_RE, "")
-    // Tidy the punctuation the removal leaves behind (", ," / " .," / "..").
-    .replace(/\s*,\s*,/g, ",")
-    .replace(/\s+\./g, ".")
-    .replace(/\.\s*\./g, ".")
-    .replace(/^[\s,.]+/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  return { still, motion: found.join(" ").trim() };
-}
 
 function coerceLook(raw: unknown): Look | null {
   const o =

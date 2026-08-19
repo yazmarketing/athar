@@ -115,6 +115,7 @@ import {
 } from "@/components/brand-kit-picker";
 import { ReferenceLibrary } from "@/components/reference-library";
 import { Orchestrator } from "@/components/orchestrator";
+import { Storyboard } from "@/components/storyboard";
 import { TeamManagement } from "@/components/team-management";
 import {
   Dialog,
@@ -159,6 +160,7 @@ type View =
   | "usage"
   | "assets"
   | "orchestrate"
+  | "storyboard"
   | "team";
 
 function isVideo(g: GenerationRecord) {
@@ -2169,6 +2171,13 @@ export function Studio() {
             "Campaign",
             "campaign"
           )}
+          {navBtn(
+            view === "storyboard",
+            () => setView("storyboard"),
+            <Clapperboard className="size-4" />,
+            "Storyboard",
+            "storyboard"
+          )}
           {isManagement &&
             navBtn(
               view === "usage",
@@ -2807,6 +2816,27 @@ export function Studio() {
                 clientName={activeClient?.name ?? null}
                 projectName={activeProject?.name ?? null}
                 onGenerated={() => void loadGallery()}
+              />
+            </div>
+          </>
+        )}
+
+        {view === "storyboard" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
+              <div>
+                <h1 className="athar-headline">Storyboard</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Script in → cast and locations → a boarded sequence
+                  {activeClient ? ` · ${activeClient.name}` : ""}
+                </p>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-10 sm:px-8">
+              <Storyboard
+                clientId={activeClientId}
+                projectId={activeProjectId}
+                brandKitId={activeBrandKitId}
               />
             </div>
           </>
