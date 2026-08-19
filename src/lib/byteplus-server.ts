@@ -115,8 +115,13 @@ export type ArkVideoRequest = {
   prompt: string;
   /** Aspect ratio string, e.g. "16:9" */
   ratio: string;
-  /** "480p" | "720p" — Seedance 2.5 API currently documents these only */
-  resolution?: "480p" | "720p";
+  /**
+   * Verified against the live API: Seedance 2.5 accepts 480p, 720p and 1080p
+   * and rejects 2k/4k with InvalidParameter. Validation happens at submit,
+   * before a task is created, so an unsupported value fails fast rather than
+   * burning a render.
+   */
+  resolution?: "480p" | "720p" | "1080p";
   /** Clip length in seconds (2.5: 4–30) */
   duration: number;
   generateAudio?: boolean;

@@ -356,7 +356,19 @@ export async function POST(req: NextRequest) {
       Math.max(durationS, 4),
       videoModel.maxDuration || 30
     );
-    const videoResolution = body.videoResolution === "480p" ? "480p" : "720p";
+    /**
+     * 1080p is a Seedance 2.5 capability; the 2.0 Mini used by the draft tier
+     * does not offer it, so asking for it there would fail at submit. Clamp
+     * rather than error — the user asked for a clip, not a lecture.
+     */
+    const requested = body.videoResolution;
+    const allows1080 = videoModel.slug.includes("seedance-2-5");
+    const videoResolution: "480p" | "720p" | "1080p" =
+      requested === "480p"
+        ? "480p"
+        : requested === "1080p" && allows1080
+          ? "1080p"
+          : "720p";
     try {
       const { taskId } = await arkCreateVideoTask({
         model: videoModel.slug,

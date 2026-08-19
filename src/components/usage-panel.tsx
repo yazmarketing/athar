@@ -1,7 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Download, Loader2, RefreshCw, ShieldAlert } from "lucide-react";
+import {
+  ClipboardCopy,
+  Download,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { friendlyModelName } from "@/config/models";
@@ -88,6 +102,59 @@ export function UsagePanel() {
   const [auditFrom, setAuditFrom] = useState("");
   const [auditTo, setAuditTo] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [feedbackDays, setFeedbackDays] = useState(30);
+  const [feedbackScope, setFeedbackScope] = useState<"down" | "all" | "up">(
+    "down"
+  );
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackPreview, setFeedbackPreview] = useState("");
+
+  async function fetchFeedback(): Promise<string> {
+    const params = new URLSearchParams({ days: String(feedbackDays) });
+    if (feedbackScope !== "all") params.set("rating", feedbackScope);
+    const res = await fetch(`/api/feedback/export?${params.toString()}`);
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new Error(json.error ?? "Export failed");
+    }
+    return res.text();
+  }
+
+  async function copyFeedback() {
+    setFeedbackBusy(true);
+    try {
+      const text = await fetchFeedback();
+      setFeedbackPreview(text);
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied — paste it straight into an AI");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setFeedbackBusy(false);
+    }
+  }
+
+  async function downloadFeedback() {
+    setFeedbackBusy(true);
+    try {
+      const text = await fetchFeedback();
+      setFeedbackPreview(text);
+      const url = URL.createObjectURL(
+        new Blob([text], { type: "text/markdown" })
+      );
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `athar-feedback-${feedbackScope}-${feedbackDays || "all"}d.md`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setFeedbackBusy(false);
+    }
+  }
 
   async function exportAudit() {
     setExporting(true);
@@ -276,6 +343,76 @@ export function UsagePanel() {
           }))}
         />
       </div>
+
+      {/* Generation feedback — the thing we actually change the pipeline on */}
+      <section>
+        <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
+          <MessageSquare className="size-4 text-gold" />
+          Generation feedback
+        </h3>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Every thumbs-down the team gave, with the reasons and the exact
+          request that produced it. Copy it and paste it into an AI with “what
+          should we change?” — it is written to be read that way.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={String(feedbackDays)}
+            onValueChange={(v) => setFeedbackDays(Number(v))}
+          >
+            <SelectTrigger className="h-9 w-auto min-w-[8rem] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Last 7 days</SelectItem>
+              <SelectItem value="30">Last 30 days</SelectItem>
+              <SelectItem value="90">Last 90 days</SelectItem>
+              <SelectItem value="0">All time</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select
+            value={feedbackScope}
+            onValueChange={(v) => setFeedbackScope(v as typeof feedbackScope)}
+          >
+            <SelectTrigger className="h-9 w-auto min-w-[9rem] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="down">Only the bad ones</SelectItem>
+              <SelectItem value="all">Everything rated</SelectItem>
+              <SelectItem value="up">Only the good ones</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex-1" />
+          <button
+            type="button"
+            onClick={() => void copyFeedback()}
+            disabled={feedbackBusy}
+            className="inline-flex items-center gap-1.5 rounded-full bg-gold px-3.5 py-1.5 text-xs font-medium text-primary-foreground transition hover:bg-gold/90 disabled:opacity-60"
+          >
+            {feedbackBusy ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ClipboardCopy className="size-3.5" />
+            )}
+            Copy for AI
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadFeedback()}
+            disabled={feedbackBusy}
+            className="inline-flex items-center gap-1.5 rounded-full bg-card px-3.5 py-1.5 text-xs text-muted-foreground ring-1 ring-border transition hover:text-foreground disabled:opacity-60"
+          >
+            <Download className="size-3.5" />
+            Download
+          </button>
+        </div>
+        {feedbackPreview && (
+          <pre className="mt-3 max-h-72 overflow-auto rounded-2xl bg-card p-4 text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground ring-1 ring-border">
+            {feedbackPreview}
+          </pre>
+        )}
+      </section>
 
       {/* Audit trail */}
       <section>

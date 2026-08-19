@@ -66,7 +66,7 @@ export type GenerateRequest = {
   /** Lineage: the generation that produced the attached source video */
   sourceVideoGenerationId?: string | null;
   /** Video output resolution — 480p renders ~2x faster (fast preview) */
-  videoResolution?: "480p" | "720p";
+  videoResolution?: "480p" | "720p" | "1080p";
 };
 
 export type GenerationJobStatus =
@@ -208,6 +208,13 @@ export type GenerationRecord = {
   brand_flagged?: boolean | null;
   brand_notes?: string | null;
   is_favorite?: boolean;
+  /**
+   * The viewing user's own rating of this generation, when they made it.
+   * 1 = good, -1 = not good, null/undefined = not rated.
+   */
+  my_rating?: 1 | -1 | null;
+  my_reasons?: string[] | null;
+  my_note?: string | null;
   created_at: string;
   completed_at: string | null;
 };

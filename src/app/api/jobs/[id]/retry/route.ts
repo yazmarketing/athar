@@ -49,7 +49,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
       sourceImageUrl?: string | null; // legacy single-image jobs
       sourceImageUrls?: string[] | null;
       sourceVideoUrl?: string | null;
-      videoResolution?: "480p" | "720p";
+      videoResolution?: "480p" | "720p" | "1080p";
     };
     const sourceImages = retryInput.sourceImageUrls?.length
       ? retryInput.sourceImageUrls
@@ -62,7 +62,12 @@ export async function POST(_req: NextRequest, { params }: Params) {
       model: model.slug,
       prompt: job.final_prompt,
       ratio: ASPECT_TO_VIDEO_RATIO[job.aspect] ?? "16:9",
-      resolution: retryInput.videoResolution === "480p" ? "480p" : "720p",
+      resolution:
+        retryInput.videoResolution === "480p"
+          ? "480p"
+          : retryInput.videoResolution === "1080p"
+            ? "1080p"
+            : "720p",
       duration: durationS,
       generateAudio: model.supportsAudio,
       imageUrls: sourceImages.length ? sourceImages : undefined,

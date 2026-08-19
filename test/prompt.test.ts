@@ -4,29 +4,43 @@ import { DEFAULT_CAMERA_ID } from "@/config/camera";
 
 describe("buildPrompt", () => {
   // The default look is now "raw", which contributes nothing — a preset only
-  // appends its words when someone deliberately picks one.
+  // appends its words when someone deliberately picks one. The subject here is
+  // deliberately not a Gulf one, so cultural guidance stays out of the way and
+  // the ordering is the only thing under test (see cultural.test.ts for that).
   it("joins all provided fragments in spec order (raw default adds nothing)", () => {
     const { finalPrompt } = buildPrompt({
-      subject: "an elderly Emirati woman",
+      subject: "an elderly fisherman",
       action: "smiling at the camera",
       presetFragment: "85mm portrait lens",
       lighting: "golden hour",
       brandTokens: "bold black and white",
     });
     expect(finalPrompt).toBe(
-      "an elderly Emirati woman, smiling at the camera, 85mm portrait lens, " +
+      "an elderly fisherman, smiling at the camera, 85mm portrait lens, " +
         "golden hour, bold black and white"
     );
   });
 
   it("appends the look only when a preset is chosen", () => {
     const { finalPrompt } = buildPrompt({
-      subject: "an elderly Emirati woman",
+      subject: "an elderly fisherman",
       styleId: "photographic",
     });
     expect(finalPrompt).toBe(
-      "an elderly Emirati woman, " +
+      "an elderly fisherman, " +
         "professional photography, photorealistic, sharp focus, natural lighting, high detail"
+    );
+  });
+
+  // Cultural guidance rides along on the same path, after everything the user
+  // wrote — it adds, it never replaces.
+  it("appends cultural guidance last, for a Gulf subject", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "an elderly Emirati woman",
+      action: "smiling at the camera",
+    });
+    expect(finalPrompt).toMatch(
+      /^an elderly Emirati woman, smiling at the camera, Culturally accurate:/
     );
   });
 

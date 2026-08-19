@@ -1,6 +1,7 @@
 import type { PromptInputs } from "@/lib/types";
 import { resolveStyle } from "@/config/styles";
 import { resolveCamera } from "@/config/camera";
+import { culturalGuidance } from "@/config/cultural";
 
 /**
  * Structured prompt builder (§5.3).
@@ -60,15 +61,25 @@ export function buildPrompt(inputs: PromptInputs): {
 
   // Decide against everything the user actually wrote, not just the subject.
   const positiveText = parts.join(" ");
+
+  /**
+   * Gulf subjects get the garment construction and the features spelled out,
+   * plus a ban on the renderings the model would otherwise reach for. Applied
+   * here rather than in any one caller so every path benefits — the dock, the
+   * assistant, storyboards and campaigns alike.
+   */
+  const cultural = culturalGuidance(positiveText);
+
   const negativeParts = [
     BASE_NEGATIVE,
     wantsText(positiveText) ? undefined : NO_TEXT_NEGATIVE,
     styleNegative,
+    cultural?.negative,
     inputs.negativeAdditions?.trim(),
   ].filter((p): p is string => Boolean(p));
 
   return {
-    finalPrompt: parts.join(", "),
+    finalPrompt: [...parts, cultural?.positive].filter(Boolean).join(", "),
     negativePrompt: negativeParts.join(", "),
   };
 }

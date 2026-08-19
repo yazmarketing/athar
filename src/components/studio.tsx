@@ -60,6 +60,7 @@ import {
   shouldRunTour,
   type TourStep,
 } from "@/components/onboarding-tour";
+import { GenerationRating } from "@/components/generation-rating";
 import { SidebarUser } from "@/components/sidebar-user";
 import { UpscaleDialog } from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
@@ -212,11 +213,17 @@ export function Studio() {
   const [resolution, setResolution] = useState<ImageResolution>("1K");
   const [numOutputs, setNumOutputs] = useState(1);
   const [durationS, setDurationS] = useState(5);
-  const [videoResolution, setVideoResolution] = useState<"480p" | "720p">(
-    "720p"
-  );
+  const [videoResolution, setVideoResolution] = useState<
+    "480p" | "720p" | "1080p"
+  >("720p");
   const [generating, setGenerating] = useState(false);
   const [reproducingId, setReproducingId] = useState<string | null>(null);
+  /**
+   * What the last generate produced, kept on the Create view until the next
+   * run replaces it. Results used to vanish into the Library the moment the
+   * detail modal was closed.
+   */
+  const [lastRun, setLastRun] = useState<GenerationRecord[]>([]);
   const [reproduceTarget, setReproduceTarget] =
     useState<GenerationRecord | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[] | null>(
@@ -941,6 +948,7 @@ export function Studio() {
       } = {}
     ) => {
       setGenerating(true);
+      setLastRun([]);
       const activeMode = opts.mode ?? mode;
       const activeVideoSources = opts.sourceImages ?? videoSources;
       const activeVideoEditSource =
@@ -1006,6 +1014,10 @@ export function Studio() {
           (json.generations as GenerationRecord[] | undefined) ??
           [json.generation as GenerationRecord];
         const isBatch = activeMode === "t2i" && batch.length > 1;
+        // Keep the run on screen. Until now the Create view emptied itself
+        // back to "Describe an image" and the only way back to what you had
+        // just made was to go hunting in the Library.
+        setLastRun(batch.filter((g) => g.output_url));
 
         pushNotification({
           kind: "image",
@@ -1171,6 +1183,30 @@ export function Studio() {
         : "Removed from project"
     );
   };
+
+  /**
+   * Keep the in-memory gallery in step with a rating, so the thumb state
+   * survives closing a detail panel or switching views without a refetch.
+   */
+  const patchGenerationRating = useCallback(
+    (
+      id: string,
+      rating: 1 | -1 | null,
+      reasons: string[],
+      note: string
+    ) => {
+      const patch = { my_rating: rating, my_reasons: reasons, my_note: note };
+      setGenerations((prev) =>
+        prev ? prev.map((g) => (g.id === id ? { ...g, ...patch } : g)) : prev
+      );
+      setDetailTarget((t) => (t && t.id === id ? { ...t, ...patch } : t));
+      setVideoDetailTarget((t) => (t && t.id === id ? { ...t, ...patch } : t));
+      setLastRun((prev) =>
+        prev.map((g) => (g.id === id ? { ...g, ...patch } : g))
+      );
+    },
+    []
+  );
 
   const openDetail = (g: GenerationRecord) => {
     if (!g.output_url) {
@@ -1935,6 +1971,19 @@ export function Studio() {
 
       <div className="pointer-events-none absolute inset-0 bg-black/80 opacity-0 transition duration-300 group-hover:opacity-100" />
 
+      {/* Rating sits over the card so it costs nothing to give: one click for
+          good, one click plus a reason for not good. Shown only to the person
+          who made it — GenerationRating decides that itself. */}
+      {!selectMode && g.output_url && (
+        <div className="dark absolute top-2 right-2 opacity-0 transition duration-300 group-hover:opacity-100">
+          <GenerationRating
+            generation={g}
+            onRated={(rating, reasons, note) => patchGenerationRating(g.id, rating, reasons, note)}
+            className="rounded-lg bg-black/60 p-0.5 backdrop-blur-sm"
+          />
+        </div>
+      )}
+
       <div className="absolute inset-x-0 bottom-0 translate-y-2 p-3 opacity-0 transition duration-300 group-hover:translate-y-0 group-hover:opacity-100">
         <p className="mb-2 line-clamp-2 text-[11px] leading-snug text-white/85">
           {g.final_prompt}
@@ -2389,6 +2438,9 @@ export function Studio() {
 
         {detailTarget && (
           <ImageDetail
+            onRated={(r, reasons, note) =>
+              patchGenerationRating(detailTarget.id, r, reasons, note)
+            }
             generation={detailTarget}
             onClose={() => setDetailTarget(null)}
             onEdit={openEdit}
@@ -2483,6 +2535,9 @@ export function Studio() {
 
         {videoDetailTarget && (
           <VideoDetail
+            onRated={(r, reasons, note) =>
+              patchGenerationRating(videoDetailTarget.id, r, reasons, note)
+            }
             generation={videoDetailTarget}
             onClose={() => setVideoDetailTarget(null)}
             onUsePrompt={(g) => {
@@ -3057,6 +3112,40 @@ export function Studio() {
                         />
                       ))}
                     </div>
+                  ) : lastRun.length > 0 ? (
+                    /* This run stays put. It is the thing you just paid for —
+                       rating it, refining it or downloading it should not
+                       start with a search. */
+                    <div className="mx-auto w-full max-w-4xl pt-1">
+                      <div className="mb-3 flex items-center gap-2 px-1">
+                        <p className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                          This run
+                        </p>
+                        <span className="text-[11px] text-muted-foreground">
+                          {lastRun.length}{" "}
+                          {lastRun.length === 1 ? "result" : "results"} · also
+                          saved to the Library
+                        </span>
+                        <div className="flex-1" />
+                        <button
+                          type="button"
+                          onClick={() => setLastRun([])}
+                          className="text-[11px] text-muted-foreground transition hover:text-foreground"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div
+                        className={cn(
+                          "grid gap-4",
+                          lastRun.length > 1
+                            ? "grid-cols-1 sm:grid-cols-2"
+                            : "grid-cols-1"
+                        )}
+                      >
+                        {lastRun.map((g, i) => renderCard(g, i))}
+                      </div>
+                    </div>
                   ) : (
                     <div className="flex h-[min(52vh,420px)] flex-col items-center justify-center text-center">
                       <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gold-soft ring-1 ring-gold/25">
@@ -3070,7 +3159,8 @@ export function Studio() {
                         {mode === "t2v" ? "Describe a shot" : "Describe an image"}
                       </p>
                       <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                        Paste a prompt in the dock. Results stay in Library.
+                        Paste a prompt in the dock. Your results stay here and
+                        in the Library.
                       </p>
                     </div>
                   )}
@@ -4221,7 +4311,7 @@ export function Studio() {
                     <Select
                       value={videoResolution}
                       onValueChange={(v) =>
-                        setVideoResolution(v as "480p" | "720p")
+                        setVideoResolution(v as typeof videoResolution)
                       }
                     >
                       <SelectTrigger className="h-8 w-auto min-w-[5.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
@@ -4230,6 +4320,11 @@ export function Studio() {
                       <SelectContent>
                         <SelectItem value="480p">480p · fast</SelectItem>
                         <SelectItem value="720p">720p</SelectItem>
+                        {/* Seedance 2.5 only — the draft tier's 2.0 Mini has
+                            no 1080p path, so it is clamped server-side. */}
+                        <SelectItem value="1080p" disabled={tier === "draft"}>
+                          1080p{tier === "draft" ? " · needs Standard+" : ""}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (

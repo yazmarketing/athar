@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ShareDialog, ShareOption } from "@/components/share-dialog";
+import { GenerationRating } from "@/components/generation-rating";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
@@ -70,6 +71,8 @@ type Props = {
   onClose: () => void;
   onEdit: (g: GenerationRecord) => void;
   onUsePrompt?: (g: GenerationRecord) => void;
+  /** Keeps the gallery's copy of the record in step with a rating. */
+  onRated?: (rating: 1 | -1 | null, reasons: string[], note: string) => void;
   onCreateVideo?: (g: GenerationRecord) => void;
   onVary?: (g: GenerationRecord) => void;
   onUpscale?: (g: GenerationRecord) => void;
@@ -156,6 +159,7 @@ export function ImageDetail({
   onClose,
   onEdit,
   onUsePrompt,
+  onRated,
   onCreateVideo,
   onVary,
   onUpscale,
@@ -391,6 +395,9 @@ export function ImageDetail({
                   className={cn("size-4", favorited && "fill-current")}
                 />
               </IconBtn>
+
+              {/* Was this what you asked for? Only shown to whoever made it. */}
+              <GenerationRating generation={g} size="md" onRated={onRated} />
 
               <div className="relative ml-auto" ref={downloadMenuRef}>
                 <Button

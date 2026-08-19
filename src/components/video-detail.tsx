@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ShareDialog, ShareOption } from "@/components/share-dialog";
+import { GenerationRating } from "@/components/generation-rating";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
@@ -34,6 +35,8 @@ type Props = {
   generation: GenerationRecord;
   onClose: () => void;
   onUsePrompt?: (g: GenerationRecord) => void;
+  /** Keeps the gallery's copy of the record in step with a rating. */
+  onRated?: (rating: 1 | -1 | null, reasons: string[], note: string) => void;
   onOpenSource?: (generationId: string) => void;
   /** Attach this clip as a Seedance reference video (v2v edit/extend) */
   onEditVideo?: (g: GenerationRecord, intent: "edit" | "extend") => void;
@@ -71,6 +74,7 @@ export function VideoDetail({
   generation: g,
   onClose,
   onUsePrompt,
+  onRated,
   onOpenSource,
   onEditVideo,
   onOpenSourceVideo,
@@ -252,6 +256,8 @@ export function VideoDetail({
               >
                 <Heart className={cn("size-4", favorited && "fill-current")} />
               </IconBtn>
+              {/* Was this what you asked for? Only shown to whoever made it. */}
+              <GenerationRating generation={g} size="md" onRated={onRated} />
               <IconBtn
                 label="Open in new tab"
                 onClick={() =>
