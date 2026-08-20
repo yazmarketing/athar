@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { uploadPublicObject } from "@/lib/storage";
 import type { GenerationRecord } from "@/lib/types";
+import { ensureBrowserMp4 } from "@/lib/video-compat";
 
 /** One library row by id, or null if it is gone. */
 export async function getGeneration(
@@ -26,10 +27,16 @@ export async function persistOutputToSpaces(
 ): Promise<string> {
   try {
     const res = await fetch(url);
-    const blob = await res.arrayBuffer();
+    let blob = await res.arrayBuffer();
     const contentType =
-      res.headers.get("content-type") ??
-      (kind === "video" ? "video/mp4" : "image/png");
+      kind === "video"
+        ? "video/mp4"
+        : (res.headers.get("content-type") ?? "image/png");
+    if (kind === "video") {
+      // Seedance sometimes hands back HEVC. Chrome then plays time/audio
+      // with a black picture. Re-wrap as H.264 at the same size when needed.
+      blob = await ensureBrowserMp4(blob);
+    }
     const ext =
       kind === "video"
         ? "mp4"

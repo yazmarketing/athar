@@ -120,6 +120,9 @@ export async function submitVideoJob(jobId: string): Promise<void> {
 /**
  * Copy a finished render into our own storage and write its library row.
  *
+ * HEVC clips are converted to H.264 (same resolution, CRF 14) inside
+ * `persistOutputToSpaces` so Chrome can paint the picture.
+ *
  * Call only with a job claimed through `claimJobForFinalize` — this is the
  * step that inserts a generation, and running it twice is how one clip ends
  * up in the Library twice.
