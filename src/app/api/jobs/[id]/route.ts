@@ -2,6 +2,8 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
 import { requireCreator } from "@/lib/authz";
 import { arkGetVideoTask } from "@/lib/byteplus-server";
+import { getGeneration } from "@/lib/generations-store";
+import { submitImageJob } from "@/lib/image-jobs";
 import {
   claimJobForFinalize,
   getJob,
@@ -10,9 +12,11 @@ import {
   requeueUnsubmittedJob,
 } from "@/lib/jobs";
 import { finalizeVideoJob, submitVideoJob } from "@/lib/video-jobs";
-import type { GenerationJobRecord } from "@/lib/types";
+import { isImageJob, type GenerationJobRecord, type GenerationRecord } from "@/lib/types";
 
 type Params = { params: Promise<{ id: string }> };
+
+export const maxDuration = 300;
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -30,8 +34,18 @@ const STALE_JOB_MS = 30 * 60 * 1000;
  */
 const SUBMIT_RETRY_MS = 3 * 60 * 1000;
 
+/**
+ * Gemini Pro can sit open for several minutes. Re-queue sooner than this
+ * while the first call is still alive and we pay twice.
+ */
+const IMAGE_SUBMIT_RETRY_MS = 8 * 60 * 1000;
+
 /** Same idea for a claimed finalize that never wrote its generation row. */
 const FINALIZE_RETRY_MS = 5 * 60 * 1000;
+
+function scheduleSubmit(job: { id: string; kind: string }) {
+  return isImageJob(job) ? submitImageJob(job.id) : submitVideoJob(job.id);
+}
 
 /**
  * Poll a job and move it along.
@@ -44,25 +58,31 @@ const FINALIZE_RETRY_MS = 5 * 60 * 1000;
  */
 async function advance(job: GenerationJobRecord) {
   if (job.status !== "running" && job.status !== "queued") {
-    return { job, generation: null };
+    return { job, generation: null as GenerationRecord | null };
   }
 
   // Not yet submitted. The request that queued it schedules the submit; this
   // is the safety net for when that never ran or died part-way.
   if (!job.provider_task_id) {
     if (job.status === "queued") {
-      after(() => submitVideoJob(job.id));
+      after(() => scheduleSubmit(job));
       return { job, generation: null };
     }
-    const stale =
-      Date.now() - new Date(job.updated_at).getTime() > SUBMIT_RETRY_MS;
+    const retryMs = isImageJob(job) ? IMAGE_SUBMIT_RETRY_MS : SUBMIT_RETRY_MS;
+    const stale = Date.now() - new Date(job.updated_at).getTime() > retryMs;
     if (stale) {
-      const requeued = await requeueUnsubmittedJob(job.id, SUBMIT_RETRY_MS);
+      const requeued = await requeueUnsubmittedJob(job.id, retryMs);
       if (requeued) {
-        after(() => submitVideoJob(requeued.id));
+        after(() => scheduleSubmit(requeued));
         return { job: requeued, generation: null };
       }
     }
+    return { job, generation: null };
+  }
+
+  // Gemini has no provider task to poll — submitImageJob writes completed
+  // or failed on the job row itself.
+  if (isImageJob(job)) {
     return { job, generation: null };
   }
 
@@ -127,7 +147,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
     }
 
     const result = await advance(job);
-    return NextResponse.json(result);
+    const nextJob = result.job ?? job;
+    const generationId = nextJob.generation_id;
+    const generation = generationId ? await getGeneration(generationId) : null;
+    return NextResponse.json({ job: nextJob, generation });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Query failed";
     return NextResponse.json({ error: message }, { status: 500 });

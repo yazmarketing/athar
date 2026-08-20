@@ -6,7 +6,7 @@ async function ensureJobsTableUncached() {
   await db().query(`
     create table if not exists public.generation_jobs (
       id uuid primary key default gen_random_uuid(),
-      kind text not null default 't2v' check (kind in ('t2v', 'i2v', 'v2v')),
+      kind text not null default 't2v' check (kind in ('t2v', 'i2v', 'v2v', 't2i')),
       status text not null default 'queued'
         check (status in ('queued', 'running', 'completed', 'failed', 'cancelled')),
       provider text not null default 'byteplus',
@@ -46,7 +46,7 @@ async function ensureJobsTableUncached() {
         drop constraint if exists generation_jobs_kind_check;
       alter table public.generation_jobs
         add constraint generation_jobs_kind_check
-        check (kind in ('t2v', 'i2v', 'v2v'));
+        check (kind in ('t2v', 'i2v', 'v2v', 't2i'));
     exception
       when others then null;
     end $$
@@ -57,14 +57,15 @@ async function ensureJobsTableUncached() {
 export const ensureJobsTable = onceProcess(ensureJobsTableUncached);
 
 /**
- * Record a video render before anything is asked of the provider.
+ * Record a render before anything is asked of the provider.
  *
  * The job is born 'queued' with no provider task: submitting is the slow
- * part (ModelArk moderates every attached image before it answers), and it
- * happens after the response, not inside it. See `submitVideoJob`.
+ * part, and it happens after the response, not inside it. See
+ * `submitVideoJob` / `submitImageJob`.
  */
 export async function createJob(input: {
-  kind: "t2v" | "i2v" | "v2v";
+  kind: "t2v" | "i2v" | "v2v" | "t2i";
+  provider?: string;
   modelEndpoint: string;
   tier: string;
   input: Record<string, unknown>;
@@ -83,10 +84,11 @@ export async function createJob(input: {
         final_prompt, negative_prompt, aspect, duration_s,
         user_id, project_id, brand_kit_id)
      values
-       ($1, 'queued', 'byteplus', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       ($1, 'queued', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      returning *`,
     [
       input.kind,
+      input.provider ?? "byteplus",
       input.modelEndpoint,
       input.tier,
       JSON.stringify(input.input),

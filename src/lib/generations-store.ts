@@ -3,6 +3,17 @@ import { db } from "@/lib/db";
 import { uploadPublicObject } from "@/lib/storage";
 import type { GenerationRecord } from "@/lib/types";
 
+/** One library row by id, or null if it is gone. */
+export async function getGeneration(
+  id: string
+): Promise<GenerationRecord | null> {
+  const { rows } = await db().query(
+    `select * from generations where id = $1 and deleted_at is null`,
+    [id]
+  );
+  return (rows[0] as GenerationRecord) ?? null;
+}
+
 /**
  * Copy a provider CDN output into DigitalOcean Spaces. Falls back to the
  * provider URL when the copy fails (provider URLs are temporary).

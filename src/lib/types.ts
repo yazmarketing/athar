@@ -81,10 +81,16 @@ export type GenerationJobStatus =
   | "failed"
   | "cancelled";
 
+export type GenerationJobKind = "t2v" | "i2v" | "v2v" | "t2i";
+
+export function isImageJob(job: { kind: string }): boolean {
+  return job.kind === "t2i";
+}
+
 /** Mirrors the `generation_jobs` table (durable video/batch jobs). */
 export type GenerationJobRecord = {
   id: string;
-  kind: "t2v" | "i2v" | "v2v";
+  kind: GenerationJobKind;
   status: GenerationJobStatus;
   provider: string;
   provider_task_id: string | null;

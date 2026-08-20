@@ -15,13 +15,13 @@ export type GenerationKind = "image" | "video" | "edit";
 type Stage = { atS: number; label: string };
 
 const STAGES: Record<GenerationKind, Stage[]> = {
-  // Seedream stills — typically 10–25s
+  // Nano Banana Pro can take a minute-plus; Seedream usually lands sooner.
   image: [
     { atS: 0, label: "Reading your prompt…" },
-    { atS: 3, label: "Blocking in the composition…" },
-    { atS: 8, label: "Working on lighting and colour…" },
-    { atS: 14, label: "Refining textures and details…" },
-    { atS: 22, label: "Almost there — final polish…" },
+    { atS: 8, label: "Blocking in the composition…" },
+    { atS: 25, label: "Working on lighting and colour…" },
+    { atS: 50, label: "Refining textures and details…" },
+    { atS: 80, label: "Almost there — final polish…" },
   ],
   // Seedance renders — typically 2–8 min
   video: [
@@ -43,7 +43,7 @@ const STAGES: Record<GenerationKind, Stage[]> = {
 
 /** Time constant (s) for the eased bar — ~63% reached at tau. */
 const TAU: Record<GenerationKind, number> = {
-  image: 10,
+  image: 45,
   video: 140,
   edit: 140,
 };

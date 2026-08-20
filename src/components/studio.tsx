@@ -102,17 +102,18 @@ import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
-import type {
-  AspectRatio,
-  BrandKitRecord,
-  ClientRecord,
-  GenerationJobRecord,
-  GenerationRecord,
-  ImageResolution,
-  ProjectRecord,
-  PromptInputs,
-  ReferenceAssetRecord,
-  StylePresetRecord,
+import {
+  isImageJob,
+  type AspectRatio,
+  type BrandKitRecord,
+  type ClientRecord,
+  type GenerationJobRecord,
+  type GenerationRecord,
+  type ImageResolution,
+  type ProjectRecord,
+  type PromptInputs,
+  type ReferenceAssetRecord,
+  type StylePresetRecord,
 } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
@@ -183,6 +184,43 @@ function isVideo(g: GenerationRecord) {
     g.mode === "v2v" ||
     Boolean(g.output_url?.includes(".mp4"))
   );
+}
+
+/** Poll Nano Banana jobs until they land (used by Create / Vary / Edit). */
+async function waitForImageJobs(
+  jobs: GenerationJobRecord[]
+): Promise<GenerationRecord[]> {
+  const pending = new Set(jobs.map((j) => j.id));
+  const results: GenerationRecord[] = [];
+  const deadline = Date.now() + 8 * 60 * 1000;
+  while (pending.size > 0) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        "Nano Banana is still working — check Library in a minute"
+      );
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+    for (const id of [...pending]) {
+      const res = await fetch(`/api/jobs/${id}`);
+      const json = (await res.json()) as {
+        job?: GenerationJobRecord;
+        generation?: GenerationRecord | null;
+        error?: string;
+      };
+      if (!res.ok || !json.job) continue;
+      if (json.job.status === "completed") {
+        if (json.generation) results.push(json.generation);
+        pending.delete(id);
+      } else if (
+        json.job.status === "failed" ||
+        json.job.status === "cancelled"
+      ) {
+        pending.delete(id);
+        throw new Error(json.job.error ?? "Image render failed");
+      }
+    }
+  }
+  return results;
 }
 
 export function Studio() {
@@ -863,6 +901,14 @@ export function Studio() {
       ),
     [videoJobs]
   );
+  const activeImageJobs = useMemo(
+    () => activeVideoJobs.filter(isImageJob),
+    [activeVideoJobs]
+  );
+  const activeClipJobs = useMemo(
+    () => activeVideoJobs.filter((j) => !isImageJob(j)),
+    [activeVideoJobs]
+  );
 
   // Restore in-flight / recently failed video renders after a refresh
   useEffect(() => {
@@ -912,21 +958,36 @@ export function Studio() {
             prev.map((j) => (j.id === next.id ? next : j))
           );
           if (next.status === "completed") {
-            toast.success("Video ready");
+            const image = isImageJob(next);
+            toast.success(image ? "Image ready" : "Video ready");
             pushNotification({
-              kind: "video",
+              kind: image ? "image" : "video",
               status: "success",
-              title: "Video ready",
+              title: image ? "Image ready" : "Video ready",
               body: next.final_prompt,
               generationId: next.generation_id,
+              thumbnailUrl: image
+                ? ((json.generation as GenerationRecord | null)?.output_url ??
+                  undefined)
+                : undefined,
             });
+            if (image && json.generation) {
+              const g = json.generation as GenerationRecord;
+              setLastRun((prev) =>
+                prev.some((r) => r.id === g.id) ? prev : [...prev, g]
+              );
+              setDetailTarget(g);
+            }
             void loadGallery();
           } else if (next.status === "failed") {
-            toast.error(`Video render failed: ${next.error ?? "unknown error"}`);
+            const image = isImageJob(next);
+            toast.error(
+              `${image ? "Image" : "Video"} render failed: ${next.error ?? "unknown error"}`
+            );
             pushNotification({
-              kind: "video",
+              kind: image ? "image" : "video",
               status: "error",
-              title: "Video render failed",
+              title: image ? "Image render failed" : "Video render failed",
               body: next.error ?? next.final_prompt,
             });
           }
@@ -1060,11 +1121,21 @@ export function Studio() {
         const json = await readJson(res);
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
         if (json.job) {
-          // Video renders run as durable jobs — track and poll instead
-          const job = json.job as GenerationJobRecord;
-          setVideoJobs((prev) => [job, ...prev.filter((j) => j.id !== job.id)]);
+          // Video and Nano Banana run as durable jobs — track and poll
+          const queued = (
+            (json.jobs as GenerationJobRecord[] | undefined) ?? [
+              json.job as GenerationJobRecord,
+            ]
+          ).filter(Boolean);
+          setVideoJobs((prev) => [
+            ...queued,
+            ...prev.filter((j) => !queued.some((q) => q.id === j.id)),
+          ]);
+          const image = queued.some(isImageJob);
           toast.success(
-            "Video render started — it keeps going even if you leave"
+            image
+              ? "Image started — Nano Banana keeps going even if you leave"
+              : "Video render started — it keeps going even if you leave"
           );
           return;
         }
@@ -1465,9 +1536,16 @@ export function Studio() {
       });
       const json = await readJson(res);
       if (!res.ok) throw new Error(json.error ?? "Create failed");
+      const next = json.job
+        ? (await waitForImageJobs(
+            (json.jobs as GenerationJobRecord[] | undefined) ?? [
+              json.job as GenerationJobRecord,
+            ]
+          ))[0]
+        : (json.generation as GenerationRecord);
+      if (!next) throw new Error("Create failed");
       toast.success("Generated");
       await loadGallery();
-      const next = json.generation as GenerationRecord;
       setEditTarget(next);
       return next;
     } catch (err) {
@@ -1510,12 +1588,16 @@ export function Studio() {
         error?: string;
         generations?: GenerationRecord[];
         generation?: GenerationRecord;
+        job?: GenerationJobRecord;
+        jobs?: GenerationJobRecord[];
       }>(res);
       if (!res.ok) throw new Error(json.error ?? "Variations failed");
+      const list = json.job
+        ? await waitForImageJobs(json.jobs?.length ? json.jobs : [json.job])
+        : ((json.generations ?? [json.generation]).filter(
+            Boolean
+          ) as GenerationRecord[]);
       await loadGallery();
-      const list = (json.generations ?? [json.generation]).filter(
-        Boolean
-      ) as GenerationRecord[];
       return list;
     } finally {
       setGenerating(false);
@@ -1570,9 +1652,16 @@ export function Studio() {
       });
       const json = await readJson(res);
       if (!res.ok) throw new Error(json.error ?? "Edit failed");
+      const next = json.job
+        ? (await waitForImageJobs(
+            (json.jobs as GenerationJobRecord[] | undefined) ?? [
+              json.job as GenerationJobRecord,
+            ]
+          ))[0]
+        : (json.generation as GenerationRecord);
+      if (!next) throw new Error("Edit failed");
       toast.success("Image updated");
       await loadGallery();
-      const next = json.generation as GenerationRecord;
       setEditTarget(next);
       return next;
     } catch (err) {
@@ -3235,7 +3324,12 @@ export function Studio() {
                   {videoJobs.length > 0 && (
                     <div className="mx-auto mb-6 w-full max-w-2xl space-y-2.5">
                       <p className="px-1 text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-                        Video renders
+                        {videoJobs.some(isImageJob) &&
+                        videoJobs.some((j) => !isImageJob(j))
+                          ? "Renders"
+                          : videoJobs.some(isImageJob)
+                            ? "Image renders"
+                            : "Video renders"}
                       </p>
                       {videoJobs.map((job) => {
                         const active =
@@ -3258,7 +3352,11 @@ export function Studio() {
                             {active ? (
                               <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
                             ) : job.status === "completed" ? (
-                              <Clapperboard className="size-4 shrink-0 text-gold" />
+                              isImageJob(job) ? (
+                                <ImageIcon className="size-4 shrink-0 text-gold" />
+                              ) : (
+                                <Clapperboard className="size-4 shrink-0 text-gold" />
+                              )
                             ) : (
                               <X className="size-4 shrink-0 text-muted-foreground" />
                             )}
@@ -3269,21 +3367,34 @@ export function Studio() {
                               <p className="mt-0.5 text-xs text-muted-foreground">
                                 {active
                                   ? `${stageLabel(
-                                      job.kind === "v2v" ? "edit" : "video",
+                                      isImageJob(job)
+                                        ? "image"
+                                        : job.kind === "v2v"
+                                          ? "edit"
+                                          : "video",
                                       elapsedS
                                     )} ${elapsedS}s`
                                   : job.status === "completed"
                                     ? "Done — saved to Library"
                                     : (job.error ?? "Failed")}
                                 {" · "}
-                                {job.duration_s != null
-                                  ? `${Number(job.duration_s)}s clip`
-                                  : job.tier}
+                                {isImageJob(job)
+                                  ? (job.input as { imageModel?: string })
+                                      .imageModel === "nano-banana-pro"
+                                    ? "Nano Banana Pro"
+                                    : "Nano Banana"
+                                  : job.duration_s != null
+                                    ? `${Number(job.duration_s)}s clip`
+                                    : job.tier}
                               </p>
                               {active && (
                                 <ProgressBar
                                   value={easedProgress(
-                                    job.kind === "v2v" ? "edit" : "video",
+                                    isImageJob(job)
+                                      ? "image"
+                                      : job.kind === "v2v"
+                                        ? "edit"
+                                        : "video",
                                     elapsedS
                                   )}
                                   className="mt-1.5"
@@ -3311,7 +3422,11 @@ export function Studio() {
                                       (r) => r.id === job.generation_id
                                     );
                                     if (g) {
-                                      setVideoDetailTarget(g);
+                                      if (isImageJob(job)) {
+                                        setDetailTarget(g);
+                                      } else {
+                                        setVideoDetailTarget(g);
+                                      }
                                     } else {
                                       setView("library");
                                     }
@@ -3360,9 +3475,27 @@ export function Studio() {
                         />
                       ))}
                     </div>
-                  ) : mode === "t2v" && activeVideoJobs.length > 0 ? (
+                  ) : mode === "t2i" && activeImageJobs.length > 0 ? (
+                    <div
+                      className={cn(
+                        "mx-auto grid w-full gap-4 pt-2",
+                        activeImageJobs.length > 1
+                          ? "max-w-4xl grid-cols-1 sm:grid-cols-2"
+                          : "max-w-2xl grid-cols-1"
+                      )}
+                    >
+                      {activeImageJobs.map((job) => (
+                        <GenerationPlaceholderCard
+                          key={job.id}
+                          kind="image"
+                          aspect={job.aspect || "16:9"}
+                          startedAtMs={new Date(job.created_at).getTime()}
+                        />
+                      ))}
+                    </div>
+                  ) : mode === "t2v" && activeClipJobs.length > 0 ? (
                     <div className="mx-auto grid w-full max-w-2xl grid-cols-1 gap-4 pt-2">
-                      {activeVideoJobs.map((job) => (
+                      {activeClipJobs.map((job) => (
                         <GenerationPlaceholderCard
                           key={job.id}
                           kind={job.kind === "v2v" ? "edit" : "video"}

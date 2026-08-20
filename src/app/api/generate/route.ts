@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { arkGenerateImage } from "@/lib/byteplus-server";
-import { geminiGenerateImage } from "@/lib/gemini-server";
 import { db } from "@/lib/db";
 import { getBrandKit } from "@/lib/brand-kits";
 import { createJob } from "@/lib/jobs";
+import { imageJobModelEndpoint, submitImageJob } from "@/lib/image-jobs";
 import { submitVideoJob } from "@/lib/video-jobs";
 import { projectExists } from "@/lib/projects";
 import { uploadPublicObject } from "@/lib/storage";
@@ -14,7 +14,6 @@ import {
   resolveFallbacks,
   asGoogleImageModel,
   maxReferenceImages,
-  GOOGLE_IMAGE_MODELS,
   type ModelEndpoint,
 } from "@/config/models";
 import type { GenerateRequest } from "@/lib/types";
@@ -295,24 +294,6 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .slice(0, maxReferenceImages(googleModel));
 
-  // BytePlus often can't fetch third-party CDNs; inline as data URIs for edits
-  if (referenceUrls.length > 0) {
-    referenceUrls = await Promise.all(
-      referenceUrls.map(async (url) => {
-        try {
-          const res = await fetch(url);
-          if (!res.ok) return url;
-          const buf = Buffer.from(await res.arrayBuffer());
-          const contentType = res.headers.get("content-type") ?? "image/jpeg";
-          if (buf.byteLength > 8_000_000) return url; // keep URL if huge
-          return `data:${contentType};base64,${buf.toString("base64")}`;
-        } catch {
-          return url;
-        }
-      })
-    );
-  }
-
   const { finalPrompt, negativePrompt } = buildPrompt(body.prompt);
   // Prefer Seedream standard+ for edits (better i2i than draft / fal)
   const editTier = referenceUrls.length > 0 && tier === "draft" ? "standard" : tier;
@@ -392,63 +373,84 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Nano Banana: queue a durable job and return immediately. Gemini Pro often
+  // outruns the gateway; the studio polls /api/jobs/[id] the same way as video.
+  if (googleModel) {
+    try {
+      const jobs: Awaited<ReturnType<typeof createJob>>[] = [];
+      for (let i = 0; i < numOutputs; i++) {
+        const job = await createJob({
+          kind: "t2i",
+          provider: "google",
+          modelEndpoint: imageJobModelEndpoint(googleModel),
+          tier: editTier,
+          input: {
+            ...body,
+            prompt: body.prompt,
+            imageModel: googleModel,
+            resolution,
+            seed: baseSeed + i,
+            referenceUrls,
+          },
+          finalPrompt,
+          negativePrompt,
+          aspect,
+          durationS: null,
+          userId: sessionUser.id,
+          projectId,
+          brandKitId,
+        });
+        jobs.push(job);
+        after(() => submitImageJob(job.id));
+      }
+      return NextResponse.json(
+        { job: jobs[0], jobs },
+        { status: 202 }
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Could not queue the image";
+      return NextResponse.json({ error: message }, { status: 502 });
+    }
+  }
+
+  // BytePlus often can't fetch third-party CDNs; inline as data URIs for edits
+  if (referenceUrls.length > 0) {
+    referenceUrls = await Promise.all(
+      referenceUrls.map(async (url) => {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) return url;
+          const buf = Buffer.from(await res.arrayBuffer());
+          const contentType = res.headers.get("content-type") ?? "image/jpeg";
+          if (buf.byteLength > 8_000_000) return url; // keep URL if huge
+          return `data:${contentType};base64,${buf.toString("base64")}`;
+        } catch {
+          return url;
+        }
+      })
+    );
+  }
+
   const pool = db();
 
-  const googleSpec = googleModel ? GOOGLE_IMAGE_MODELS[googleModel] : null;
-
-  /** Render and store one image of the batch. */
+  /** Render and store one Seedream still of the batch. */
   const renderOne = async (i: number) => {
     const seed = baseSeed + i;
     // Measure the provider round-trip so the detail panel can report how long
     // the render actually took (completed_at - created_at is always ~0 here,
     // since the row is only inserted once the render is already finished).
     const renderStart = Date.now();
-    let generated;
-    if (googleModel && googleSpec) {
-      const isPro = googleModel === "nano-banana-pro";
-      const { dataUri, model: usedSlug } = await geminiGenerateImage({
-        prompt: finalPrompt,
-        imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
-        model: googleModel,
-        // Only Pro takes a size/aspect; Nano Banana keeps its bare payload.
-        imageSize: isPro ? resolution : undefined,
-        aspectRatio: isPro ? aspect : undefined,
-      });
-      generated = {
-        output: {
-          url: dataUri,
-          seed,
-          requestId: null,
-          payload: { provider: "google", model: usedSlug },
-          kind: "image" as const,
-          durationS: null,
-        },
-        usedModel: {
-          provider: "google",
-          slug: usedSlug,
-          costPerUnit:
-            isPro && resolution === "4K"
-              ? (googleSpec.costPerImage4K ?? googleSpec.costPerImage)
-              : googleSpec.costPerImage,
-          unit: "image",
-          maxDuration: 0,
-          supportsReference: true,
-          supportsAudio: false,
-        } satisfies ModelEndpoint,
-        fallbackNote: null as string | null,
-      };
-    } else {
-      generated = await generateWithFallback(
-        primary,
-        fallbacks,
-        finalPrompt,
-        negativePrompt,
-        aspect,
-        seed,
-        referenceUrls,
-        arkResolution
-      );
-    }
+    const generated = await generateWithFallback(
+      primary,
+      fallbacks,
+      finalPrompt,
+      negativePrompt,
+      aspect,
+      seed,
+      referenceUrls,
+      arkResolution
+    );
 
     const { output, usedModel, fallbackNote } = generated;
     const { url: outputUrl, providerUrl } = await persistOutput(output, mode);
