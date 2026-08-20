@@ -111,6 +111,7 @@ import type {
   ImageResolution,
   ProjectRecord,
   PromptInputs,
+  ReferenceAssetRecord,
   StylePresetRecord,
 } from "@/lib/types";
 import {
@@ -277,6 +278,7 @@ export function Studio() {
     UpscaleSource[] | null
   >(null);
   const [assetsReload, setAssetsReload] = useState(0);
+  const [assetCatalog, setAssetCatalog] = useState<ReferenceAssetRecord[]>([]);
   const [jobsClock, setJobsClock] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -679,6 +681,25 @@ export function Studio() {
       if (opts.showLoader) setGalleryLoading(false);
     }
   }, [activeProjectId, ownerFilter, activeClientId]);
+
+  useEffect(() => {
+    if (view !== "create") return;
+    const params = new URLSearchParams();
+    if (activeClientId) params.set("clientId", activeClientId);
+    const qs = params.size ? `?${params.toString()}` : "";
+    let cancelled = false;
+    void fetch(`/api/reference-assets${qs}`)
+      .then((res) => res.json())
+      .then((json: { references?: ReferenceAssetRecord[] }) => {
+        if (!cancelled) setAssetCatalog(json.references ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setAssetCatalog([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, activeClientId, assetsReload]);
 
   useEffect(() => {
     const storedClient = localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY);
@@ -1259,28 +1280,82 @@ export function Studio() {
     [mode, videoSources, referenceUrls, referenceNames]
   );
 
+  const mentionRows = useMemo(() => {
+    const attached = new Set(mentionTargets.map((t) => t.url));
+    const fromDock = mentionTargets.map((t) => ({
+      ...t,
+      fromAssets: false as const,
+    }));
+    const fromAssets = assetCatalog
+      .filter((r) => r.url && !attached.has(r.url))
+      .map((r) => ({
+        url: r.url,
+        index: null as number | null,
+        label: r.name,
+        display: r.name,
+        fromAssets: true as const,
+      }));
+    return [...fromDock, ...fromAssets];
+  }, [mentionTargets, assetCatalog]);
+
   const mentionMatches = useMemo(() => {
     if (!mention) return [];
     const q = mention.query.trim().toLowerCase();
-    if (!q) return mentionTargets;
-    return mentionTargets.filter(
-      (t) =>
-        t.display.toLowerCase().includes(q) ||
-        `image${t.index + 1}`.startsWith(q.replace(/\s+/g, ""))
-    );
-  }, [mention, mentionTargets]);
+    const rows = !q
+      ? mentionRows
+      : mentionRows.filter(
+          (t) =>
+            t.display.toLowerCase().includes(q) ||
+            (t.index != null &&
+              `image${t.index + 1}`.startsWith(q.replace(/\s+/g, "")))
+        );
+    return rows.slice(0, 20);
+  }, [mention, mentionRows]);
+
+  const attachMentionPhoto = (url: string, name: string | null): number | null => {
+    const attached =
+      mode === "t2v" ? videoSources.map((s) => s.url) : referenceUrls;
+    const existing = attached.indexOf(url);
+    if (existing >= 0) return existing;
+    const cap = mode === "t2v" ? MAX_VIDEO_IMAGES : maxRefs;
+    if (attached.length >= cap) {
+      toast.error(
+        mode === "t2v"
+          ? `Up to ${MAX_VIDEO_IMAGES} images per video`
+          : `Up to ${maxRefs} reference images`
+      );
+      return null;
+    }
+    if (mode === "t2v") {
+      setVideoSources((prev) => [...prev, { url, generationId: null }]);
+    } else {
+      setReferenceUrls((prev) => [...prev, url]);
+    }
+    if (name) {
+      setReferenceNames((prev) => ({ ...prev, [url]: name }));
+    }
+    return attached.length;
+  };
 
   /** Replace the `@…` under the caret with a stable token. */
   const insertMention = useCallback(
-    (index: number) => {
+    (row: {
+      url: string;
+      index: number | null;
+      label: string | null;
+    }) => {
       if (!mention) return;
+      let index = row.index;
+      if (index == null) {
+        index = attachMentionPhoto(row.url, row.label);
+        if (index == null) return;
+      }
       const token = mentionToken(index);
       const next =
         subject.slice(0, mention.start) + token + " " + subject.slice(mention.end);
       setSubject(next);
       setMention(null);
       setMentionIndex(0);
-      // Put the caret after what we just inserted, not at the end.
       const caret = mention.start + token.length + 1;
       requestAnimationFrame(() => {
         const el = promptRef.current;
@@ -1289,13 +1364,13 @@ export function Studio() {
         el.setSelectionRange(caret, caret);
       });
     },
-    [mention, subject]
+    [mention, subject, mode, videoSources, referenceUrls, maxRefs]
   );
 
   /** Recompute the open mention from wherever the caret now is. */
   const syncMention = useCallback(
     (text: string, caret: number | null) => {
-      if (caret === null || mentionTargets.length === 0) {
+      if (caret === null) {
         setMention(null);
         return;
       }
@@ -1303,7 +1378,7 @@ export function Studio() {
       setMention(found);
       setMentionIndex(0);
     },
-    [mentionTargets.length]
+    []
   );
 
   const openDetail = (g: GenerationRecord) => {
@@ -4006,6 +4081,9 @@ export function Studio() {
                             className="size-11 rounded-lg object-cover ring-1 ring-white/10"
                           />
                         )}
+                        <span className="pointer-events-none absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[9px] leading-4 text-white">
+                          {i + 1}
+                        </span>
                         <button
                           type="button"
                           aria-label={`Remove image ${i + 1}`}
@@ -4116,6 +4194,7 @@ export function Studio() {
                 </div>
               </div>
             ) : (
+              <div className="relative">
               <Textarea
                 placeholder={
                   mode === "t2v"
@@ -4156,7 +4235,7 @@ export function Studio() {
                     }
                     if (e.key === "Enter" || e.key === "Tab") {
                       e.preventDefault();
-                      insertMention(mentionMatches[mentionIndex].index);
+                      insertMention(mentionMatches[mentionIndex]);
                       return;
                     }
                     if (e.key === "Escape") {
@@ -4184,23 +4263,30 @@ export function Studio() {
                 rows={6}
                 className="field-sizing-fixed h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] shadow-none focus-visible:ring-0"
               />
-            )}
 
-            {/* Tag an attached image. Anchored to the dock rather than the
-                caret: the textarea is fixed-height and scrolls, so a
-                caret-following menu would drift off it. */}
-            {mention && mentionMatches.length > 0 && (
+            {/* Inside this wrapper so overflow-y-auto on the dock cannot
+                clip it. bottom-full of the dock sat above the panel. */}
+            {mention && (
               <div
                 role="listbox"
                 aria-label="Attached images"
-                className="absolute bottom-full left-3 z-50 mb-2 w-64 overflow-hidden rounded-xl bg-popover p-1 shadow-2xl ring-1 ring-border"
+                className="absolute top-2 left-3 z-50 max-h-56 w-64 overflow-y-auto rounded-xl bg-popover p-1 shadow-2xl ring-1 ring-border"
               >
                 <p className="px-2 py-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-                  Tag an attached image
+                  {mentionTargets.length > 0
+                    ? "Tag an image"
+                    : "From Assets"}
                 </p>
-                {mentionMatches.map((t, i) => (
+                {mentionMatches.length === 0 ? (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">
+                    {assetCatalog.length === 0
+                      ? "No photos yet — add some on Assets, or attach one"
+                      : "No matching photos"}
+                  </p>
+                ) : (
+                  mentionMatches.map((t, i) => (
                   <button
-                    key={t.url}
+                    key={`${t.url}-${t.index ?? t.display}`}
                     type="button"
                     role="option"
                     aria-selected={i === mentionIndex}
@@ -4208,27 +4294,38 @@ export function Studio() {
                     onMouseDown={(e) => {
                       // mousedown, not click: blur would close the menu first.
                       e.preventDefault();
-                      insertMention(t.index);
+                      insertMention(t);
                     }}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
                       i === mentionIndex ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
                     )}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={t.url}
-                      alt=""
-                      className="size-8 shrink-0 rounded-md object-cover ring-1 ring-border"
-                    />
+                    {t.url.startsWith("asset://") ? (
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-gold/30">
+                        <ShieldCheck className="size-3.5 text-gold" />
+                      </span>
+                    ) : (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={t.url}
+                        alt=""
+                        className="size-8 shrink-0 rounded-md object-cover ring-1 ring-border"
+                      />
+                    )}
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{t.display}</span>
                       <span className="block font-mono text-[10px] text-muted-foreground">
-                        {mentionToken(t.index)}
+                        {t.index != null
+                          ? mentionToken(t.index)
+                          : `Attach · ${mentionToken(mentionTargets.length)}`}
                       </span>
                     </span>
                   </button>
-                ))}
+                  ))
+                )}
+              </div>
+            )}
               </div>
             )}
 
