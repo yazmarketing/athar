@@ -237,6 +237,9 @@ export function Studio() {
   const [galleryLoading, setGalleryLoading] = useState(true);
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [activeClientId, setActiveClientId] = useState<string | null>(null);
+  // Briefly rings the client chip when Generate is pressed with none set, so
+  // the eye goes straight to what needs fixing instead of hunting for it.
+  const [clientNudge, setClientNudge] = useState(false);
   const [projects, setProjects] = useState<ProjectRecord[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectsReady, setProjectsReady] = useState(false);
@@ -1534,7 +1537,9 @@ export function Studio() {
     // Client is required — everything downstream (projects, brand kits,
     // reporting) hangs off it, so nothing is generated unattributed.
     if (!activeClientId) {
-      toast.error("Pick a client first — it's in the bar below");
+      toast.error("Pick a client first — it's the chip at the top of this dock");
+      setClientNudge(true);
+      window.setTimeout(() => setClientNudge(false), 1600);
       return;
     }
     // Asking a diffusion model to draw a known logo or a specific person from
@@ -4215,7 +4220,13 @@ export function Studio() {
                 <div className="-mx-1 flex items-center gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&>*]:shrink-0 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0 sm:[&>*]:shrink">
                   {/* Who the work is for, set right where it's used. Client is
                       required; project and brand kit are optional. */}
-                  <span data-tour="client" className="inline-flex">
+                  <span
+                    data-tour="client"
+                    className={cn(
+                      "inline-flex rounded-full transition-shadow duration-300",
+                      clientNudge && "ring-2 ring-gold"
+                    )}
+                  >
                     <ClientPicker
                       activeClientId={activeClientId}
                       onActiveClientChange={onActiveClientChange}
@@ -4610,17 +4621,23 @@ export function Studio() {
             size="lg"
             data-tour="generate"
             onClick={() => void onGenerate()}
-            disabled={generating || checkingModel || !activeClientId}
+            // Only real busy states make this un-clickable. A missing client
+            // stays clickable on purpose — disabling it here would make the
+            // button inert to both mouse hover (native title tooltips don't
+            // fire through disabled:pointer-events-none) and click, leaving
+            // no way to discover why. onGenerate() shows the toast instead.
+            disabled={generating || checkingModel}
             title={
               !activeClientId
                 ? "Pick a client first — generations are always attributed to one"
                 : undefined
             }
-                  className={cn(
-                    "h-10 rounded-full px-6 font-medium text-primary-foreground",
-                    (generating || checkingModel) && "animate-gen-pulse"
-                  )}
-                >
+            className={cn(
+              "h-10 rounded-full px-6 font-medium text-primary-foreground",
+              (generating || checkingModel) && "animate-gen-pulse",
+              !activeClientId && "opacity-50"
+            )}
+          >
                   {checkingModel ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
