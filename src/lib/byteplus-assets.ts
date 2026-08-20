@@ -153,13 +153,18 @@ export async function createAssetGroup(
   return assetsCall<AssetGroupRecord>("CreateAssetGroup", {
     Name: name,
     Description: description ?? "Created by Athar studio",
+    GroupType: "AIGC",
   });
 }
 
 export async function listAssetGroups(): Promise<AssetGroupRecord[]> {
   const result = await assetsCall<{ Items?: AssetGroupRecord[] }>(
     "ListAssetGroups",
-    { PageNumber: 1, PageSize: 100 }
+    {
+      Filter: { GroupType: "AIGC" },
+      PageNumber: 1,
+      PageSize: 100,
+    }
   );
   return result.Items ?? [];
 }

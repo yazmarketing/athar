@@ -15,9 +15,29 @@ import { cn, postJson } from "@/lib/utils";
 import { UPSCALE_MODELS } from "@/config/models";
 import type { GenerationRecord } from "@/lib/types";
 
+/** A Library still, or an uploaded Assets photo. */
+export type UpscaleSource = {
+  id: string;
+  url: string;
+  generationId?: string;
+  name?: string;
+  projectId?: string | null;
+  referenceAssetId?: string;
+};
+
+export function fromGeneration(g: GenerationRecord): UpscaleSource {
+  return {
+    id: g.id,
+    url: g.output_url ?? "",
+    generationId: g.id,
+    name: g.final_prompt.slice(0, 60),
+    projectId: g.project_id,
+  };
+}
+
 type Props = {
   /** One source = single upscale; multiple = batch with shared settings */
-  sources: GenerationRecord[];
+  sources: UpscaleSource[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onDone: (results: GenerationRecord[]) => void;
@@ -48,7 +68,11 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
     for (const source of sources) {
       try {
         const { res, json } = await postJson("/api/upscale", {
-          generationId: source.id,
+          generationId: source.generationId,
+          imageUrl: source.generationId ? undefined : source.url,
+          name: source.name,
+          projectId: source.projectId,
+          referenceAssetId: source.referenceAssetId,
           mode,
           scale,
         });
@@ -98,7 +122,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
           <DialogDescription className="text-muted-foreground">
             {isBatch
               ? "One configuration applied to every selected image. Each result is a new Library entry."
-              : "Creates a new Library entry — the original stays intact."}
+              : "Creates a new Library entry. Uploaded Assets photos also update to the sharper version."}
           </DialogDescription>
         </DialogHeader>
 
@@ -108,7 +132,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={s.id}
-                src={s.output_url ?? ""}
+                src={s.url}
                 alt=""
                 className="size-14 rounded-lg object-cover ring-1 ring-white/10"
               />
@@ -122,7 +146,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={sources[0]?.output_url ?? ""}
+            src={sources[0]?.url ?? ""}
             alt="Source"
             className="max-h-40 w-full max-w-full min-w-0 rounded-xl object-cover ring-1 ring-white/10"
           />
@@ -201,7 +225,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
             This runs {isBatch ? `${sources.length} renders` : "a render"} and
             costs about{" "}
             <span className="text-foreground">${cost.toFixed(2)}</span>. Each
-            result is a new Library entry — the originals stay as they are.
+            result is a new Library entry.
           </p>
         )}
 

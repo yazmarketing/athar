@@ -33,6 +33,7 @@ import {
   Sun,
   Plug,
   Trash2,
+  Upload,
   Wand2,
   Workflow,
   X,
@@ -65,7 +66,11 @@ import {
 import { GenerationRating } from "@/components/generation-rating";
 import { activeMentionQuery, mentionToken } from "@/lib/mentions";
 import { SidebarUser } from "@/components/sidebar-user";
-import { UpscaleDialog } from "@/components/upscale-dialog";
+import {
+  UpscaleDialog,
+  fromGeneration,
+  type UpscaleSource,
+} from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
 import { VideoDetail } from "@/components/video-detail";
 import {
@@ -265,10 +270,13 @@ export function Studio() {
     { id: string; name: string; status: string; url: string | null }[] | null
   >(null);
   const [assetsLoading, setAssetsLoading] = useState(false);
+  const [registeringAsset, setRegisteringAsset] = useState(false);
   const videoFileInput = useRef<HTMLInputElement>(null);
+  const assetFileInput = useRef<HTMLInputElement>(null);
   const [upscaleTargets, setUpscaleTargets] = useState<
-    GenerationRecord[] | null
+    UpscaleSource[] | null
   >(null);
+  const [assetsReload, setAssetsReload] = useState(0);
   const [jobsClock, setJobsClock] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1697,6 +1705,38 @@ export function Studio() {
     }
   }, []);
 
+  const onCharacterFiles = async (files: FileList | File[] | null) => {
+    const file = files?.[0];
+    if (!file) return;
+    const allowed = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+    if (!allowed.has(file.type)) {
+      toast.error("Only JPEG, PNG, or WebP");
+      if (assetFileInput.current) assetFileInput.current.value = "";
+      return;
+    }
+    setRegisteringAsset(true);
+    try {
+      const url = await uploadReference(file);
+      const name = file.name.replace(/\.[^.]+$/, "").slice(0, 60);
+      const { res, json } = await postJson<{ error?: string }>("/api/assets", {
+        imageUrl: url,
+        name,
+      });
+      if (!res.ok) throw new Error(json.error ?? "Could not register character");
+      toast.success(
+        "Registered as a video character — usable once it's Active (a few minutes)"
+      );
+      await loadAssets();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not register character"
+      );
+    } finally {
+      setRegisteringAsset(false);
+      if (assetFileInput.current) assetFileInput.current.value = "";
+    }
+  };
+
   const onDockDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -2547,7 +2587,7 @@ export function Studio() {
             onClose={() => setDetailTarget(null)}
             onEdit={openEdit}
             onVary={openVary}
-            onUpscale={(g) => setUpscaleTargets([g])}
+            onUpscale={(g) => setUpscaleTargets([fromGeneration(g)])}
             onSaveReference={(g) => {
               if (g.output_url) openSaveReference(g.output_url);
             }}
@@ -2626,10 +2666,12 @@ export function Studio() {
               if (!o) setUpscaleTargets(null);
             }}
             onDone={async (results) => {
+              const fromAsset = upscaleTargets.some((s) => s.referenceAssetId);
               setUpscaleTargets(null);
               setSelectedIds([]);
               setSelectMode(false);
               await loadGallery();
+              if (fromAsset) setAssetsReload((n) => n + 1);
               if (results.length === 1) setDetailTarget(results[0]);
             }}
           />
@@ -2955,6 +2997,18 @@ export function Studio() {
                 mode="manage"
                 clientId={activeClientId}
                 projects={projects.map((p) => ({ id: p.id, name: p.name }))}
+                reloadToken={assetsReload}
+                onUpscale={(r) =>
+                  setUpscaleTargets([
+                    {
+                      id: r.id,
+                      url: r.url,
+                      name: r.name,
+                      projectId: r.project_id,
+                      referenceAssetId: r.id,
+                    },
+                  ])
+                }
               />
             </div>
           </>
@@ -3488,7 +3542,7 @@ export function Studio() {
                 }
                 onClick={() => {
                   if (upscalableSelected.length > 0) {
-                    setUpscaleTargets(upscalableSelected);
+                    setUpscaleTargets(upscalableSelected.map(fromGeneration));
                   }
                 }}
               >
@@ -3769,6 +3823,16 @@ export function Studio() {
                 />
               )}
 
+              {mode === "t2v" && (
+                <input
+                  ref={assetFileInput}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  className="hidden"
+                  onChange={(e) => void onCharacterFiles(e.target.files)}
+                />
+              )}
+
               {mode === "t2v" && assetIdOpen && (
                 <div className="mb-2 rounded-xl border border-white/10 bg-black/25 p-2.5">
                   <div className="mb-2 flex items-center justify-between px-0.5">
@@ -3842,12 +3906,25 @@ export function Studio() {
                     </div>
                   ) : libraryAssets ? (
                     <p className="mb-2 px-1 py-1 text-[11px] text-muted-foreground">
-                      No characters yet — open an image in the Library and use
-                      &ldquo;Register as video character&rdquo;, or paste an
-                      asset ID below.
+                      No characters yet — upload a photo from your device, or
+                      open an image in the Library and use &ldquo;Register as
+                      video character&rdquo;.
                     </p>
                   ) : null}
 
+                  <button
+                    type="button"
+                    disabled={registeringAsset}
+                    onClick={() => assetFileInput.current?.click()}
+                    className="mb-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 text-xs text-foreground transition hover:bg-white/8 disabled:opacity-50"
+                  >
+                    {registeringAsset ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="size-3.5" />
+                    )}
+                    {registeringAsset ? "Registering…" : "Upload from device"}
+                  </button>
                   <div className="flex items-center gap-2">
                     <Input
                       value={assetIdDraft}

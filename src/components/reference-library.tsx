@@ -8,6 +8,7 @@ import {
   Check,
   Upload,
   SquarePen,
+  ArrowUpToLine,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,10 @@ type Props = {
    * a collapsible panel can put a spinner on the control that opened it.
    */
   onLoadingChange?: (loading: boolean) => void;
+  /** Bump to refetch (e.g. after an upscale writes a new version). */
+  reloadToken?: number;
+  /** manage: open the shared Upscale dialog for this photo. */
+  onUpscale?: (ref: ReferenceAssetRecord) => void;
   className?: string;
 };
 
@@ -66,6 +71,8 @@ export function ReferenceLibrary({
   selectedUrls = [],
   projects,
   onLoadingChange,
+  reloadToken,
+  onUpscale,
   className,
 }: Props) {
   const [refs, setRefs] = useState<ReferenceAssetRecord[] | null>(null);
@@ -110,7 +117,7 @@ export function ReferenceLibrary({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadToken]);
 
   async function uploadOne(file: File) {
     const form = new FormData();
@@ -538,18 +545,34 @@ export function ReferenceLibrary({
                       >
                         <Trash2 className="size-3.5" />
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setVersioningId(r.id);
-                          versionInput.current?.click();
-                        }}
-                        className="absolute inset-x-1.5 bottom-1.5 flex items-center justify-center gap-1.5 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition hover:bg-black/85 group-hover:opacity-100"
-                      >
-                        <Upload className="size-3.5" />
-                        Replace image → v{r.version + 1}
-                      </button>
+                      <div className="absolute inset-x-1.5 bottom-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
+                        {onUpscale && (
+                          <button
+                            type="button"
+                            title="Upscale"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onUpscale(r);
+                            }}
+                            className="flex flex-1 items-center justify-center gap-1 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition hover:bg-black/85"
+                          >
+                            <ArrowUpToLine className="size-3.5" />
+                            Upscale
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setVersioningId(r.id);
+                            versionInput.current?.click();
+                          }}
+                          className="flex flex-1 items-center justify-center gap-1 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition hover:bg-black/85"
+                        >
+                          <Upload className="size-3.5" />
+                          Replace
+                        </button>
+                      </div>
                     </>
                   )}
                 </div>
