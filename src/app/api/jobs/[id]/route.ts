@@ -1,20 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
 import { requireCreator } from "@/lib/authz";
 import { arkGetVideoTask } from "@/lib/byteplus-server";
 import {
-  ensureGenerationModes,
-  insertGeneration,
-  persistOutputToSpaces,
-} from "@/lib/generations-store";
-import {
+  claimJobForFinalize,
   getJob,
   markJobCancelled,
-  markJobCompleted,
   markJobFailed,
+  requeueUnsubmittedJob,
 } from "@/lib/jobs";
-import { resolveModel, type Tier } from "@/config/models";
-import type { GenerationJobRecord, PromptInputs } from "@/lib/types";
+import { finalizeVideoJob, submitVideoJob } from "@/lib/video-jobs";
+import type { GenerationJobRecord } from "@/lib/types";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -25,17 +21,49 @@ const UUID_RE =
 const STALE_JOB_MS = 30 * 60 * 1000;
 
 /**
- * Poll a job. When the provider task has succeeded, this call finalizes it:
- * copies the video into Spaces, writes the generation record, and marks the
- * job completed. Safe to call repeatedly.
+ * A claimed submit that never produced a task id is presumed dead after this
+ * long (a deploy mid-submit, say) and goes back in the queue.
+ *
+ * Must stay above the provider request timeout in `byteplus-server.ts`: a
+ * submit that is merely slow has to fail on its own before this re-queues
+ * it, or the retry opens a second paid render alongside the first.
  */
-async function checkAndFinalize(job: GenerationJobRecord) {
+const SUBMIT_RETRY_MS = 3 * 60 * 1000;
+
+/** Same idea for a claimed finalize that never wrote its generation row. */
+const FINALIZE_RETRY_MS = 5 * 60 * 1000;
+
+/**
+ * Poll a job and move it along.
+ *
+ * Everything slow is scheduled with `after()` and reported through the job
+ * row on a later poll, so this answers in a database round trip whatever
+ * state the render is in. It used to submit and store inline, which is how a
+ * poll could outrun the gateway — and, because the studio polls every five
+ * seconds, how two overlapping polls could store one clip twice.
+ */
+async function advance(job: GenerationJobRecord) {
   if (job.status !== "running" && job.status !== "queued") {
     return { job, generation: null };
   }
 
+  // Not yet submitted. The request that queued it schedules the submit; this
+  // is the safety net for when that never ran or died part-way.
   if (!job.provider_task_id) {
-    return { job: await markJobFailed(job.id, "Missing provider task id"), generation: null };
+    if (job.status === "queued") {
+      after(() => submitVideoJob(job.id));
+      return { job, generation: null };
+    }
+    const stale =
+      Date.now() - new Date(job.updated_at).getTime() > SUBMIT_RETRY_MS;
+    if (stale) {
+      const requeued = await requeueUnsubmittedJob(job.id, SUBMIT_RETRY_MS);
+      if (requeued) {
+        after(() => submitVideoJob(requeued.id));
+        return { job: requeued, generation: null };
+      }
+    }
+    return { job, generation: null };
   }
 
   let task;
@@ -57,80 +85,10 @@ async function checkAndFinalize(job: GenerationJobRecord) {
         generation: null,
       };
     }
-
-    const outputUrl = await persistOutputToSpaces(
-      providerUrl,
-      "video",
-      job.kind,
-      null
-    );
-
-    const model = resolveModel(
-      job.kind === "i2v" || job.kind === "v2v" ? job.kind : "t2v",
-      job.tier as Tier
-    );
-    const durationS = job.duration_s != null ? Number(job.duration_s) : null;
-    const cost =
-      model.unit === "second" && durationS != null
-        ? model.costPerUnit * durationS
-        : model.costPerUnit;
-
-    const input = job.input as {
-      prompt?: PromptInputs;
-      sourceImageUrl?: string | null; // legacy single-image jobs
-      sourceImageUrls?: string[] | null;
-      sourceGenerationId?: string | null;
-      sourceVideoUrl?: string | null;
-      sourceVideoGenerationId?: string | null;
-    };
-    const sourceImages = input.sourceImageUrls?.length
-      ? input.sourceImageUrls
-      : input.sourceImageUrl
-        ? [input.sourceImageUrl]
-        : [];
-    if (job.kind === "v2v") {
-      // Older databases restrict generations.mode — relax before insert
-      await ensureGenerationModes();
-    }
-    const generation = await insertGeneration({
-      mode: job.kind,
-      tier: job.tier,
-      modelEndpoint: job.model_endpoint,
-      inputPayload: {
-        prompt_inputs: input.prompt,
-        duration_s: durationS,
-        job_id: job.id,
-        provider_task_id: job.provider_task_id,
-        // Lineage back to the image(s) that seeded this clip (i2v)
-        source_generation_id: input.sourceGenerationId ?? undefined,
-        source_image_url: sourceImages[0] ?? undefined,
-        source_image_urls: sourceImages.length ? sourceImages : undefined,
-        // Lineage back to the clip this edit/extend started from (v2v)
-        source_video_url: input.sourceVideoUrl ?? undefined,
-        source_video_generation_id:
-          input.sourceVideoGenerationId ?? undefined,
-      },
-      finalPrompt: job.final_prompt,
-      negativePrompt: job.negative_prompt,
-      seed: null,
-      referenceUrls: sourceImages,
-      outputUrl,
-      providerUrl,
-      requestId: job.provider_task_id,
-      cost,
-      aspect: job.aspect,
-      durationS,
-      userId: job.user_id,
-      projectId: job.project_id,
-      brandKitId: job.brand_kit_id,
-      // Video renders are async, so the real elapsed time is from when the
-      // job was queued to now — not a single request round-trip.
-      renderMs: job.created_at
-        ? Date.now() - new Date(job.created_at).getTime()
-        : null,
-    });
-
-    return { job: await markJobCompleted(job.id, generation.id), generation };
+    const claimed = await claimJobForFinalize(job.id, FINALIZE_RETRY_MS);
+    // No claim means another poll is already storing this clip.
+    if (claimed) after(() => finalizeVideoJob(claimed, providerUrl));
+    return { job: claimed ?? job, generation: null };
   }
 
   if (status === "failed" || status === "expired") {
@@ -168,7 +126,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const result = await checkAndFinalize(job);
+    const result = await advance(job);
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Query failed";

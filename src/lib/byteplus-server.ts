@@ -152,18 +152,41 @@ export type ArkVideoTask = {
   message?: string;
 };
 
+/**
+ * Submitting a video task is not the trivial handshake it looks like:
+ * ModelArk fetches and moderates every attached first-frame/reference image
+ * before it answers, so an i2v submit with a 2K still can sit open for
+ * minutes. Nothing here may hang forever — a call that outlives this budget
+ * has to fail with a sentence someone can act on, not leave a request open
+ * until a gateway kills it with a 504.
+ */
+const ARK_REQUEST_TIMEOUT_MS = 120_000;
+
 async function arkRequest<T>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
-  const res = await fetch(`${arkBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${arkKey()}`,
-      ...(init?.headers ?? {}),
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${arkBaseUrl()}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${arkKey()}`,
+        ...(init?.headers ?? {}),
+      },
+      signal: AbortSignal.timeout(ARK_REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(
+        `BytePlus ModelArk did not respond within ${Math.round(
+          ARK_REQUEST_TIMEOUT_MS / 1000
+        )}s — try again, or attach a smaller image`
+      );
+    }
+    throw err;
+  }
   const json = (await res.json()) as T & {
     error?: { message?: string };
     message?: string;

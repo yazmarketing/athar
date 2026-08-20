@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { requireCreator } from "@/lib/authz";
-import { arkCreateVideoTask, arkGenerateImage } from "@/lib/byteplus-server";
+import { arkGenerateImage } from "@/lib/byteplus-server";
 import { geminiGenerateImage } from "@/lib/gemini-server";
 import { db } from "@/lib/db";
 import { getBrandKit } from "@/lib/brand-kits";
 import { createJob } from "@/lib/jobs";
+import { submitVideoJob } from "@/lib/video-jobs";
 import { projectExists } from "@/lib/projects";
 import { uploadPublicObject } from "@/lib/storage";
 import { buildPrompt } from "@/lib/prompt";
@@ -55,15 +56,6 @@ export function ensureMinPixels(size: string, minPixels: number): string {
   const nh = Math.ceil((h * scale) / 16) * 16;
   return `${nw}x${nh}`;
 }
-
-/** Seedance ratio — map uncommon aspects to closest supported. */
-const ASPECT_TO_VIDEO_RATIO: Record<string, string> = {
-  "16:9": "16:9",
-  "9:16": "9:16",
-  "1:1": "1:1",
-  "4:5": "9:16",
-  "21:9": "16:9",
-};
 
 /** A row from the generations table, as the insert returns it. */
 type GenerationRow = Record<string, unknown>;
@@ -368,33 +360,9 @@ export async function POST(req: NextRequest) {
       Math.max(durationS, 4),
       videoModel.maxDuration || 30
     );
-    /**
-     * 1080p is a Seedance 2.5 capability; the 2.0 Mini used by the draft tier
-     * does not offer it, so asking for it there would fail at submit. Clamp
-     * rather than error — the user asked for a clip, not a lecture.
-     */
-    const requested = body.videoResolution;
-    const allows1080 = videoModel.slug.includes("seedance-2-5");
-    const videoResolution: "480p" | "720p" | "1080p" =
-      requested === "480p"
-        ? "480p"
-        : requested === "1080p" && allows1080
-          ? "1080p"
-          : "720p";
     try {
-      const { taskId } = await arkCreateVideoTask({
-        model: videoModel.slug,
-        prompt: finalPrompt,
-        ratio: ASPECT_TO_VIDEO_RATIO[aspect] ?? "16:9",
-        resolution: videoResolution,
-        duration: videoDuration,
-        generateAudio: videoModel.supportsAudio,
-        imageUrls: sourceImageUrls.length ? sourceImageUrls : undefined,
-        videoUrls: sourceVideoUrl ? [sourceVideoUrl] : undefined,
-      });
       const job = await createJob({
         kind,
-        providerTaskId: taskId,
         modelEndpoint: `${videoModel.provider}:${videoModel.slug}`,
         tier: editTier,
         input: { ...body, prompt: body.prompt },
@@ -406,10 +374,20 @@ export async function POST(req: NextRequest) {
         projectId,
         brandKitId,
       });
+      /**
+       * Submitting is not the quick handshake it reads as: ModelArk fetches
+       * and moderates every attached still before it hands back a task id,
+       * and for an i2v render off a 2K frame that can outlive the gateway —
+       * which is what surfaced in the browser as "the render ran longer than
+       * the gateway allows". The job row is the durable record, so it is
+       * enough to answer with; the submit happens once the response is out,
+       * and a poll re-submits it if this process dies first.
+       */
+      after(() => submitVideoJob(job.id));
       return NextResponse.json({ job }, { status: 202 });
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Video submit failed";
+        err instanceof Error ? err.message : "Could not queue the render";
       return NextResponse.json({ error: message }, { status: 502 });
     }
   }

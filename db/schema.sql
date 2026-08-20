@@ -112,7 +112,10 @@ create table if not exists public.generation_jobs (
   brand_kit_id uuid references public.brand_kits (id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  completed_at timestamptz
+  completed_at timestamptz,
+  -- Set while one poll is storing the finished clip, so the polls that
+  -- overlap it don't each copy the video and insert a generation.
+  finalizing_at timestamptz
 );
 
 create index if not exists generation_jobs_status_idx

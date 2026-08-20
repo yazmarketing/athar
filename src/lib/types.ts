@@ -103,6 +103,8 @@ export type GenerationJobRecord = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /** Set while a poll is storing the finished clip — see `claimJobForFinalize`. */
+  finalizing_at: string | null;
 };
 
 /** Mirrors the `brand_kits` table. */

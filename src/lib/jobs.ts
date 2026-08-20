@@ -32,6 +32,12 @@ async function ensureJobsTableUncached() {
     create index if not exists generation_jobs_status_idx
       on public.generation_jobs (status, created_at desc)
   `);
+  // Stamped when a poll takes ownership of finalizing a finished render, so
+  // the polls that overlap it don't each store the clip and insert a row.
+  await db().query(`
+    alter table public.generation_jobs
+      add column if not exists finalizing_at timestamptz
+  `);
   // Existing tables predate the 'v2v' kind — relax the check. Idempotent.
   await db().query(`
     do $$
@@ -50,9 +56,15 @@ async function ensureJobsTableUncached() {
 /** Memoised per process — see `onceProcess`. */
 export const ensureJobsTable = onceProcess(ensureJobsTableUncached);
 
+/**
+ * Record a video render before anything is asked of the provider.
+ *
+ * The job is born 'queued' with no provider task: submitting is the slow
+ * part (ModelArk moderates every attached image before it answers), and it
+ * happens after the response, not inside it. See `submitVideoJob`.
+ */
 export async function createJob(input: {
   kind: "t2v" | "i2v" | "v2v";
-  providerTaskId: string;
   modelEndpoint: string;
   tier: string;
   input: Record<string, unknown>;
@@ -67,15 +79,14 @@ export async function createJob(input: {
   await ensureJobsTable();
   const { rows } = await db().query<GenerationJobRecord>(
     `insert into generation_jobs
-       (kind, status, provider, provider_task_id, model_endpoint, tier, input,
+       (kind, status, provider, model_endpoint, tier, input,
         final_prompt, negative_prompt, aspect, duration_s,
         user_id, project_id, brand_kit_id)
      values
-       ($1, 'running', 'byteplus', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ($1, 'queued', 'byteplus', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      returning *`,
     [
       input.kind,
-      input.providerTaskId,
       input.modelEndpoint,
       input.tier,
       JSON.stringify(input.input),
@@ -165,18 +176,103 @@ export async function markJobCancelled(
   return rows[0] ?? null;
 }
 
-/** Reset a failed job onto a fresh provider task (retry). */
+/** Put a failed or cancelled job back in the queue for a fresh submit. */
 export async function markJobRequeued(
+  id: string
+): Promise<GenerationJobRecord | null> {
+  const { rows } = await db().query<GenerationJobRecord>(
+    `update generation_jobs
+     set status = 'queued', provider_task_id = null, error = null,
+         updated_at = now(), completed_at = null, generation_id = null,
+         finalizing_at = null
+     where id = $1
+     returning *`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Take ownership of submitting a queued job.
+ *
+ * The claim *is* the 'queued' → 'running' transition, so two callers racing
+ * — the request that created the job and a poll that got there first — can
+ * never open two Seedance tasks for one render. The loser gets null and does
+ * nothing.
+ */
+export async function claimJobForSubmit(
+  id: string
+): Promise<GenerationJobRecord | null> {
+  await ensureJobsTable();
+  const { rows } = await db().query<GenerationJobRecord>(
+    `update generation_jobs
+     set status = 'running', updated_at = now()
+     where id = $1 and status = 'queued' and provider_task_id is null
+     returning *`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
+/** Attach the provider task a claimed job was submitted as. */
+export async function attachProviderTask(
   id: string,
   providerTaskId: string
 ): Promise<GenerationJobRecord | null> {
   const { rows } = await db().query<GenerationJobRecord>(
     `update generation_jobs
-     set status = 'running', provider_task_id = $2, error = null,
-         updated_at = now(), completed_at = null, generation_id = null
+     set provider_task_id = $2, updated_at = now()
      where id = $1
      returning *`,
     [id, providerTaskId]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Return a claim that never produced a task to the queue.
+ *
+ * A submit runs after the response, so it dies with the process on a deploy
+ * or restart. Without this the render would sit 'running' against a provider
+ * that was never asked for it, until the stale check failed it half an hour
+ * later.
+ */
+export async function requeueUnsubmittedJob(
+  id: string,
+  olderThanMs: number
+): Promise<GenerationJobRecord | null> {
+  const { rows } = await db().query<GenerationJobRecord>(
+    `update generation_jobs
+     set status = 'queued', updated_at = now()
+     where id = $1 and status = 'running' and provider_task_id is null
+       and updated_at < now() - make_interval(secs => $2)
+     returning *`,
+    [id, olderThanMs / 1000]
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Take ownership of finalizing a finished render.
+ *
+ * Storing the clip and writing its generation row takes seconds, and the
+ * studio polls every five, so without a claim every overlapping poll would
+ * copy the same video and insert the same generation again. A claim that
+ * goes nowhere (the process died mid-copy) is retried once it ages out.
+ */
+export async function claimJobForFinalize(
+  id: string,
+  retryAfterMs: number
+): Promise<GenerationJobRecord | null> {
+  await ensureJobsTable();
+  const { rows } = await db().query<GenerationJobRecord>(
+    `update generation_jobs
+     set finalizing_at = now(), updated_at = now()
+     where id = $1 and status = 'running'
+       and (finalizing_at is null
+            or finalizing_at < now() - make_interval(secs => $2))
+     returning *`,
+    [id, retryAfterMs / 1000]
   );
   return rows[0] ?? null;
 }
