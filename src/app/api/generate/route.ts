@@ -47,9 +47,9 @@ function arkSizeFor(aspect: string, resolution: "1K" | "2K"): string {
 const EDIT_MIN_PIXELS = 3_686_400;
 
 /** Scale a "WxH" size up (keeping aspect, multiples of 16) to meet a floor. */
-function ensureMinPixels(size: string, minPixels: number): string {
+export function ensureMinPixels(size: string, minPixels: number): string {
   const [w, h] = size.split("x").map(Number);
-  if (!w || !h || w * h >= minPixels) return size;
+  if (!w || !h || minPixels <= 0 || w * h >= minPixels) return size;
   const scale = Math.sqrt(minPixels / (w * h));
   const nw = Math.ceil((w * scale) / 16) * 16;
   const nh = Math.ceil((h * scale) / 16) * 16;
@@ -89,6 +89,22 @@ async function generateImage(
   // Edits require ≥ ~3.686M pixels — force 2K when a reference is present
   const sizeRes =
     referenceUrls.length > 0 && resolution === "1K" ? "2K" : resolution;
+
+  /**
+   * Two separate floors, whichever is higher wins:
+   *
+   * - the model's own minimum (Seedream 5.x refuses anything under 2560×1440
+   *   on every request, so a 1K frame is rejected outright), and
+   * - the edit floor, which applies to any model once a reference is attached.
+   *
+   * Scaling up beats failing: the alternative is a provider error the person
+   * generating can do nothing useful with.
+   */
+  const floor = Math.max(
+    model.minPixels ?? 0,
+    referenceUrls.length > 0 ? EDIT_MIN_PIXELS : 0
+  );
+
   const payload: {
     model: string;
     prompt: string;
@@ -98,11 +114,7 @@ async function generateImage(
   } = {
     model: model.slug,
     prompt: finalPrompt,
-    // Edits (reference present) must clear Seedream's pixel floor.
-    size:
-      referenceUrls.length > 0
-        ? ensureMinPixels(arkSizeFor(aspect, sizeRes), EDIT_MIN_PIXELS)
-        : arkSizeFor(aspect, sizeRes),
+    size: ensureMinPixels(arkSizeFor(aspect, sizeRes), floor),
     seed,
   };
   if (referenceUrls.length > 0) {

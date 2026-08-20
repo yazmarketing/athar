@@ -28,6 +28,15 @@ export type ModelEndpoint = {
   maxDuration: number;
   supportsReference: boolean;
   supportsAudio: boolean;
+  /**
+   * Minimum total pixels the provider will accept for this model.
+   *
+   * Seedream 5.x refuses anything under 3,686,400 px (2560×1440) on *every*
+   * request, not just edits — a 1K 16:9 frame is 921,600 px and comes back as
+   * InvalidParameter, so the size is scaled up to clear the floor rather than
+   * failing the render.
+   */
+  minPixels?: number;
   notes?: string;
 };
 
@@ -68,6 +77,9 @@ const T2I: CapabilityConfig = {
       maxDuration: 0,
       supportsReference: true,
       supportsAudio: false,
+      // Verified against the live API 2026-08-19: below this it returns
+      // "image size must be at least 3686400 pixels".
+      minPixels: 3_686_400,
     },
     // Verified against the YAZ ModelArk account on 2026-08-06
     hero: {
@@ -80,7 +92,8 @@ const T2I: CapabilityConfig = {
       maxDuration: 0,
       supportsReference: true,
       supportsAudio: false,
-      notes: "Hero stills / brand hero images. 1K/2K, multi-reference fusion.",
+      minPixels: 3_686_400,
+      notes: "Hero stills / brand hero images. 2K+, multi-reference fusion.",
     },
   },
   // BytePlus-only: the primary is retried twice; no secondary provider
@@ -362,6 +375,12 @@ export type ImageResolutionOption = "1K" | "2K" | "4K";
 
 const SEEDREAM_RESOLUTIONS: ImageResolutionOption[] = ["1K", "2K"];
 
+/**
+ * Seedream 5.x has a hard pixel floor, so 1K is not a thing it can produce.
+ * Offering it anyway meant picking "Seedream 5.0 · 1K" could never succeed.
+ */
+const SEEDREAM_5_RESOLUTIONS: ImageResolutionOption[] = ["2K"];
+
 export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
   {
     id: "draft",
@@ -382,7 +401,7 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
     tier: "standard",
     imageModel: null,
     maxReferenceImages: MAX_REFERENCE_IMAGES,
-    resolutions: SEEDREAM_RESOLUTIONS,
+    resolutions: SEEDREAM_5_RESOLUTIONS,
     bestFor: "balanced, general-purpose photorealistic images",
   },
   {
@@ -393,7 +412,7 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
     tier: "hero",
     imageModel: null,
     maxReferenceImages: MAX_REFERENCE_IMAGES,
-    resolutions: SEEDREAM_RESOLUTIONS,
+    resolutions: SEEDREAM_5_RESOLUTIONS,
     bestFor:
       "highest-fidelity hero and brand stills, multi-reference fusion, crisp 2K",
   },
