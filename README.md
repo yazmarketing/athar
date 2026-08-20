@@ -42,7 +42,47 @@ Next.js 15 (App Router) · TypeScript · Tailwind v4 + shadcn/ui · DigitalOcean
 - **`src/app/api/generate/route.ts`** — server-side orchestrator: builds the prompt, resolves model, submits (retry primary once), captures the seed, copies the output into our DigitalOcean Space, and writes the full generation record.
 - **`src/app/api/upscale/route.ts`** / **`src/app/api/background/remove/route.ts`** — Seedream image-to-image tools.
 - **`src/app/api/generations/route.ts`** — gallery feed.
+- **`src/lib/audio-extract.ts`** — pulls the audio out of a video in the
+  browser and downsamples it to 16kHz mono, so a 500MB export becomes a few MB
+  and fits OpenAI's 25MB per-request cap.
+- **`src/lib/openai-whisper.ts`** — the `whisper-1` client, and the pairing of
+  its flat word list back onto its segments.
+- **`src/app/api/transcripts/*`** — the chunk endpoint, editing, exports and
+  the AI layer.
+- **`src/lib/subtitles.ts`** — SRT/VTT/text/Markdown/CSV rendering, including
+  the cue-splitting and timing rules that make an SRT usable in an edit.
 - **`db/schema.sql`** — `generations` table per §7 of the brief: endpoint, full payload, seed, cost, aspect, status, QC fields.
+
+### Transcribe
+
+Upload a video and get the voice-over back as timecoded text: word-level
+timestamps, readable alongside the player, correctable in place, searchable
+across every recording in the studio, and exportable as subtitles or a clean
+script. On top of it: summary, chapters, the clips worth cutting, a Q&A that
+answers with timecodes, and a one-click handoff into Storyboard.
+
+**The engine is [openai/whisper](https://github.com/openai/whisper)**, via
+OpenAI's hosted `whisper-1` — the only model they offer with word-level
+timestamps, which is the point of the feature. $0.006 per minute of audio
+($0.36/hr), billed to the second, nothing when idle.
+
+**Turning it on** takes one variable: `OPENAI_API_KEY`, which the prompt
+editor and the AI layer already use. Without it the tab loads and says
+transcription is not configured.
+
+**How a video gets under a 25MB API limit:** the browser decodes it, keeps the
+audio, and downsamples to 16kHz mono — what Whisper listens to anyway — then
+sends it in ten-minute chunks with their offsets. Only a few MB ever leaves the
+machine, the upload is quick, and a two-hour recording is a handful of small
+requests rather than one impossible one. ProRes and MKV cannot be decoded in a
+browser; export MP4 or MP3 for those.
+
+Chunks are posted from the browser, so **the tab stays open while a transcript
+runs**. Each chunk is saved as it lands, so an interrupted run leaves a partial
+transcript and Retry picks it up from the stored media.
+
+`whisper-1` has no speaker diarization, so there are no speaker labels — for
+voice-over there is one voice.
 
 ### Key guarantees
 

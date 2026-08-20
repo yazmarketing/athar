@@ -53,3 +53,42 @@ export async function uploadPublicObject(
     `https://${bucket}.${env("DO_SPACES_REGION")}.digitaloceanspaces.com`;
   return `${base}/${path}`;
 }
+
+/** Public URL an object at `path` will have once uploaded. */
+export function publicObjectUrl(path: string): string {
+  const bucket = env("DO_SPACES_BUCKET");
+  const cdn = process.env.DO_SPACES_CDN_URL;
+  const base =
+    cdn?.replace(/\/$/, "") ??
+    `https://${bucket}.${env("DO_SPACES_REGION")}.digitaloceanspaces.com`;
+  return `${base}/${path}`;
+}
+
+/**
+ * Presigned PUT so the browser uploads media straight to the Space.
+ *
+ * Media files are the one thing here that can be gigabytes — an hour of
+ * ProRes, a two-hour interview — and routing those through the app server
+ * would buffer the whole file in memory to no purpose. The browser PUTs to
+ * storage and only the resulting URL comes back to us.
+ *
+ * Requires CORS on the Space allowing PUT from the app origin (see
+ * the README); `/api/transcripts/upload` is the fallback when it isn't set.
+ */
+export async function presignUpload(opts: {
+  path: string;
+  contentType: string;
+  expiresIn?: number;
+}): Promise<{ uploadUrl: string; publicUrl: string }> {
+  const { getSignedUrl } = await import("@aws-sdk/s3-request-presigner");
+  const command = new PutObjectCommand({
+    Bucket: env("DO_SPACES_BUCKET"),
+    Key: opts.path,
+    ContentType: opts.contentType,
+    ACL: "public-read",
+  });
+  const uploadUrl = await getSignedUrl(spaces(), command, {
+    expiresIn: opts.expiresIn ?? 900,
+  });
+  return { uploadUrl, publicUrl: publicObjectUrl(opts.path) };
+}

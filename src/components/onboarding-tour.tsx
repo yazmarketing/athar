@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
  * everyone, which is the intended way to reintroduce it after a significant UI
  * change (clear `users.onboarded_at` alongside it to replay it team-wide).
  */
-const TOUR_STORAGE_KEY = "athar-onboarding-completed-v2";
+const TOUR_STORAGE_KEY = "athar-onboarding-completed-v3";
 
 /** Read the local mirror. Never throws — private mode has no storage. */
 function readLocalTourCompleted(): boolean {

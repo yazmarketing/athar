@@ -19,9 +19,16 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { friendlyModelName } from "@/config/models";
+import {
+  barHeight,
+  formatMetric,
+  shortDate,
+  summariseDays,
+  type DailyMetric,
+  type DayRow,
+} from "@/lib/usage";
 
 type UsageRow = { label?: string; mode?: string; model_endpoint?: string; cost: number; count: number };
-type DayRow = { day: string; cost: number; count: number };
 type AuditRow = {
   id: string;
   user_email: string | null;
@@ -44,6 +51,14 @@ type UsageData = {
   byUser: UsageRow[];
   byProject: UsageRow[];
   byDay: DayRow[];
+  /** Null until the first transcription has been run. */
+  transcription: {
+    count: number;
+    audio_seconds: number;
+    compute_ms: number;
+    count_30d: number;
+    audio_seconds_30d: number;
+  } | null;
   audit: AuditRow[];
 };
 
@@ -256,8 +271,6 @@ export function UsagePanel() {
     );
   }
 
-  const maxDayCost = Math.max(...data.byDay.map((d) => d.cost), 0.0001);
-
   return (
     <div className="space-y-8 pb-10">
       <div className="flex items-center justify-between">
@@ -290,24 +303,30 @@ export function UsagePanel() {
         />
       </div>
 
-      {/* Daily bars */}
-      {data.byDay.length > 0 && (
-        <section>
-          <h3 className="mb-3 text-sm font-medium">Daily spend — last 30 days</h3>
-          <div className="flex h-28 items-end gap-1 rounded-2xl bg-card p-4 ring-1 ring-border">
-            {data.byDay.map((d) => (
-              <div
-                key={d.day}
-                title={`${d.day} — ${usd(d.cost)} · ${d.count} generations`}
-                className="min-w-1 flex-1 rounded-t bg-gold/70 transition hover:bg-gold"
-                style={{
-                  height: `${Math.max(4, (d.cost / maxDayCost) * 100)}%`,
-                }}
-              />
-            ))}
-          </div>
-        </section>
+      {/* Transcription runs on our own hardware, so hours of audio and machine
+          time are the honest numbers here — there is no per-minute spend. */}
+      {data.transcription && data.transcription.count > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            label="Transcripts"
+            value={String(data.transcription.count)}
+          />
+          <StatCard
+            label="Audio transcribed"
+            value={`${(data.transcription.audio_seconds / 3600).toFixed(1)}h`}
+          />
+          <StatCard
+            label="Audio — last 30 days"
+            value={`${(data.transcription.audio_seconds_30d / 3600).toFixed(1)}h`}
+          />
+          <StatCard
+            label="Worker time"
+            value={`${(data.transcription.compute_ms / 3600000).toFixed(1)}h`}
+          />
+        </div>
       )}
+
+      <DailyActivity days={data.byDay} />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <BreakdownTable
@@ -506,6 +525,144 @@ export function UsagePanel() {
         )}
       </section>
     </div>
+  );
+}
+
+/**
+ * Thirty days of studio activity.
+ *
+ * The point of this chart is to answer "is anything unusual happening" at a
+ * glance, which the old one could not: it drew only the days that had work,
+ * unlabelled and unscaled, so a quiet fortnight and a busy one looked the
+ * same and a single expensive day flattened everything else into dust.
+ *
+ * So: every day is present whether or not it had work, the axis says what the
+ * numbers are, hovering names the day, and spend is not the only thing worth
+ * looking at — a day can be busy and cheap, or quiet and expensive, and the
+ * toggle is what tells those apart.
+ */
+function DailyActivity({ days }: { days: DayRow[] }) {
+  const [metric, setMetric] = useState<DailyMetric>("cost");
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  const hasTranscripts = days.some((d) => d.transcript_count > 0);
+  const METRICS: { id: DailyMetric; label: string }[] = [
+    { id: "cost", label: "Spend" },
+    { id: "count", label: "Generations" },
+    ...(hasTranscripts ? [{ id: "audio" as const, label: "Audio" }] : []),
+  ];
+
+  const { values, total, max, activeDays, busiestDay } = summariseDays(days, metric);
+  const format = (value: number) => formatMetric(value, metric);
+  const shown = hovered !== null ? days[hovered] : null;
+
+  if (days.length === 0) return null;
+
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">Last 30 days</h3>
+          <p className="text-xs text-muted-foreground">
+            {activeDays === 0
+              ? "Nothing yet in this window — bars appear as work lands"
+              : `${format(total)} across ${activeDays} active ${
+                  activeDays === 1 ? "day" : "days"
+                } · busiest ${shortDate(busiestDay ?? "")} at ${format(max)}`}
+          </p>
+        </div>
+        <div className="flex rounded-full bg-card p-0.5 ring-1 ring-border">
+          {METRICS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setMetric(option.id)}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs transition",
+                metric === option.id
+                  ? "bg-gold text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-card p-4 ring-1 ring-border">
+        {/* Reserved row: the readout sits above the bars rather than floating
+            over them, so nothing is ever hidden behind a tooltip. */}
+        <div className="mb-2 flex h-8 items-center justify-between text-xs">
+          {shown ? (
+            <>
+              <span className="font-medium">{shortDate(shown.day)}</span>
+              <span className="flex gap-3 text-muted-foreground">
+                <span>{usd(shown.cost)}</span>
+                <span>
+                  {shown.count} {shown.count === 1 ? "render" : "renders"}
+                </span>
+                {hasTranscripts && (
+                  <span>
+                    {shown.transcript_count} transcribed
+                    {shown.audio_seconds > 0 &&
+                      ` (${(shown.audio_seconds / 3600).toFixed(1)}h)`}
+                  </span>
+                )}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="text-muted-foreground/70">
+                Hover a day for the detail
+              </span>
+              <span className="font-mono text-muted-foreground/70">
+                peak {format(max)}
+              </span>
+            </>
+          )}
+        </div>
+
+        <div className="flex h-32 items-end gap-[3px]">
+          {days.map((day, index) => {
+            const value = values[index];
+            const isToday = index === days.length - 1;
+            return (
+              <button
+                key={day.day}
+                type="button"
+                onMouseEnter={() => setHovered(index)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered(index)}
+                onBlur={() => setHovered(null)}
+                aria-label={`${shortDate(day.day)}: ${format(value)}`}
+                className="group flex h-full min-w-0 flex-1 flex-col justify-end"
+              >
+                <span
+                  className={cn(
+                    "w-full rounded-t transition",
+                    value === 0
+                      ? "bg-muted"
+                      : hovered === index
+                        ? "bg-gold"
+                        : isToday
+                          ? "bg-gold/90"
+                          : "bg-gold/60 group-hover:bg-gold"
+                  )}
+                  style={{ height: barHeight(value, max) }}
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-2 flex justify-between text-[10px] text-muted-foreground/70">
+          <span>{shortDate(days[0]?.day ?? "")}</span>
+          <span>{shortDate(days[Math.floor(days.length / 2)]?.day ?? "")}</span>
+          <span>Today</span>
+        </div>
+      </div>
+    </section>
   );
 }
 

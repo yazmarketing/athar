@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowUpToLine,
+  AudioLines,
   BarChart3,
   Boxes,
   Check,
@@ -53,6 +54,7 @@ import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
 import { Storyboards } from "@/components/storyboard";
+import { Transcribe } from "@/components/transcribe";
 import { WelcomeCelebration } from "@/components/welcome-celebration";
 import {
   OnboardingTour,
@@ -165,6 +167,7 @@ type View =
   | "assets"
   | "orchestrate"
   | "storyboard"
+  | "transcribe"
   | "team";
 
 function isVideo(g: GenerationRecord) {
@@ -540,6 +543,13 @@ export function Studio() {
         onEnter: toSidebar,
         title: "Storyboard the piece",
         body: "For anything with a sequence — a film, a reel, an ad — plan it here first. The brief breaks into numbered frames you can rewrite and reorder, each with its own camera move, and the whole board renders anchored to one look. Animate any frame into a clip when it's right.",
+        placement: "right",
+      },
+      {
+        target: "transcribe",
+        onEnter: toSidebar,
+        title: "Turn talking into text",
+        body: "Drop in a video and get the voice-over back as timecoded text \u2014 down to the word, so clicking any word jumps the player to it. Correct a line by double-clicking it, search across every recording the studio has, and export subtitles or a clean script. It also reads the piece for you: summary, chapters, and the clips worth cutting. The audio is pulled out in your browser, so only a few MB is ever sent.",
         placement: "right",
       },
     ];
@@ -2308,6 +2318,13 @@ export function Studio() {
             "Storyboard",
             "storyboard"
           )}
+          {navBtn(
+            view === "transcribe",
+            () => setView("transcribe"),
+            <AudioLines className="size-4" />,
+            "Transcribe",
+            "transcribe"
+          )}
           {isManagement &&
             navBtn(
               view === "usage",
@@ -2773,6 +2790,11 @@ export function Studio() {
                     onClick: () => openAssistant(null),
                   },
                   {
+                    label: "Transcribe",
+                    icon: AudioLines,
+                    onClick: () => setView("transcribe"),
+                  },
+                  {
                     label: "Variations",
                     icon: Shuffle,
                     onClick: () => {
@@ -2974,6 +2996,29 @@ export function Studio() {
                 defaultProjectId={activeProjectId}
                 defaultBrandKitId={activeBrandKitId}
                 onGenerated={() => void loadGallery()}
+              />
+            </div>
+          </>
+        )}
+
+        {view === "transcribe" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Transcribe</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Voice-over from your videos — timecoded to the word,
+                  searchable, and ready to cut
+                </p>
+              </div>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-10 sm:px-8">
+              <Transcribe
+                clients={clients}
+                defaultClientId={activeClientId}
+                defaultProjectId={activeProjectId}
+                isAdmin={isManagement}
+                onOpenStoryboard={() => setView("storyboard")}
               />
             </div>
           </>

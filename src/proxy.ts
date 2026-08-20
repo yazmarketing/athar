@@ -22,6 +22,11 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Public transcript links: /t/<token>. Same reasoning, same exact shape.
+  if (/^\/t\/[A-Za-z0-9_-]{16,128}$/.test(pathname)) {
+    return NextResponse.next();
+  }
+
   if (
     pathname.startsWith("/api/auth") ||
     pathname === "/api/register" ||
