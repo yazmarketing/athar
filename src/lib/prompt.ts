@@ -2,6 +2,7 @@ import type { PromptInputs } from "@/lib/types";
 import { resolveStyle } from "@/config/styles";
 import { resolveCamera } from "@/config/camera";
 import { culturalGuidance } from "@/config/cultural";
+import { expandMentions } from "@/lib/mentions";
 
 /**
  * Structured prompt builder (§5.3).
@@ -49,8 +50,18 @@ export function buildPrompt(inputs: PromptInputs): {
       : style.negative?.trim();
   const camera = resolveCamera(inputs.cameraId);
 
-  const parts = [
+  /**
+   * `@image2` in the prompt becomes an explicit, indexed instruction before
+   * anything else runs — so the rest of the pipeline (cultural guidance, the
+   * text/logo check) sees the real sentence rather than a token.
+   */
+  const subject = expandMentions(
     inputs.subject.trim(),
+    (inputs.referenceLabels ?? []).map((label) => ({ label }))
+  );
+
+  const parts = [
+    subject,
     inputs.action?.trim(),
     inputs.presetFragment?.trim(),
     inputs.lighting?.trim(),

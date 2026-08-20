@@ -61,6 +61,7 @@ import {
   type TourStep,
 } from "@/components/onboarding-tour";
 import { GenerationRating } from "@/components/generation-rating";
+import { activeMentionQuery, mentionToken } from "@/lib/mentions";
 import { SidebarUser } from "@/components/sidebar-user";
 import { UpscaleDialog } from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
@@ -277,6 +278,21 @@ export function Studio() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [referenceUrls, setReferenceUrls] = useState<string[]>([]);
+  /**
+   * Friendly names for attached references, keyed by URL. Only library picks
+   * have one; a drag-and-dropped file is just "image 2" in the @ menu.
+   */
+  const [referenceNames, setReferenceNames] = useState<Record<string, string>>(
+    {}
+  );
+  /** The `@…` the caret is inside, and where to put the menu. */
+  const [mention, setMention] = useState<{
+    start: number;
+    end: number;
+    query: string;
+  } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const [uploadingRef, setUploadingRef] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [editTarget, setEditTarget] = useState<GenerationRecord | null>(null);
@@ -1208,6 +1224,67 @@ export function Studio() {
     []
   );
 
+  /** Attachments the prompt can tag, in the order their badges show. */
+  const mentionTargets = useMemo(
+    () =>
+      (mode === "t2v" ? videoSources.map((v) => v.url) : referenceUrls).map(
+        (url, i) => ({
+          url,
+          index: i,
+          label: referenceNames[url] ?? null,
+          display: referenceNames[url] ?? `Image ${i + 1}`,
+        })
+      ),
+    [mode, videoSources, referenceUrls, referenceNames]
+  );
+
+  const mentionMatches = useMemo(() => {
+    if (!mention) return [];
+    const q = mention.query.trim().toLowerCase();
+    if (!q) return mentionTargets;
+    return mentionTargets.filter(
+      (t) =>
+        t.display.toLowerCase().includes(q) ||
+        `image${t.index + 1}`.startsWith(q.replace(/\s+/g, ""))
+    );
+  }, [mention, mentionTargets]);
+
+  /** Replace the `@…` under the caret with a stable token. */
+  const insertMention = useCallback(
+    (index: number) => {
+      if (!mention) return;
+      const token = mentionToken(index);
+      const next =
+        subject.slice(0, mention.start) + token + " " + subject.slice(mention.end);
+      setSubject(next);
+      setMention(null);
+      setMentionIndex(0);
+      // Put the caret after what we just inserted, not at the end.
+      const caret = mention.start + token.length + 1;
+      requestAnimationFrame(() => {
+        const el = promptRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      });
+    },
+    [mention, subject]
+  );
+
+  /** Recompute the open mention from wherever the caret now is. */
+  const syncMention = useCallback(
+    (text: string, caret: number | null) => {
+      if (caret === null || mentionTargets.length === 0) {
+        setMention(null);
+        return;
+      }
+      const found = activeMentionQuery(text, caret);
+      setMention(found);
+      setMentionIndex(0);
+    },
+    [mentionTargets.length]
+  );
+
   const openDetail = (g: GenerationRecord) => {
     if (!g.output_url) {
       toast.message("No output yet");
@@ -1420,6 +1497,9 @@ export function Studio() {
     styleTokens: activeClientStyle?.positive,
     styleNegative: activeClientStyle?.negative || undefined,
     cameraId: mode === "t2v" ? camera : undefined,
+    // Positional, matching the badges on the thumbnails, so the server can
+    // turn "@image2" into "reference image 2 (Fatima)".
+    referenceLabels: mentionTargets.map((t) => t.label),
   });
 
   // Generate with a specific image model id — a Seedream tier
@@ -3843,9 +3923,10 @@ export function Studio() {
 
               {mode === "t2i" && referenceUrls.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
-                  {referenceUrls.map((url) => (
+                  {referenceUrls.map((url, refIndex) => (
                     <div
                       key={url}
+                      title={referenceNames[url] ?? `Image ${refIndex + 1}`}
                       className="group relative size-12 overflow-hidden rounded-lg border border-white/10 bg-black/40"
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -3854,6 +3935,11 @@ export function Studio() {
                         alt="Reference"
                         className="size-full object-cover"
                       />
+                      {/* The number is the whole point of the badge: it is what
+                          you type after @ to tag this image in the prompt. */}
+                      <span className="pointer-events-none absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[9px] leading-4 text-white">
+                        {refIndex + 1}
+                      </span>
                       <div className="absolute inset-0 flex items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
                         <button
                           type="button"
@@ -3917,14 +4003,106 @@ export function Studio() {
                       ? "Describe the change you want from the reference…"
                       : "Describe what you want to create — subject, setting, lighting, mood…"
                 }
+              ref={promptRef}
               data-tour="prompt"
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-                onKeyDown={onKeyDown}
+              onChange={(e) => {
+                setSubject(e.target.value);
+                syncMention(e.target.value, e.target.selectionStart);
+              }}
+                onKeyDown={(e) => {
+                  // The menu owns the arrow keys and Enter while it is open,
+                  // otherwise Enter would submit mid-tag.
+                  if (mention && mentionMatches.length > 0) {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMentionIndex((i) => (i + 1) % mentionMatches.length);
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMentionIndex(
+                        (i) =>
+                          (i - 1 + mentionMatches.length) % mentionMatches.length
+                      );
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      insertMention(mentionMatches[mentionIndex].index);
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setMention(null);
+                      return;
+                    }
+                  }
+                  onKeyDown(e);
+                }}
+                onKeyUp={(e) =>
+                  syncMention(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart
+                  )
+                }
+                onClick={(e) =>
+                  syncMention(
+                    e.currentTarget.value,
+                    e.currentTarget.selectionStart
+                  )
+                }
+                onBlur={() => window.setTimeout(() => setMention(null), 120)}
                 onPaste={onPromptPaste}
                 rows={6}
                 className="field-sizing-fixed h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] shadow-none focus-visible:ring-0"
               />
+            )}
+
+            {/* Tag an attached image. Anchored to the dock rather than the
+                caret: the textarea is fixed-height and scrolls, so a
+                caret-following menu would drift off it. */}
+            {mention && mentionMatches.length > 0 && (
+              <div
+                role="listbox"
+                aria-label="Attached images"
+                className="absolute bottom-full left-3 z-50 mb-2 w-64 overflow-hidden rounded-xl bg-popover p-1 shadow-2xl ring-1 ring-border"
+              >
+                <p className="px-2 py-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Tag an attached image
+                </p>
+                {mentionMatches.map((t, i) => (
+                  <button
+                    key={t.url}
+                    type="button"
+                    role="option"
+                    aria-selected={i === mentionIndex}
+                    onMouseEnter={() => setMentionIndex(i)}
+                    onMouseDown={(e) => {
+                      // mousedown, not click: blur would close the menu first.
+                      e.preventDefault();
+                      insertMention(t.index);
+                    }}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
+                      i === mentionIndex ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
+                    )}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={t.url}
+                      alt=""
+                      className="size-8 shrink-0 rounded-md object-cover ring-1 ring-border"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm">{t.display}</span>
+                      <span className="block font-mono text-[10px] text-muted-foreground">
+                        {mentionToken(t.index)}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
 
               {!generating && (
@@ -4637,7 +4815,13 @@ export function Studio() {
                 selectedUrls={mode === "t2v"
                   ? videoSources.map((s) => s.url)
                   : referenceUrls}
-                onPick={(url) => {
+                onPick={(url, ref) => {
+                  // Keep the name so the @ menu can show "Fatima" rather than
+                  // "Image 2" — the label is the only way to tell two
+                  // thumbnails apart at 32px.
+                  if (ref?.name) {
+                    setReferenceNames((prev) => ({ ...prev, [url]: ref.name }));
+                  }
                   if (mode === "t2v") {
                     if (videoSources.some((s) => s.url === url)) {
                       setVideoSources((prev) =>

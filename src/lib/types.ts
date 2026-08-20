@@ -29,6 +29,11 @@ export type PromptInputs = {
   styleNegative?: string;
   /** Camera-move preset id (see config/camera.ts) — video motion. */
   cameraId?: string;
+  /**
+   * Names for the attached references, positionally. Lets `@image2` in the
+   * prompt expand to "reference image 2 (Fatima)" instead of a bare number.
+   */
+  referenceLabels?: (string | null)[];
 };
 
 export type GenerateRequest = {
@@ -311,4 +316,106 @@ export type StoryboardRecord = {
   project_name?: string | null;
   /** Present on single-board responses. */
   frames?: StoryboardFrameRecord[];
+};
+
+export type TranscriptStatus =
+  | "queued"
+  | "running"
+  | "ready"
+  | "failed"
+  | "cancelled";
+
+/** One decoded word with its position on the timeline. */
+export type TranscriptWord = {
+  w: string;
+  s: number;
+  e: number;
+};
+
+/** Mirrors the `transcript_segments` table. */
+export type TranscriptSegmentRecord = {
+  id: string;
+  transcript_id: string;
+  idx: number;
+  start_s: number;
+  end_s: number;
+  /** Raw diarization label (SPEAKER_00) — display name lives on the parent. */
+  speaker: string | null;
+  text: string;
+  words: TranscriptWord[];
+  translations: Record<string, string>;
+  edited: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A social-ready pull quote the AI pass found, with its in/out points. */
+export type TranscriptClip = {
+  start_s: number;
+  end_s: number;
+  quote: string;
+  caption: string;
+  why: string;
+};
+
+export type TranscriptChapter = {
+  start_s: number;
+  title: string;
+};
+
+export type TranscriptActionItem = {
+  task: string;
+  owner: string;
+  start_s: number;
+};
+
+/** The cached output of the "read this for me" pass. */
+export type TranscriptInsights = {
+  summary: string;
+  key_points: string[];
+  action_items: TranscriptActionItem[];
+  chapters: TranscriptChapter[];
+  clips: TranscriptClip[];
+  generated_at: string;
+  model: string;
+};
+
+/** Mirrors the `transcripts` table. */
+export type TranscriptRecord = {
+  id: string;
+  title: string;
+  status: TranscriptStatus;
+  progress: number;
+  stage: string;
+  error: string | null;
+  media_url: string;
+  media_kind: "audio" | "video";
+  media_bytes: number | null;
+  duration_s: number | null;
+  language: string | null;
+  language_probability: number | null;
+  task: "transcribe" | "translate";
+  model: string | null;
+  device: string | null;
+  diarize: boolean;
+  /** { SPEAKER_00: "Yazan" } — renaming a speaker once renames it everywhere. */
+  speaker_names: Record<string, string>;
+  vocabulary: string;
+  insights: TranscriptInsights | null;
+  client_id: string | null;
+  project_id: string | null;
+  created_by: string | null;
+  render_ms: number | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  /** Present on list responses. */
+  client_name?: string | null;
+  project_name?: string | null;
+  created_by_name?: string | null;
+  segment_count?: number;
+  speaker_count?: number;
+  /** Present on single-transcript responses. */
+  segments?: TranscriptSegmentRecord[];
 };
