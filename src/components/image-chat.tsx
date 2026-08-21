@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { uploadImageFile } from "@/lib/upload-image";
 import { GenerationPlaceholderCard } from "@/components/generation-progress";
 import { ImageModelSelect } from "@/components/image-model-select";
 import {
@@ -226,14 +227,7 @@ export function ImageChat({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, generating]);
 
-  const uploadReference = async (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/upload", { method: "POST", body: form });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Upload failed");
-    return json.url as string;
-  };
+  const uploadReference = async (file: File) => uploadImageFile(file);
 
   const onReferenceFiles = async (files: FileList | File[] | null) => {
     if (!files) return;

@@ -49,9 +49,20 @@ async function urlToInlinePart(url: string): Promise<GeminiPart | null> {
     const res = await fetch(url);
     if (!res.ok) return null;
     const mimeType = res.headers.get("content-type") ?? "image/png";
-    const data = Buffer.from(await res.arrayBuffer()).toString("base64");
+    const buf = Buffer.from(await res.arrayBuffer());
+    // Gemini inline data is ~4/3 this size. A 29MB PNG would OOM the
+    // 1 GiB instance and exceed the provider request cap.
+    if (buf.byteLength > 12_000_000) {
+      throw new Error(
+        "Reference image is too large for Nano Banana (max about 12MB). Compress the PNG and retry."
+      );
+    }
+    const data = buf.toString("base64");
     return { inlineData: { mimeType, data } };
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && /too large for Nano Banana/i.test(err.message)) {
+      throw err;
+    }
     return null;
   }
 }

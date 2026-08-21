@@ -47,6 +47,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ url, path });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Upload failed";
+    // A 29MB PNG dies in formData() before the 8MB check, and used to
+    // surface as the raw parser error. Spell out the actual limit.
+    if (/formData/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not read the file. Images through this path must be 8MB or smaller.",
+        },
+        { status: 413 }
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

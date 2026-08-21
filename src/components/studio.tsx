@@ -51,6 +51,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
+import { uploadImageFile } from "@/lib/upload-image";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -1755,14 +1756,7 @@ export function Studio() {
     runGenerate(currentModelId);
   };
 
-  const uploadReference = async (file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/upload", { method: "POST", body: form });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Upload failed");
-    return json.url as string;
-  };
+  const uploadReference = async (file: File) => uploadImageFile(file);
 
   const onReferenceFiles = async (files: FileList | File[] | null) => {
     if (!files) return;

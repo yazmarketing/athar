@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { uploadImageFile } from "@/lib/upload-image";
 import type { ReferenceAssetRecord } from "@/lib/types";
 
 const KINDS = [
@@ -120,12 +121,7 @@ export function ReferenceLibrary({
   }, [load, reloadToken]);
 
   async function uploadOne(file: File) {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/api/upload", { method: "POST", body: form });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error ?? "Upload failed");
-    return json.url as string;
+    return uploadImageFile(file);
   }
 
   // Take a whole batch at once — a character set, a product line, a logo
@@ -289,15 +285,11 @@ export function ReferenceLibrary({
       return;
     }
     try {
-      const form = new FormData();
-      form.append("file", file);
-      const up = await fetch("/api/upload", { method: "POST", body: form });
-      const upJson = await up.json();
-      if (!up.ok) throw new Error(upJson.error ?? "Upload failed");
+      const url = await uploadImageFile(file);
       const res = await fetch(`/api/reference-assets/${id}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: upJson.url }),
+        body: JSON.stringify({ url }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
