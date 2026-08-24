@@ -30,6 +30,12 @@ export function db(): Pool {
       // DO Managed Postgres uses a CA Node does not trust by default.
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
     });
+    // DO Managed Postgres periodically drops idle connections. Without this
+    // listener, that shows up as an unhandled 'error' event on the pool and
+    // takes down the whole Node process (crash loop, exit code 128).
+    pool.on("error", (err) => {
+      console.error("Postgres pool idle client error", err);
+    });
   }
   return pool;
 }
