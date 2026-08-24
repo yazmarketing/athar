@@ -55,9 +55,9 @@ export async function GET(req: NextRequest) {
     values.push(sessionUser.id);
     const mine = `$${values.length}`;
 
-    // Sort ids first (index columns only), then load the fat rows. `select
-    // g.* ... order by is_favorite` was sorting every generation including
-    // jsonb payloads, which is what surfaced as "Query read timeout".
+    // Sort ids first (index columns only), then load card columns only.
+    // `select g.*` pulled every jsonb payload; All-clients (no clientId) was
+    // 120 fat rows and timed out at the gateway, so the UI cleared to empty.
     const { rows } = await db().query(
       `with page as (
          select g.id
@@ -66,7 +66,13 @@ export async function GET(req: NextRequest) {
          order by g.is_favorite desc, g.created_at desc
          limit 120
        )
-       select g.*, u.name as creator_name, u.email as creator_email,
+       select g.id, g.project_id, g.user_id, g.mode, g.preset_id, g.brand_kit_id,
+              g.model_endpoint, g.model_version, g.tier, g.final_prompt, g.seed,
+              g.reference_urls, g.status, g.output_url, g.cost, g.duration_s,
+              g.resolution, g.aspect, g.fps, g.qc_status, g.qc_score,
+              g.client_ready, g.is_favorite, g.created_at, g.completed_at,
+              g.render_ms, '{}'::jsonb as input_payload, '' as negative_prompt,
+              u.name as creator_name, u.email as creator_email,
               f.rating as my_rating, f.reasons as my_reasons, f.note as my_note
        from page
        join generations g on g.id = page.id
