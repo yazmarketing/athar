@@ -29,17 +29,25 @@ export function db(): Pool {
       max: 5,
       // DO Managed Postgres uses a CA Node does not trust by default.
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
+      keepAlive: true,
       // Client-side only. DO Managed Postgres sits behind PgBouncer, which
       // rejects Postgres startup params like statement_timeout (FATAL 08P01)
       // and then every query — including Google sign-in — fails.
       connectionTimeoutMillis: 10_000,
       query_timeout: 30_000,
     });
-    // DO Managed Postgres periodically drops idle connections. Without this
-    // listener, that shows up as an unhandled 'error' event on the pool and
-    // takes down the whole Node process (crash loop, exit code 128).
+    // Idle clients: DO drops them; without a listener Node kills the process
+    // (exit 128, no stack).
     pool.on("error", (err) => {
       console.error("Postgres pool idle client error", err);
+    });
+    // Busy clients: query_timeout ends the socket and emits 'error' on the
+    // Client, not the Pool. That is also unhandled → exit 128, and it is
+    // what followed the library "Query read timeout" in production.
+    pool.on("connect", (client) => {
+      client.on("error", (err) => {
+        console.error("Postgres client error", err);
+      });
     });
   }
   return pool;

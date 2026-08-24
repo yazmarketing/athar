@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "@/lib/db";
+import { db, onceProcess } from "@/lib/db";
 import { uploadPublicObject } from "@/lib/storage";
 import type { GenerationRecord } from "@/lib/types";
 import { ensureBrowserMp4 } from "@/lib/video-compat";
@@ -73,6 +73,19 @@ export async function ensureGenerationModes() {
 }
 
 let favoriteColumnReady: Promise<void> | null = null;
+
+/**
+ * Lets the library pick the next 120 rows from the index instead of sorting
+ * every generation (including fat jsonb) on each GET. Best-effort — a
+ * missing column on a brand-new database must not block the gallery.
+ */
+export const ensureLibraryIndex = onceProcess(async () => {
+  await db().query(`
+    create index if not exists generations_library_idx
+      on public.generations (is_favorite desc, created_at desc)
+      where deleted_at is null
+  `);
+});
 
 /** Add `is_favorite` once per process — never on the gallery GET hot path. */
 export function ensureFavoriteColumn() {

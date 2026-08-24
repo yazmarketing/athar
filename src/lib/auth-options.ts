@@ -103,6 +103,10 @@ export const authOptions: NextAuthOptions = {
                 // `directory.readonly` only covers reading OTHER directory
                 // profiles, which is why the department never came through.
                 // Both are requested so either source can satisfy the read.
+                // Do not set prompt=consent or access_type=offline: we only
+                // need the one-shot access token, and forcing a new grant
+                // makes Google return invalid_grant when the callback is
+                // retried after a restart.
                 scope: [
                   "openid",
                   "email",
@@ -110,8 +114,6 @@ export const authOptions: NextAuthOptions = {
                   "https://www.googleapis.com/auth/user.organization.read",
                   "https://www.googleapis.com/auth/directory.readonly",
                 ].join(" "),
-                prompt: "consent",
-                access_type: "offline",
               },
             },
           }),
