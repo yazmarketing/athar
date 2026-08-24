@@ -29,6 +29,15 @@ export function db(): Pool {
       max: 5,
       // DO Managed Postgres uses a CA Node does not trust by default.
       ssl: isLocal ? undefined : { rejectUnauthorized: false },
+      // A stuck query or a connection that dies without erroring out would
+      // otherwise hold its slot forever — with max 5, a handful of those
+      // over time starves every future request of a client, which looks
+      // exactly like the app "hanging" (health checks fail, DO restarts it,
+      // no error ever gets logged because nothing actually crashed).
+      connectionTimeoutMillis: 10_000,
+      statement_timeout: 30_000,
+      query_timeout: 30_000,
+      idle_in_transaction_session_timeout: 30_000,
     });
     // DO Managed Postgres periodically drops idle connections. Without this
     // listener, that shows up as an unhandled 'error' event on the pool and
