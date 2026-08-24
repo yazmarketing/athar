@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { getSessionUser } from "@/lib/auth-session";
 import { db } from "@/lib/db";
@@ -107,25 +107,36 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Fast, and worth doing before answering: a missing asset group is a
+    // configuration error the person should see immediately.
     const groupId = await ensureDefaultAssetGroup();
-    const asset = await createAsset({ groupId, url: imageUrl, name });
 
-    await logAudit({
-      userId: sessionUser.id,
-      userEmail: sessionUser.email,
-      action: "asset_create",
-      subjectType: "asset",
-      subjectId: asset.Id,
-      meta: { group_id: groupId, source_generation_id: body.generationId },
+    /**
+     * CreateAsset makes BytePlus fetch and moderate the photo before it
+     * answers, which routinely outlives the platform gateway (~60s) and
+     * surfaced in the browser as a bare 504 — even though the registration
+     * itself then succeeded. So answer now and register after the response
+     * is out; the asset list is the source of truth for the outcome.
+     */
+    const generationId = body.generationId;
+    const url = imageUrl;
+    after(async () => {
+      try {
+        const asset = await createAsset({ groupId, url, name });
+        await logAudit({
+          userId: sessionUser.id,
+          userEmail: sessionUser.email,
+          action: "asset_create",
+          subjectType: "asset",
+          subjectId: asset.Id,
+          meta: { group_id: groupId, source_generation_id: generationId },
+        });
+      } catch (err) {
+        console.error(`BytePlus asset registration failed for ${url}:`, err);
+      }
     });
 
-    return NextResponse.json({
-      asset: {
-        id: asset.Id,
-        status: asset.Status ?? "Processing",
-        groupId,
-      },
-    });
+    return NextResponse.json({ queued: true, groupId }, { status: 202 });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Asset upload failed";

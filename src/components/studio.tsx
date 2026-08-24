@@ -1882,8 +1882,12 @@ export function Studio() {
       });
       if (!res.ok) throw new Error(json.error ?? "Could not register character");
       toast.success(
-        "Registered as a video character — usable once it's Active (a few minutes)"
+        "Photo submitted — BytePlus is verifying it. It appears in the asset list once approved (about a minute)."
       );
+      // Registration finishes server-side after this response — refresh the
+      // list when it has plausibly landed, and once more for slow passes.
+      window.setTimeout(() => void loadAssets(), 20_000);
+      window.setTimeout(() => void loadAssets(), 75_000);
       await loadAssets();
     } catch (err) {
       toast.error(

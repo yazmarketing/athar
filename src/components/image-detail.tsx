@@ -219,7 +219,7 @@ export function ImageDetail({
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Asset upload failed");
       toast.success(
-        "Registered as a video character — usable in videos once it's Active (a few minutes)"
+        "Submitted — BytePlus is verifying the photo. It appears in the video dock's asset list once approved (about a minute)."
       );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Asset upload failed");
