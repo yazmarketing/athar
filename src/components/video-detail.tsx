@@ -218,10 +218,13 @@ export function VideoDetail({
       <button
         type="button"
         aria-label="Close"
-        className="absolute top-4 right-4 z-20 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+        // On desktop the Details header sits in this corner — size the
+        // button to fit inside the header band instead of straddling its
+        // bottom border.
+        className="absolute top-4 right-4 z-20 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 md:top-2 md:right-3 md:p-1.5"
         onClick={onClose}
       >
-        <X className="size-5" />
+        <X className="size-5 md:size-4" />
       </button>
 
       {/* Player */}
