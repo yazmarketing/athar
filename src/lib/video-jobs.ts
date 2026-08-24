@@ -39,6 +39,7 @@ type VideoJobInput = {
   sourceImageUrl?: string | null; // legacy single-image jobs
   sourceImageUrls?: string[] | null;
   sourceVideoUrl?: string | null;
+  sourceAudioUrls?: string[] | null;
   videoResolution?: string | null;
   prompt?: PromptInputs;
   sourceGenerationId?: string | null;
@@ -68,6 +69,11 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   const model = resolveModel(job.kind, job.tier as Tier);
   const imageUrls = videoJobSourceImages(input);
   const sourceVideoUrl = input.sourceVideoUrl?.trim() || null;
+  // Seedance 2.5 accepts up to 10 reference audio clips (30s combined).
+  const audioUrls = (input.sourceAudioUrls ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .slice(0, 10);
 
   // 1080p is a Seedance 2.5 capability; the 2.0 Mini behind the draft tier
   // doesn't offer it. Clamp rather than fail — the person asked for a clip.
@@ -94,6 +100,7 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
     generateAudio: model.supportsAudio,
     imageUrls: imageUrls.length ? imageUrls : undefined,
     videoUrls: sourceVideoUrl ? [sourceVideoUrl] : undefined,
+    audioUrls: audioUrls.length ? audioUrls : undefined,
   };
 }
 
@@ -169,6 +176,10 @@ export async function finalizeVideoJob(
         // Lineage back to the clip this edit/extend started from (v2v)
         source_video_url: input.sourceVideoUrl ?? undefined,
         source_video_generation_id: input.sourceVideoGenerationId ?? undefined,
+        // The audio clip(s) the render lip-synced to
+        source_audio_urls: input.sourceAudioUrls?.length
+          ? input.sourceAudioUrls
+          : undefined,
       },
       finalPrompt: job.final_prompt,
       negativePrompt: job.negative_prompt,

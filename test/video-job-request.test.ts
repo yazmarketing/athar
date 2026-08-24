@@ -89,6 +89,23 @@ describe("videoRequestForJob", () => {
     expect(req.imageUrls).toBeUndefined();
   });
 
+  it("passes attached lip-sync audio through as audio urls", () => {
+    const req = videoRequestForJob(
+      job({ input: { sourceAudioUrls: ["https://cdn/line.mp3"] } })
+    );
+    expect(req.audioUrls).toEqual(["https://cdn/line.mp3"]);
+  });
+
+  it("clamps reference audio to the Seedance limit of 10", () => {
+    const urls = Array.from({ length: 12 }, (_, i) => `https://cdn/${i}.mp3`);
+    const req = videoRequestForJob(job({ input: { sourceAudioUrls: urls } }));
+    expect(req.audioUrls).toHaveLength(10);
+  });
+
+  it("omits audioUrls when nothing is attached", () => {
+    expect(videoRequestForJob(job()).audioUrls).toBeUndefined();
+  });
+
   it("holds the duration inside what the model accepts", () => {
     expect(videoRequestForJob(job({ duration_s: 1 })).duration).toBe(4);
     expect(videoRequestForJob(job({ duration_s: 900 })).duration).toBe(30);

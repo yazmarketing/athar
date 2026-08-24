@@ -13,6 +13,7 @@ type ContentItem = {
   role?: string;
   image_url?: { url: string };
   video_url?: { url: string };
+  audio_url?: { url: string };
 };
 
 function content(payload: Record<string, unknown>): ContentItem[] {
@@ -57,6 +58,39 @@ describe("buildArkVideoPayload", () => {
     });
     const img = content(p).find((c) => c.type === "image_url");
     expect(img?.role).toBe("reference_image");
+  });
+
+  it("reference audio is sent as an audio_url content item", () => {
+    const p = buildArkVideoPayload({
+      ...base,
+      audioUrls: ["https://cdn.example.com/line.mp3"],
+    });
+    const audio = content(p).find((c) => c.type === "audio_url");
+    expect(audio?.role).toBe("reference_audio");
+    expect(audio?.audio_url?.url).toBe("https://cdn.example.com/line.mp3");
+    // Audio doesn't dictate the frame, so ratio and duration stay explicit
+    expect(p.ratio).toBe("16:9");
+    expect(p.duration).toBe(8);
+  });
+
+  it("reference audio forces generate_audio on — lip-sync needs sound", () => {
+    const p = buildArkVideoPayload({
+      ...base,
+      generateAudio: false,
+      audioUrls: ["https://cdn/line.mp3"],
+    });
+    expect(p.generate_audio).toBe(true);
+  });
+
+  it("a single image with reference audio is a reference, not a first frame", () => {
+    const p = buildArkVideoPayload({
+      ...base,
+      imageUrls: ["https://x/a.png"],
+      audioUrls: ["https://x/line.mp3"],
+    });
+    const img = content(p).find((c) => c.type === "image_url");
+    expect(img?.role).toBe("reference_image");
+    expect(p.ratio).toBe("16:9");
   });
 
   it("a reference video forces duration -1, no ratio, and reference images", () => {

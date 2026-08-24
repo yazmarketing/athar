@@ -1,15 +1,19 @@
 import type { PromptInputs } from "@/lib/types";
 import { resolveStyle } from "@/config/styles";
 import { resolveCamera } from "@/config/camera";
+import {
+  compileDirector,
+  SEEDANCE_VIDEO_NEGATIVES,
+} from "@/config/director";
 import { culturalGuidance } from "@/config/cultural";
-import { expandMentions } from "@/lib/mentions";
+import { audioMentionToken, expandMentions } from "@/lib/mentions";
 
 /**
  * Structured prompt builder (§5.3).
  *
  * FINAL_PROMPT = SUBJECT · ACTION · PRESET.camera_fragment · LIGHTING
- *              · BRAND_TOKENS · STYLE.positive
- * NEGATIVE_PROMPT = GLOBAL bans + STYLE.negative + BRAND bans
+ *              · BRAND_TOKENS · CAMERA · DIRECTOR · STYLE.positive
+ * NEGATIVE_PROMPT = GLOBAL bans + STYLE.negative + BRAND bans + video bans
  *
  * The look is chosen per-generation via a style preset (see config/styles.ts)
  * instead of a single hardcoded quality suffix.
@@ -49,6 +53,8 @@ export function buildPrompt(inputs: PromptInputs): {
       ? inputs.styleNegative?.trim()
       : style.negative?.trim();
   const camera = resolveCamera(inputs.cameraId);
+  const director = compileDirector(inputs);
+  const isVideo = inputs.cameraId != null;
 
   /**
    * `@image2` in the prompt becomes an explicit, indexed instruction before
@@ -60,18 +66,42 @@ export function buildPrompt(inputs: PromptInputs): {
     (inputs.referenceLabels ?? []).map((label) => ({ label }))
   );
 
+  /**
+   * Lip-sync lines for attached audio clips (Seedance 2.5). One line per
+   * clip whose token the person did NOT write themselves — typing `@audio1`
+   * in the prompt is the opt-out, taking manual control of the phrasing.
+   * The format follows BytePlus support's guidance, with the transcribed
+   * dialogue quoted so the mouth movements track the actual words.
+   */
+  const audioLines = (inputs.audioTranscripts ?? []).flatMap(
+    (transcript, i) => {
+      const words = transcript?.trim();
+      if (!words) return [];
+      const token = audioMentionToken(i);
+      if (new RegExp(`${token}\\b`, "i").test(inputs.subject)) return [];
+      return [`The character speaks: "${words}", take ${token} as a reference`];
+    }
+  );
+
   const parts = [
     subject,
+    ...audioLines,
     inputs.action?.trim(),
     inputs.presetFragment?.trim(),
     inputs.lighting?.trim(),
     inputs.brandTokens?.trim(),
     camera.fragment.trim() || undefined,
+    ...director.fragments,
     stylePositive || undefined,
   ].filter((p): p is string => Boolean(p));
 
   // Decide against everything the user actually wrote, not just the subject.
   const positiveText = parts.join(" ");
+  // Spoken dialogue is sound, not on-screen lettering — the quotes in an
+  // injected lip-sync line must not disable the text/watermark bans.
+  const visualText = parts
+    .filter((p) => !audioLines.includes(p))
+    .join(" ");
 
   /**
    * Gulf subjects get the garment construction and the features spelled out,
@@ -83,9 +113,13 @@ export function buildPrompt(inputs: PromptInputs): {
 
   const negativeParts = [
     BASE_NEGATIVE,
-    wantsText(positiveText) ? undefined : NO_TEXT_NEGATIVE,
+    wantsText(visualText) ? undefined : NO_TEXT_NEGATIVE,
     styleNegative,
     cultural?.negative,
+    isVideo || director.activeCount > 0
+      ? SEEDANCE_VIDEO_NEGATIVES
+      : undefined,
+    ...director.negatives,
     inputs.negativeAdditions?.trim(),
   ].filter((p): p is string => Boolean(p));
 

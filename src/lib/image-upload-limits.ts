@@ -13,3 +13,23 @@ export const IMAGE_UPLOAD_TYPES = new Set([
   "image/png",
   "image/webp",
 ]);
+
+/**
+ * Reference audio for Seedance lip-sync. Seedance caps reference audio at
+ * 30 seconds combined, so 32MB is far beyond any legitimate clip — the
+ * limit exists to stop mistakes, not to squeeze real files.
+ */
+export const AUDIO_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+
+export const AUDIO_UPLOAD_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/wave",
+  "audio/mp4",
+  "audio/m4a",
+  "audio/x-m4a",
+  "audio/aac",
+  "audio/ogg",
+]);

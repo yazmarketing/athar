@@ -21,6 +21,16 @@ export function mentionToken(index: number): string {
 }
 
 /**
+ * The token for the nth attached audio clip. Unlike `@imageN`, this is never
+ * expanded into prose — Seedance parses `@audio1` natively, the same way it
+ * parses `@video1` (BytePlus: "@character speaks: … take @audio 1 as a
+ * reference"). `expandMentions` deliberately leaves it untouched.
+ */
+export function audioMentionToken(index: number): string {
+  return `@audio${index + 1}`;
+}
+
+/**
  * Which attachments a prompt refers to, as 0-based indices, in first-use
  * order and without duplicates. Out-of-range mentions are dropped — a token
  * left behind after its attachment was removed should not address whatever

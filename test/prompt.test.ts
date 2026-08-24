@@ -130,4 +130,100 @@ describe("buildPrompt", () => {
       .finalPrompt;
     expect(unknown).toBe(known);
   });
+
+  it("director presets append Seedance shot language after the camera", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "a woman walking through a Dubai souq",
+      cameraId: "orbit",
+      genreId: "drama",
+      shotId: "medium",
+      lightLookId: "golden_hour",
+    });
+    expect(finalPrompt).toContain("orbit");
+    expect(finalPrompt).toContain("medium shot");
+    expect(finalPrompt).toContain("golden-hour");
+    expect(finalPrompt).toContain("dramatic cinematic tone");
+    expect(finalPrompt).toContain("at most two camera movements");
+  });
+
+  it("raw director fields add nothing to a stills prompt", () => {
+    const plain = buildPrompt({ subject: "a desert dune" }).finalPrompt;
+    const rawDirector = buildPrompt({
+      subject: "a desert dune",
+      genreId: "raw",
+      shotId: "raw",
+    }).finalPrompt;
+    expect(rawDirector).toBe(plain);
+  });
+
+  it("video prompts get Seedance negatives even with a raw camera", () => {
+    const { negativePrompt } = buildPrompt({
+      subject: "a desert dune",
+      cameraId: "raw",
+    });
+    expect(negativePrompt).toContain("face distortion");
+    expect(negativePrompt).toContain("subtitles");
+  });
+
+  it("stills prompts do not get Seedance video negatives", () => {
+    const { negativePrompt } = buildPrompt({ subject: "a desert dune" });
+    expect(negativePrompt).not.toContain("face distortion");
+    expect(negativePrompt).not.toContain("frame skipping");
+  });
+});
+
+describe("buildPrompt lip-sync dialogue", () => {
+  it("appends the Seedance line for a transcribed clip, right after the subject", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "a presenter in a studio",
+      action: "facing the camera",
+      audioTranscripts: ["Welcome to our new store in Dubai"],
+    });
+    expect(finalPrompt).toBe(
+      "a presenter in a studio, " +
+        'The character speaks: "Welcome to our new store in Dubai", ' +
+        "take @audio1 as a reference, facing the camera"
+    );
+  });
+
+  it("numbers each clip's line independently", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "two hosts on a talk show",
+      audioTranscripts: ["First line", "Second line"],
+    });
+    expect(finalPrompt).toContain('"First line", take @audio1 as a reference');
+    expect(finalPrompt).toContain('"Second line", take @audio2 as a reference');
+  });
+
+  it("stays out of the way when the prompt already addresses the clip", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "The man speaks, take @audio1 as a reference",
+      audioTranscripts: ["Welcome to our new store"],
+    });
+    expect(finalPrompt).not.toContain("The character speaks");
+    // @audio10 is not @audio1 — a mention of one must not silence the other
+    const many = buildPrompt({
+      subject: "use @audio10 here",
+      audioTranscripts: ["only clip"],
+    });
+    expect(many.finalPrompt).toContain("take @audio1 as a reference");
+  });
+
+  it("adds nothing for clips that produced no transcript", () => {
+    const plain = buildPrompt({ subject: "a desert dune" }).finalPrompt;
+    const withEmpty = buildPrompt({
+      subject: "a desert dune",
+      audioTranscripts: [null, "  "],
+    }).finalPrompt;
+    expect(withEmpty).toBe(plain);
+  });
+
+  it("quoted dialogue does not disable the text/watermark bans", () => {
+    const { negativePrompt } = buildPrompt({
+      subject: "a presenter in a studio",
+      audioTranscripts: ["Welcome to our new store"],
+    });
+    expect(negativePrompt).toContain("watermark");
+    expect(negativePrompt).toContain("text overlay");
+  });
 });

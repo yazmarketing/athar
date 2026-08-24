@@ -136,6 +136,13 @@ export type ArkVideoRequest = {
    * always sent as reference images (never as first frame).
    */
   videoUrls?: string[];
+  /**
+   * Optional reference audio URL(s) — Seedance 2.5 lip-sync / audio-driven
+   * generation. The prompt addresses them as @audio1, @audio2, … (per
+   * BytePlus: "@character speaks: … take @audio 1 as a reference").
+   * Up to 10 clips, 30 seconds combined.
+   */
+  audioUrls?: string[];
 };
 
 export type ArkVideoResult = {
@@ -220,11 +227,14 @@ export function buildArkVideoPayload(
   ];
   const images = req.imageUrls ?? [];
   const videos = req.videoUrls ?? [];
+  const audios = req.audioUrls ?? [];
   // Verified asset-library refs (asset://…) are only valid as reference
   // images, so a single plain image is the only true first-frame case.
-  // A reference video also forces images into reference mode.
+  // A reference video or audio also forces images into reference mode —
+  // frame anchors and reference media are mutually exclusive at the API.
   const firstFrameMode =
     videos.length === 0 &&
+    audios.length === 0 &&
     images.length === 1 &&
     !images[0].startsWith("asset://");
   if (firstFrameMode) {
@@ -249,6 +259,13 @@ export function buildArkVideoPayload(
       role: "reference_video",
     });
   }
+  for (const url of audios) {
+    content.push({
+      type: "audio_url",
+      audio_url: { url },
+      role: "reference_audio",
+    });
+  }
   const payload: Record<string, unknown> = {
     model: req.model,
     content,
@@ -256,7 +273,9 @@ export function buildArkVideoPayload(
     // Reference-video tasks (edit/extend) must send -1: Seedance derives the
     // output duration (and ratio) from the input clip and rejects fixed values.
     duration: videos.length > 0 ? -1 : req.duration,
-    generate_audio: req.generateAudio ?? true,
+    // A reference audio track is pointless in a silent clip — lip-sync only
+    // exists when the output carries audio, so it overrides the flag.
+    generate_audio: audios.length > 0 ? true : (req.generateAudio ?? true),
   };
   // First-frame generation must not set ratio — the output follows the
   // first-frame image's aspect ratio (ModelArk rejects the param otherwise).

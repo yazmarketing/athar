@@ -29,11 +29,26 @@ export type PromptInputs = {
   styleNegative?: string;
   /** Camera-move preset id (see config/camera.ts) — video motion. */
   cameraId?: string;
+  /** Seedance director pickers (see config/director.ts) — video only. */
+  genreId?: string;
+  shotId?: string;
+  lightLookId?: string;
+  gradeId?: string;
+  emotionId?: string;
+  eraId?: string;
+  tempoId?: string;
   /**
    * Names for the attached references, positionally. Lets `@image2` in the
    * prompt expand to "reference image 2 (Fatima)" instead of a bare number.
    */
   referenceLabels?: (string | null)[];
+  /**
+   * The spoken words of each attached lip-sync audio clip, positionally
+   * (Whisper transcripts). When the prompt doesn't already address a clip,
+   * the server appends the Seedance lip-sync line for it — so attaching an
+   * audio file is enough, nobody types their own recording back in.
+   */
+  audioTranscripts?: (string | null)[];
 };
 
 export type GenerateRequest = {
@@ -70,6 +85,12 @@ export type GenerateRequest = {
   sourceVideoUrl?: string | null;
   /** Lineage: the generation that produced the attached source video */
   sourceVideoGenerationId?: string | null;
+  /**
+   * Video only: reference audio clip(s) for Seedance 2.5 lip-sync. The
+   * prompt addresses them as @audio1, @audio2, … (e.g. "@character speaks:
+   * '…' take @audio1 as a reference"). Up to 10, 30 seconds combined.
+   */
+  sourceAudioUrls?: string[] | null;
   /** Video output resolution — 480p renders ~2x faster (fast preview) */
   videoResolution?: "480p" | "720p" | "1080p";
 };

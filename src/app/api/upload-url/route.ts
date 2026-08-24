@@ -2,11 +2,29 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { presignUpload } from "@/lib/storage";
 import {
+  AUDIO_UPLOAD_TYPES,
   IMAGE_UPLOAD_MAX_BYTES,
   IMAGE_UPLOAD_TYPES,
 } from "@/lib/image-upload-limits";
 
+const AUDIO_EXTS: [string, string][] = [
+  ["mpeg", "mp3"],
+  ["mp3", "mp3"],
+  ["wav", "wav"],
+  ["m4a", "m4a"],
+  ["mp4", "m4a"],
+  ["aac", "aac"],
+  ["ogg", "ogg"],
+];
+
 function extFor(contentType: string, filename: string): string {
+  if (AUDIO_UPLOAD_TYPES.has(contentType)) {
+    const fromName = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase();
+    if (fromName && AUDIO_EXTS.some(([, ext]) => ext === fromName)) {
+      return fromName;
+    }
+    return AUDIO_EXTS.find(([hint]) => contentType.includes(hint))?.[1] ?? "mp3";
+  }
   if (contentType.includes("png") || filename.toLowerCase().endsWith(".png")) {
     return "png";
   }
@@ -17,8 +35,9 @@ function extFor(contentType: string, filename: string): string {
 }
 
 /**
- * Presigned PUT for reference images. A 29MB PNG must not travel through
- * `/api/upload` — that path buffers the file in memory on a 1 GiB instance.
+ * Presigned PUT for reference images and lip-sync reference audio. A 29MB
+ * PNG must not travel through `/api/upload` — that path buffers the file
+ * in memory on a 1 GiB instance.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -32,9 +51,15 @@ export async function POST(req: NextRequest) {
     };
     const contentType = body.contentType?.trim() ?? "";
     const filename = body.filename?.trim() ?? "";
-    if (!IMAGE_UPLOAD_TYPES.has(contentType)) {
+    if (
+      !IMAGE_UPLOAD_TYPES.has(contentType) &&
+      !AUDIO_UPLOAD_TYPES.has(contentType)
+    ) {
       return NextResponse.json(
-        { error: "Only JPEG, PNG, or WebP images are allowed" },
+        {
+          error:
+            "Only JPEG, PNG, or WebP images — or MP3, WAV, M4A, AAC, or OGG audio",
+        },
         { status: 400 }
       );
     }
@@ -44,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
     if (bytes > IMAGE_UPLOAD_MAX_BYTES) {
       return NextResponse.json(
-        { error: "Image must be 32MB or smaller" },
+        { error: "File must be 32MB or smaller" },
         { status: 413 }
       );
     }

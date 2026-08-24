@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { uploadPublicObject } from "@/lib/storage";
+import { AUDIO_UPLOAD_TYPES } from "@/lib/image-upload-limits";
 
 export const maxDuration = 60;
 
@@ -10,7 +11,18 @@ const ALLOWED = new Set([
   "image/jpg",
   "image/png",
   "image/webp",
+  ...AUDIO_UPLOAD_TYPES,
 ]);
+
+const AUDIO_EXT_HINTS: [string, string][] = [
+  ["mpeg", "mp3"],
+  ["mp3", "mp3"],
+  ["wav", "wav"],
+  ["m4a", "m4a"],
+  ["mp4", "m4a"],
+  ["aac", "aac"],
+  ["ogg", "ogg"],
+];
 
 export async function POST(req: NextRequest) {
   try {
@@ -24,20 +36,25 @@ export async function POST(req: NextRequest) {
     }
     if (!ALLOWED.has(file.type)) {
       return NextResponse.json(
-        { error: "Only JPEG, PNG, or WebP images are allowed" },
+        {
+          error:
+            "Only JPEG, PNG, or WebP images — or MP3, WAV, M4A, AAC, or OGG audio",
+        },
         { status: 400 }
       );
     }
     if (file.size > MAX_BYTES) {
       return NextResponse.json(
-        { error: "Image must be 8MB or smaller" },
+        { error: "File must be 8MB or smaller" },
         { status: 400 }
       );
     }
 
     const buffer = await file.arrayBuffer();
-    const ext =
-      file.type.includes("png")
+    const ext = file.type.startsWith("audio/")
+      ? (AUDIO_EXT_HINTS.find(([hint]) => file.type.includes(hint))?.[1] ??
+        "mp3")
+      : file.type.includes("png")
         ? "png"
         : file.type.includes("webp")
           ? "webp"
