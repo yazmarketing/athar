@@ -95,17 +95,34 @@ async function assetsCall<T>(
   const kSigning = hmac(kService, "request");
   const signature = hmac(kSigning, stringToSign).toString("hex");
 
-  const res = await fetch(`https://${ASSETS_HOST}/?${query}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": contentType,
-      Host: ASSETS_HOST,
-      "X-Date": xDate,
-      "X-Content-Sha256": payloadHash,
-      Authorization: `HMAC-SHA256 Credential=${ak}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
-    },
-    body: payload,
-  });
+  /**
+   * CreateAsset fetches and moderates the image before it answers, which
+   * can be slow for a large photo. Without a cap the call outlives the
+   * platform gateway (~60s) and surfaces as a bare 504 — fail earlier,
+   * with a sentence that says what actually happened.
+   */
+  let res: Response;
+  try {
+    res = await fetch(`https://${ASSETS_HOST}/?${query}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": contentType,
+        Host: ASSETS_HOST,
+        "X-Date": xDate,
+        "X-Content-Sha256": payloadHash,
+        Authorization: `HMAC-SHA256 Credential=${ak}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      body: payload,
+      signal: AbortSignal.timeout(45_000),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(
+        "BytePlus is taking too long to process this image. It may still finish — check the asset list in a minute, or retry with a smaller photo."
+      );
+    }
+    throw err;
+  }
 
   const json = (await res.json()) as {
     ResponseMetadata?: { Error?: { Code?: string; Message?: string } };
