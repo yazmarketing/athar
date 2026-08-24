@@ -70,6 +70,7 @@ function usd(v: number) {
 const AUDIT_VERBS: Record<string, string> = {
   generation_delete: "deleted",
   asset_create: "added to the asset library",
+  asset_delete: "removed from the asset library",
   job_retry: "retried the render for",
   user_update: "updated the account",
   qc_pass: "passed QC on",

@@ -215,6 +215,10 @@ export async function listAssets(groupId?: string): Promise<AssetRecord[]> {
   return result.Items ?? [];
 }
 
+export async function deleteAsset(id: string): Promise<void> {
+  await assetsCall<Record<string, never>>("DeleteAsset", { Id: id });
+}
+
 /**
  * Resolve the asset group the studio uploads into: the first existing group
  * (e.g. one created in the console), else a new "yaz-motion" group.

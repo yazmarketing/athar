@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import {
   assetsConfigured,
   createAsset,
+  deleteAsset,
   ensureDefaultAssetGroup,
   listAssets,
 } from "@/lib/byteplus-assets";
@@ -140,6 +141,51 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Asset upload failed";
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+}
+
+/** Remove a registered portrait so it no longer counts against BytePlus quota. */
+export async function DELETE(req: NextRequest) {
+  const auth = await requireCreator();
+  if (auth.response) return auth.response;
+  const sessionUser = auth.user;
+
+  if (!assetsConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          "Assets API not configured — set BYTEPLUS_ACCESS_KEY and BYTEPLUS_SECRET_KEY",
+      },
+      { status: 400 }
+    );
+  }
+
+  let body: { id?: string };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const id = body.id?.trim();
+  if (!id) {
+    return NextResponse.json({ error: "Provide an asset id" }, { status: 400 });
+  }
+
+  try {
+    await deleteAsset(id);
+    await logAudit({
+      userId: sessionUser.id,
+      userEmail: sessionUser.email,
+      action: "asset_delete",
+      subjectType: "asset",
+      subjectId: id,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Could not delete asset";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

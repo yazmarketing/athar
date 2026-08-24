@@ -19,6 +19,8 @@ type Props = {
   /** Estimated spend in USD, shown so nobody pays by mis-click. */
   cost?: number | null;
   confirmLabel: string;
+  /** Red confirm button for irreversible deletes. */
+  destructive?: boolean;
   onConfirm: () => Promise<void> | void;
 };
 
@@ -35,6 +37,7 @@ export function ConfirmDialog({
   description,
   cost,
   confirmLabel,
+  destructive,
   onConfirm,
 }: Props) {
   const [busy, setBusy] = useState(false);
@@ -67,7 +70,11 @@ export function ConfirmDialog({
             Cancel
           </Button>
           <Button
-            className="gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
+            className={
+              destructive
+                ? "gap-2 rounded-xl bg-red-600 text-white hover:bg-red-600/90"
+                : "gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
+            }
             disabled={busy}
             onClick={async () => {
               setBusy(true);

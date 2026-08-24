@@ -131,6 +131,7 @@ import {
 import { ReferenceLibrary } from "@/components/reference-library";
 import { Orchestrator } from "@/components/orchestrator";
 import { TeamManagement } from "@/components/team-management";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -311,6 +312,11 @@ export function Studio() {
   >(null);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [registeringAsset, setRegisteringAsset] = useState(false);
+  const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+  const [assetToDelete, setAssetToDelete] = useState<{
+    id: string;
+    name: string;
+  } | null>(null);
   const videoFileInput = useRef<HTMLInputElement>(null);
   const assetFileInput = useRef<HTMLInputElement>(null);
   const [upscaleTargets, setUpscaleTargets] = useState<
@@ -1862,6 +1868,27 @@ export function Studio() {
       setAssetsLoading(false);
     }
   }, []);
+
+  const deleteLibraryAsset = async (id: string) => {
+    setDeletingAssetId(id);
+    try {
+      const res = await postFetch("/api/assets", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const json = await readJson<{ error?: string }>(res);
+      if (!res.ok) throw new Error(json.error ?? "Could not delete asset");
+      toast.success("Asset deleted — quota freed");
+      setAssetToDelete(null);
+      await loadAssets();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not delete asset");
+      throw err;
+    } finally {
+      setDeletingAssetId(null);
+    }
+  };
 
   const onCharacterFiles = async (files: FileList | File[] | null) => {
     const file = files?.[0];
@@ -3803,6 +3830,28 @@ export function Studio() {
           }}
         />
 
+        <ConfirmDialog
+          open={assetToDelete != null}
+          onOpenChange={(open) => {
+            if (!open) setAssetToDelete(null);
+          }}
+          title="Delete this character?"
+          description={
+            assetToDelete &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              assetToDelete.name
+            )
+              ? "This removes it from the BytePlus asset library and frees quota. This cannot be undone."
+              : `“${assetToDelete?.name || "This character"}” will be removed from the BytePlus asset library and quota will be freed. This cannot be undone.`
+          }
+          confirmLabel="Delete"
+          destructive
+          onConfirm={async () => {
+            if (!assetToDelete) return;
+            await deleteLibraryAsset(assetToDelete.id);
+          }}
+        />
+
         {/* Offered before spending: attach the real artwork instead of
             asking the model to redraw a logo from its name. */}
         <Dialog open={refAdviceOpen} onOpenChange={setRefAdviceOpen}>
@@ -4064,49 +4113,71 @@ export function Studio() {
                     <div className="mb-2 grid max-h-44 grid-cols-1 gap-1 overflow-y-auto">
                       {libraryAssets.map((a) => {
                         const active = a.status === "Active";
+                        const deleting = deletingAssetId === a.id;
                         return (
-                          <button
+                          <div
                             key={a.id}
-                            type="button"
-                            disabled={!active}
-                            onClick={() => attachAsset(a.id)}
                             className={cn(
-                              "flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
-                              active
-                                ? "hover:bg-white/8"
-                                : "cursor-not-allowed opacity-50"
+                              "flex items-center gap-1 rounded-lg px-1 py-1",
+                              !active && "opacity-50"
                             )}
                           >
-                            {a.url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={a.url}
-                                alt=""
-                                className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
-                              />
-                            ) : (
-                              <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-white/10">
-                                <ShieldCheck className="size-3.5 text-gold" />
-                              </span>
-                            )}
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs text-foreground">
-                                {a.name || a.id}
-                              </span>
-                              <span
-                                className={cn(
-                                  "text-[10px]",
-                                  active
-                                    ? "text-gold"
-                                    : a.status === "Failed"
-                                      ? "text-muted-foreground"
+                            <button
+                              type="button"
+                              disabled={!active || deleting}
+                              onClick={() => attachAsset(a.id)}
+                              className={cn(
+                                "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
+                                active
+                                  ? "hover:bg-white/8"
+                                  : "cursor-not-allowed"
+                              )}
+                            >
+                              {a.url ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={a.url}
+                                  alt=""
+                                  className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+                                />
+                              ) : (
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-white/10">
+                                  <ShieldCheck className="size-3.5 text-gold" />
+                                </span>
+                              )}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-xs text-foreground">
+                                  {a.name || a.id}
+                                </span>
+                                <span
+                                  className={cn(
+                                    "text-[10px]",
+                                    active
+                                      ? "text-gold"
                                       : "text-muted-foreground"
-                                )}
-                              >
-                                {active ? "Active — click to attach" : a.status}
+                                  )}
+                                >
+                                  {active ? "Active — click to attach" : a.status}
+                                </span>
                               </span>
-                            </span>
-                          </button>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={deleting}
+                              aria-label={`Delete ${a.name || a.id}`}
+                              title="Delete from BytePlus library (frees quota)"
+                              onClick={() =>
+                                setAssetToDelete({ id: a.id, name: a.name })
+                              }
+                              className="shrink-0 rounded-md p-1.5 text-muted-foreground transition hover:bg-red-600 hover:text-white disabled:opacity-50"
+                            >
+                              {deleting ? (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-3.5" />
+                              )}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
