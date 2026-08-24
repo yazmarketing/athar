@@ -33,13 +33,11 @@ async function fetchGoogleDepartment(
     return null;
   }
   try {
-    // DOMAIN_PROFILE pulls the Workspace directory (admin-set Department),
-    // which the plain personal PROFILE source does not expose.
+    // People API only accepts PROFILE / CONTACT / DOMAIN_CONTACT /
+    // OTHER_CONTACT. DOMAIN_PROFILE is not a valid source and 400s the
+    // whole request — department lookup is best-effort, so stay on PROFILE.
     const res = await fetch(
-      "https://people.googleapis.com/v1/people/me" +
-        "?personFields=organizations" +
-        "&sources=READ_SOURCE_TYPE_PROFILE" +
-        "&sources=READ_SOURCE_TYPE_DOMAIN_PROFILE",
+      "https://people.googleapis.com/v1/people/me?personFields=organizations&sources=READ_SOURCE_TYPE_PROFILE",
       { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
@@ -174,7 +172,8 @@ export const authOptions: NextAuthOptions = {
           user.id = row.id;
           user.role = row.role;
           (user as { team?: string | null }).team = row.team ?? team ?? null;
-        } catch {
+        } catch (err) {
+          console.error("Google sign-in failed while saving the user", err);
           return false;
         }
       }
