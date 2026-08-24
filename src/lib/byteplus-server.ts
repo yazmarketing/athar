@@ -162,9 +162,19 @@ export type ArkVideoTask = {
  */
 const ARK_REQUEST_TIMEOUT_MS = 120_000;
 
+/**
+ * A status poll is a plain GET the provider should answer in well under a
+ * second. It runs inline inside `GET /api/jobs/[id]`, which the platform
+ * gateway times out at ~60s — sharing the 120s create-task budget here left
+ * a hung status check outliving the gateway and surfacing as a 504 to the
+ * studio's 5s poll instead of the "keep polling" response `advance()` wants.
+ */
+const ARK_STATUS_TIMEOUT_MS = 15_000;
+
 async function arkRequest<T>(
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  timeoutMs: number = ARK_REQUEST_TIMEOUT_MS
 ): Promise<T> {
   let res: Response;
   try {
@@ -175,13 +185,13 @@ async function arkRequest<T>(
         Authorization: `Bearer ${arkKey()}`,
         ...(init?.headers ?? {}),
       },
-      signal: AbortSignal.timeout(ARK_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     if (err instanceof Error && err.name === "TimeoutError") {
       throw new Error(
         `BytePlus ModelArk did not respond within ${Math.round(
-          ARK_REQUEST_TIMEOUT_MS / 1000
+          timeoutMs / 1000
         )}s — try again, or attach a smaller image`
       );
     }
@@ -277,7 +287,11 @@ export async function arkCreateVideoTask(
 
 /** Fetch the current state of a Seedance video task. */
 export async function arkGetVideoTask(taskId: string): Promise<ArkVideoTask> {
-  return arkRequest<ArkVideoTask>(`/contents/generations/tasks/${taskId}`);
+  return arkRequest<ArkVideoTask>(
+    `/contents/generations/tasks/${taskId}`,
+    undefined,
+    ARK_STATUS_TIMEOUT_MS
+  );
 }
 
 // ---------------------------------------------------------------------------
