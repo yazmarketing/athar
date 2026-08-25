@@ -15,6 +15,14 @@ import type { GenerationRecord } from "@/lib/types";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Category lives in the BytePlus asset Name as a trailing "[tag]" — the
+ * Assets API has no category concept of its own, and a suffix keeps the
+ * single source of truth there instead of in a side table.
+ */
+const CATEGORY_TAG_RE = /\s*\[(character|location|prop)\]\s*$/i;
+const ASSET_CATEGORIES = new Set(["character", "location", "prop"]);
+
 /** List the BytePlus private portrait library (for the video dock picker). */
 export async function GET() {
   const sessionUser = await getSessionUser();
@@ -33,14 +41,19 @@ export async function GET() {
   }
   try {
     const items = await listAssets();
-    const assets = items.map((a) => ({
-      id: a.Id,
-      name: a.Name ?? "",
-      status: a.Status ?? "Processing",
-      url: a.URL ?? null,
-      groupId: a.GroupId ?? null,
-      createdAt: a.CreateTime ?? null,
-    }));
+    const assets = items.map((a) => {
+      const rawName = a.Name ?? "";
+      const tag = CATEGORY_TAG_RE.exec(rawName);
+      return {
+        id: a.Id,
+        name: rawName.replace(CATEGORY_TAG_RE, ""),
+        category: tag ? tag[1].toLowerCase() : null,
+        status: a.Status ?? "Processing",
+        url: a.URL ?? null,
+        groupId: a.GroupId ?? null,
+        createdAt: a.CreateTime ?? null,
+      };
+    });
     return NextResponse.json({ assets });
   } catch (err) {
     const message =
@@ -68,7 +81,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let body: { generationId?: string; imageUrl?: string; name?: string };
+  let body: {
+    generationId?: string;
+    imageUrl?: string;
+    name?: string;
+    category?: string;
+  };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -77,6 +95,7 @@ export async function POST(req: NextRequest) {
 
   let imageUrl = body.imageUrl?.trim() || null;
   let name = body.name?.trim() || undefined;
+  const category = body.category?.trim().toLowerCase();
 
   if (!imageUrl && body.generationId) {
     if (!UUID_RE.test(body.generationId)) {
@@ -121,9 +140,14 @@ export async function POST(req: NextRequest) {
      */
     const generationId = body.generationId;
     const url = imageUrl;
+    // Strip any tag someone typed by hand, then append the chosen one.
+    const taggedName =
+      category && ASSET_CATEGORIES.has(category)
+        ? `${(name ?? "Asset").replace(CATEGORY_TAG_RE, "")} [${category}]`
+        : name;
     after(async () => {
       try {
-        const asset = await createAsset({ groupId, url, name });
+        const asset = await createAsset({ groupId, url, name: taggedName });
         await logAudit({
           userId: sessionUser.id,
           userEmail: sessionUser.email,

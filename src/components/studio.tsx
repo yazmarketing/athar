@@ -134,6 +134,11 @@ import { Orchestrator } from "@/components/orchestrator";
 import { TeamManagement } from "@/components/team-management";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
+  AssetLibraryDialog,
+  type AssetCategory,
+  type LibraryAsset,
+} from "@/components/asset-library-dialog";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -159,6 +164,9 @@ const MAX_VIDEO_IMAGES = 9;
 
 /** Seedance 2.5 lip-sync: up to 10 reference audio clips, 30s combined. */
 const MAX_AUDIO_CLIPS = 10;
+
+/** Mention tokens the prompt box tints — split() keeps them via the capture. */
+const PROMPT_TOKEN_RE = /(@(?:image|video|audio)\d+\b)/gi;
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
 
 /**
@@ -315,9 +323,8 @@ export function Studio() {
   >([]);
   const [uploadingAudio, setUploadingAudio] = useState(false);
   const [assetIdOpen, setAssetIdOpen] = useState(false);
-  const [assetIdDraft, setAssetIdDraft] = useState("");
   const [libraryAssets, setLibraryAssets] = useState<
-    { id: string; name: string; status: string; url: string | null }[] | null
+    LibraryAsset[] | null
   >(null);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [registeringAsset, setRegisteringAsset] = useState(false);
@@ -328,7 +335,6 @@ export function Studio() {
   } | null>(null);
   const videoFileInput = useRef<HTMLInputElement>(null);
   const audioFileInput = useRef<HTMLInputElement>(null);
-  const assetFileInput = useRef<HTMLInputElement>(null);
   const [upscaleTargets, setUpscaleTargets] = useState<
     UpscaleSource[] | null
   >(null);
@@ -364,6 +370,7 @@ export function Studio() {
   } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const promptHighlightRef = useRef<HTMLDivElement>(null);
   const [uploadingRef, setUploadingRef] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [editTarget, setEditTarget] = useState<GenerationRecord | null>(null);
@@ -1383,8 +1390,27 @@ export function Studio() {
     const attached = new Set(mentionTargets.map((t) => t.url));
     const fromDock = mentionTargets.map((t) => ({
       ...t,
+      thumb: null as string | null,
       fromAssets: false as const,
     }));
+    // Registered BytePlus assets (verified faces) — video only, where the
+    // asset:// reference is valid. Picking one attaches it like the dialog.
+    const fromRegistered =
+      mode === "t2v"
+        ? (libraryAssets ?? [])
+            .filter(
+              (a) =>
+                a.status === "Active" && !attached.has(`asset://${a.id}`)
+            )
+            .map((a) => ({
+              url: `asset://${a.id}`,
+              index: null as number | null,
+              label: a.name || a.id,
+              display: a.name || a.id,
+              thumb: a.url,
+              fromAssets: true as const,
+            }))
+        : [];
     const fromAssets = assetCatalog
       .filter((r) => r.url && !attached.has(r.url))
       .map((r) => ({
@@ -1392,10 +1418,11 @@ export function Studio() {
         index: null as number | null,
         label: r.name,
         display: r.name,
+        thumb: null as string | null,
         fromAssets: true as const,
       }));
-    return [...fromDock, ...fromAssets];
-  }, [mentionTargets, assetCatalog]);
+    return [...fromDock, ...fromRegistered, ...fromAssets];
+  }, [mentionTargets, assetCatalog, libraryAssets, mode]);
 
   const mentionMatches = useMemo(() => {
     if (!mention) return [];
@@ -1410,6 +1437,13 @@ export function Studio() {
         );
     return rows.slice(0, 20);
   }, [mention, mentionRows]);
+
+  // The textarea's own text is transparent; this layer re-renders it behind
+  // the caret with the @image/@video/@audio tokens tinted gold.
+  const promptSegments = useMemo(
+    () => subject.split(PROMPT_TOKEN_RE),
+    [subject]
+  );
 
   const attachMentionPhoto = (url: string, name: string | null): number | null => {
     const attached =
@@ -1918,14 +1952,8 @@ export function Studio() {
         MAX_VIDEO_IMAGES
       )
     );
-    toast.success("Verified asset attached");
-  };
-
-  const addAssetSource = () => {
-    if (!assetIdDraft.trim()) return;
-    attachAsset(assetIdDraft);
-    setAssetIdDraft("");
     setAssetIdOpen(false);
+    toast.success("Verified asset attached");
   };
 
   const loadAssets = useCallback(async () => {
@@ -1940,6 +1968,14 @@ export function Studio() {
       setAssetsLoading(false);
     }
   }, []);
+
+  // The registered-asset list loads lazily — typing @ in the video prompt
+  // is the moment it becomes visible, so fetch it then.
+  useEffect(() => {
+    if (mention && mode === "t2v" && libraryAssets === null && !assetsLoading) {
+      void loadAssets();
+    }
+  }, [mention, mode, libraryAssets, assetsLoading, loadAssets]);
 
   const deleteLibraryAsset = async (id: string) => {
     setDeletingAssetId(id);
@@ -1962,22 +1998,22 @@ export function Studio() {
     }
   };
 
-  const onCharacterFiles = async (files: FileList | File[] | null) => {
-    const file = files?.[0];
-    if (!file) return;
-    const allowed = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
-    if (!allowed.has(file.type)) {
-      toast.error("Only JPEG, PNG, or WebP");
-      if (assetFileInput.current) assetFileInput.current.value = "";
-      return;
-    }
+  /** Upload + register a character asset. Throws so the form stays open. */
+  const registerCharacter = async (
+    file: File,
+    name: string,
+    category: AssetCategory | "auto" = "auto"
+  ) => {
     setRegisteringAsset(true);
     try {
       const url = await uploadReference(file);
-      const name = file.name.replace(/\.[^.]+$/, "").slice(0, 60);
+      const assetName =
+        name.trim().slice(0, 60) ||
+        file.name.replace(/\.[^.]+$/, "").slice(0, 60);
       const { res, json } = await postJson<{ error?: string }>("/api/assets", {
         imageUrl: url,
-        name,
+        name: assetName,
+        category: category === "auto" ? undefined : category,
       });
       if (!res.ok) throw new Error(json.error ?? "Could not register character");
       toast.success(
@@ -1992,9 +2028,9 @@ export function Studio() {
       toast.error(
         err instanceof Error ? err.message : "Could not register character"
       );
+      throw err;
     } finally {
       setRegisteringAsset(false);
-      if (assetFileInput.current) assetFileInput.current.value = "";
     }
   };
 
@@ -3902,6 +3938,19 @@ export function Studio() {
           }}
         />
 
+        <AssetLibraryDialog
+          open={assetIdOpen}
+          onOpenChange={setAssetIdOpen}
+          assets={libraryAssets}
+          loading={assetsLoading}
+          onRefresh={() => void loadAssets()}
+          onAttach={attachAsset}
+          onDelete={setAssetToDelete}
+          deletingAssetId={deletingAssetId}
+          registering={registeringAsset}
+          onRegister={registerCharacter}
+        />
+
         <ConfirmDialog
           open={assetToDelete != null}
           onOpenChange={(open) => {
@@ -4152,16 +4201,6 @@ export function Studio() {
 
               {mode === "t2v" && (
                 <input
-                  ref={assetFileInput}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  onChange={(e) => void onCharacterFiles(e.target.files)}
-                />
-              )}
-
-              {mode === "t2v" && (
-                <input
                   ref={audioFileInput}
                   type="file"
                   accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
@@ -4169,145 +4208,6 @@ export function Studio() {
                   className="hidden"
                   onChange={(e) => void onAudioFiles(e.target.files)}
                 />
-              )}
-
-              {mode === "t2v" && assetIdOpen && (
-                <div className="mb-2 rounded-xl border border-white/10 bg-black/25 p-2.5">
-                  <div className="mb-2 flex items-center justify-between px-0.5">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                      <ShieldCheck className="size-3.5 text-gold" />
-                      Asset library (verified faces &amp; characters)
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void loadAssets()}
-                      className="text-[11px] text-muted-foreground transition hover:text-foreground"
-                    >
-                      Refresh
-                    </button>
-                  </div>
-
-                  {assetsLoading ? (
-                    <div className="flex items-center gap-2 px-1 py-3 text-xs text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" />
-                      Loading assets…
-                    </div>
-                  ) : libraryAssets && libraryAssets.length > 0 ? (
-                    <div className="mb-2 grid max-h-44 grid-cols-1 gap-1 overflow-y-auto">
-                      {libraryAssets.map((a) => {
-                        const active = a.status === "Active";
-                        const deleting = deletingAssetId === a.id;
-                        return (
-                          <div
-                            key={a.id}
-                            className={cn(
-                              "flex items-center gap-1 rounded-lg px-1 py-1",
-                              !active && "opacity-50"
-                            )}
-                          >
-                            <button
-                              type="button"
-                              disabled={!active || deleting}
-                              onClick={() => attachAsset(a.id)}
-                              className={cn(
-                                "flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
-                                active
-                                  ? "hover:bg-white/8"
-                                  : "cursor-not-allowed"
-                              )}
-                            >
-                              {a.url ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={a.url}
-                                  alt=""
-                                  className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
-                                />
-                              ) : (
-                                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-white/10">
-                                  <ShieldCheck className="size-3.5 text-gold" />
-                                </span>
-                              )}
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-xs text-foreground">
-                                  {a.name || a.id}
-                                </span>
-                                <span
-                                  className={cn(
-                                    "text-[10px]",
-                                    active
-                                      ? "text-gold"
-                                      : "text-muted-foreground"
-                                  )}
-                                >
-                                  {active ? "Active — click to attach" : a.status}
-                                </span>
-                              </span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deleting}
-                              aria-label={`Delete ${a.name || a.id}`}
-                              title="Delete from BytePlus library (frees quota)"
-                              onClick={() =>
-                                setAssetToDelete({ id: a.id, name: a.name })
-                              }
-                              className="shrink-0 rounded-md p-1.5 text-muted-foreground transition hover:bg-red-600 hover:text-white disabled:opacity-50"
-                            >
-                              {deleting ? (
-                                <Loader2 className="size-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="size-3.5" />
-                              )}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : libraryAssets ? (
-                    <p className="mb-2 px-1 py-1 text-[11px] text-muted-foreground">
-                      No characters yet — upload a photo from your device, or
-                      open an image in the Library and use &ldquo;Register as
-                      video character&rdquo;.
-                    </p>
-                  ) : null}
-
-                  <button
-                    type="button"
-                    disabled={registeringAsset}
-                    onClick={() => assetFileInput.current?.click()}
-                    className="mb-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-white/5 text-xs text-foreground transition hover:bg-white/8 disabled:opacity-50"
-                  >
-                    {registeringAsset ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Upload className="size-3.5" />
-                    )}
-                    {registeringAsset ? "Registering…" : "Upload from device"}
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={assetIdDraft}
-                      onChange={(e) => setAssetIdDraft(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          addAssetSource();
-                        }
-                        if (e.key === "Escape") setAssetIdOpen(false);
-                      }}
-                      placeholder="or paste an asset ID (asset-2026…)"
-                      className="h-8 flex-1 border-white/8 bg-transparent text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-8 rounded-full bg-gold px-3 text-xs text-primary-foreground"
-                      onClick={addAssetSource}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                </div>
               )}
 
               {mode === "t2v" && videoEditSource && (
@@ -4519,6 +4419,29 @@ export function Studio() {
               </div>
             ) : (
               <div className="relative">
+              {/* Sits behind the transparent-text textarea and re-renders the
+                  prompt so @image/@video/@audio tags read as linked, not prose.
+                  Typography must mirror the textarea exactly or the caret and
+                  the visible glyphs drift apart. */}
+              <div
+                ref={promptHighlightRef}
+                aria-hidden
+                className="pointer-events-none absolute inset-0 overflow-hidden px-3 py-2.5 text-[15px] leading-6 break-words whitespace-pre-wrap text-foreground"
+              >
+                {promptSegments.map((seg, i) =>
+                  i % 2 === 1 ? (
+                    <span
+                      key={i}
+                      className="rounded-[4px] bg-gold/15 text-gold"
+                    >
+                      {seg}
+                    </span>
+                  ) : (
+                    <span key={i}>{seg}</span>
+                  )
+                )}
+                {"\u200B"}
+              </div>
               <Textarea
                 placeholder={
                   mode === "t2v"
@@ -4584,8 +4507,12 @@ export function Studio() {
                 }
                 onBlur={() => window.setTimeout(() => setMention(null), 120)}
                 onPaste={onPromptPaste}
+                onScroll={(e) => {
+                  const el = promptHighlightRef.current;
+                  if (el) el.scrollTop = e.currentTarget.scrollTop;
+                }}
                 rows={6}
-                className="field-sizing-fixed h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] shadow-none focus-visible:ring-0"
+                className="field-sizing-fixed relative h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] leading-6 text-transparent caret-foreground shadow-none focus-visible:ring-0"
               />
 
             {/* Inside this wrapper so overflow-y-auto on the dock cannot
@@ -4626,9 +4553,18 @@ export function Studio() {
                     )}
                   >
                     {t.url.startsWith("asset://") ? (
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-gold/30">
-                        <ShieldCheck className="size-3.5 text-gold" />
-                      </span>
+                      t.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={t.thumb}
+                          alt=""
+                          className="size-8 shrink-0 rounded-md object-cover ring-1 ring-gold/30"
+                        />
+                      ) : (
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-white/5 ring-1 ring-gold/30">
+                          <ShieldCheck className="size-3.5 text-gold" />
+                        </span>
+                      )
                     ) : (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
