@@ -52,6 +52,7 @@ import {
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { uploadImageFile } from "@/lib/upload-image";
+import { isAudioFile, uploadAudioFile } from "@/lib/upload-audio";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -155,6 +156,9 @@ const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
 const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
 const MAX_VIDEO_IMAGES = 9;
+
+/** Seedance 2.5 lip-sync: up to 10 reference audio clips, 30s combined. */
+const MAX_AUDIO_CLIPS = 10;
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
 
 /**
@@ -305,6 +309,11 @@ export function Studio() {
     intent: "edit" | "extend" | "vary";
   } | null>(null);
   const [uploadingVideoSource, setUploadingVideoSource] = useState(false);
+  // Lip-sync reference audio (Seedance 2.5) — url + Whisper transcript
+  const [audioSources, setAudioSources] = useState<
+    { url: string; name: string; transcript: string | null }[]
+  >([]);
+  const [uploadingAudio, setUploadingAudio] = useState(false);
   const [assetIdOpen, setAssetIdOpen] = useState(false);
   const [assetIdDraft, setAssetIdDraft] = useState("");
   const [libraryAssets, setLibraryAssets] = useState<
@@ -318,6 +327,7 @@ export function Studio() {
     name: string;
   } | null>(null);
   const videoFileInput = useRef<HTMLInputElement>(null);
+  const audioFileInput = useRef<HTMLInputElement>(null);
   const assetFileInput = useRef<HTMLInputElement>(null);
   const [upscaleTargets, setUpscaleTargets] = useState<
     UpscaleSource[] | null
@@ -1092,7 +1102,13 @@ export function Studio() {
                 : opts.imageModel === "seedream"
                   ? undefined
                   : (opts.imageModel ?? googleModel ?? undefined),
-            prompt,
+            prompt:
+              activeMode === "t2v" && audioSources.length > 0
+                ? {
+                    ...prompt,
+                    audioTranscripts: audioSources.map((a) => a.transcript),
+                  }
+                : prompt,
             aspect,
             numOutputs: activeMode === "t2v" ? 1 : numOutputs,
             resolution:
@@ -1123,6 +1139,10 @@ export function Studio() {
               activeMode === "t2v"
                 ? (activeVideoEditSource?.generationId ?? null)
                 : null,
+            sourceAudioUrls:
+              activeMode === "t2v" && audioSources.length > 0
+                ? audioSources.map((a) => a.url)
+                : undefined,
           }),
         });
         const json = await readJson(res);
@@ -1283,6 +1303,7 @@ export function Studio() {
       activeBrandKitId,
       videoSources,
       videoEditSource,
+      audioSources,
       loadGallery,
       pushNotification,
     ]
@@ -1824,6 +1845,57 @@ export function Studio() {
     } finally {
       setUploadingVideoSource(false);
       if (videoFileInput.current) videoFileInput.current.value = "";
+    }
+  };
+
+  const onAudioFiles = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const list = Array.from(files).filter(isAudioFile);
+    if (!list.length) {
+      toast.error("Only MP3, WAV, M4A, AAC, or OGG audio");
+      return;
+    }
+    const remaining = MAX_AUDIO_CLIPS - audioSources.length;
+    if (remaining <= 0) {
+      toast.error(`Up to ${MAX_AUDIO_CLIPS} audio clips per video`);
+      return;
+    }
+    const batch = list.slice(0, remaining);
+    setUploadingAudio(true);
+    try {
+      for (const file of batch) {
+        const url = await uploadAudioFile(file);
+        // Transcribe so the prompt can quote the spoken words — advisory
+        // only, attaching must still work when Whisper is unavailable.
+        let transcript: string | null = null;
+        try {
+          const res = await fetch("/api/audio-transcript", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url }),
+          });
+          const json = await readJson<{ text?: string | null }>(res);
+          if (res.ok) transcript = json.text ?? null;
+        } catch {
+          // no transcript — Seedance still syncs to the raw audio
+        }
+        setAudioSources((prev) =>
+          [...prev, { url, name: file.name, transcript }].slice(
+            0,
+            MAX_AUDIO_CLIPS
+          )
+        );
+      }
+      toast.success(
+        batch.length === 1
+          ? "Audio attached — the character will speak these lines"
+          : `${batch.length} audio clips attached`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Audio upload failed");
+    } finally {
+      setUploadingAudio(false);
+      if (audioFileInput.current) audioFileInput.current.value = "";
     }
   };
 
@@ -4088,6 +4160,17 @@ export function Studio() {
                 />
               )}
 
+              {mode === "t2v" && (
+                <input
+                  ref={audioFileInput}
+                  type="file"
+                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => void onAudioFiles(e.target.files)}
+                />
+              )}
+
               {mode === "t2v" && assetIdOpen && (
                 <div className="mb-2 rounded-xl border border-white/10 bg-black/25 p-2.5">
                   <div className="mb-2 flex items-center justify-between px-0.5">
@@ -4325,6 +4408,45 @@ export function Studio() {
                   >
                     <X className="size-4" />
                   </button>
+                </div>
+              )}
+
+              {mode === "t2v" && audioSources.length > 0 && (
+                <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    {audioSources.map((a, i) => (
+                      <span
+                        key={`${a.url}-${i}`}
+                        title={a.transcript ?? a.name}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/5 py-1 pr-1.5 pl-2.5 text-xs text-foreground ring-1 ring-gold/30"
+                      >
+                        <AudioLines className="size-3 shrink-0 text-gold" />
+                        <span className="truncate">
+                          @audio{i + 1} · {a.name}
+                        </span>
+                        {a.transcript === null && (
+                          <span className="shrink-0 text-[10px] text-muted-foreground">
+                            no transcript
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          aria-label={`Remove audio ${i + 1}`}
+                          onClick={() =>
+                            setAudioSources((prev) =>
+                              prev.filter((_, idx) => idx !== i)
+                            )
+                          }
+                          className="flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition hover:scale-110"
+                        >
+                          <X className="size-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">
+                    Lip-sync — the character speaks these lines
+                  </p>
                 </div>
               )}
 
@@ -4682,6 +4804,32 @@ export function Studio() {
                         : videoSources.length === 1
                           ? "First frame"
                           : `${videoSources.length} images`}
+                    </button>
+                  )}
+
+                  {mode === "t2v" && (
+                    <button
+                      type="button"
+                      disabled={
+                        uploadingAudio ||
+                        audioSources.length >= MAX_AUDIO_CLIPS
+                      }
+                      onClick={() => audioFileInput.current?.click()}
+                      aria-label="Attach lip-sync audio"
+                      className={cn(
+                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50",
+                        audioSources.length > 0 &&
+                          "border-gold/30 text-foreground"
+                      )}
+                    >
+                      {uploadingAudio ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <AudioLines className="size-3.5" />
+                      )}
+                      {audioSources.length === 0
+                        ? "Audio"
+                        : `${audioSources.length} audio`}
                     </button>
                   )}
 
