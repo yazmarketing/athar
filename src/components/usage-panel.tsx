@@ -290,40 +290,47 @@ export function UsagePanel() {
         </button>
       </div>
 
-      {/* Stat cards */}
+      {/* Stat cards. The generation counts include transcripts so the box is
+          the studio's whole output, but spend stays renders-only (transcription
+          is self-hosted and free) — the hint line explains the split. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label="Total spend" value={usd(data.totals.total_cost)} />
         <StatCard
           label="Total generations"
-          value={String(data.totals.total_count)}
+          value={String(
+            data.totals.total_count + (data.transcription?.count ?? 0)
+          )}
+          hint={
+            data.transcription?.count
+              ? `${data.totals.total_count} renders + ${data.transcription.count} transcripts`
+              : undefined
+          }
         />
         <StatCard label="Spend — last 30 days" value={usd(data.totals.cost_30d)} />
         <StatCard
           label="Generations — last 30 days"
-          value={String(data.totals.count_30d)}
+          value={String(
+            data.totals.count_30d + (data.transcription?.count_30d ?? 0)
+          )}
+          hint={
+            data.transcription?.count_30d
+              ? `${data.totals.count_30d} renders + ${data.transcription.count_30d} transcripts`
+              : undefined
+          }
         />
       </div>
 
-      {/* Transcription runs on our own hardware, so hours of audio and machine
-          time are the honest numbers here — there is no per-minute spend. */}
-      {data.transcription && data.transcription.count > 0 && (
+      {/* One box per model — what each model has cost in total. */}
+      {data.byModel.length > 0 && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard
-            label="Transcripts"
-            value={String(data.transcription.count)}
-          />
-          <StatCard
-            label="Audio transcribed"
-            value={`${(data.transcription.audio_seconds / 3600).toFixed(1)}h`}
-          />
-          <StatCard
-            label="Audio — last 30 days"
-            value={`${(data.transcription.audio_seconds_30d / 3600).toFixed(1)}h`}
-          />
-          <StatCard
-            label="Worker time"
-            value={`${(data.transcription.compute_ms / 3600000).toFixed(1)}h`}
-          />
+          {data.byModel.map((m) => (
+            <StatCard
+              key={m.model_endpoint ?? "unknown"}
+              label={friendlyModelName(m.model_endpoint)}
+              value={usd(m.cost)}
+              hint={`${m.count} generation${m.count === 1 ? "" : "s"}`}
+            />
+          ))}
         </div>
       )}
 
@@ -338,13 +345,26 @@ export function UsagePanel() {
             count: r.count,
           }))}
         />
+        {/* Renders and transcription in one combined list — transcription is
+            self-hosted Whisper, so its row carries a count but no spend. */}
         <BreakdownTable
           title="By model"
-          rows={data.byModel.map((r) => ({
-            label: friendlyModelName(r.model_endpoint),
-            cost: r.cost,
-            count: r.count,
-          }))}
+          rows={[
+            ...data.byModel.map((r) => ({
+              label: friendlyModelName(r.model_endpoint),
+              cost: r.cost,
+              count: r.count,
+            })),
+            ...(data.transcription && data.transcription.count > 0
+              ? [
+                  {
+                    label: "Whisper — transcription (free)",
+                    cost: 0,
+                    count: data.transcription.count,
+                  },
+                ]
+              : []),
+          ]}
         />
         <BreakdownTable
           title="By user"
@@ -667,13 +687,24 @@ function DailyActivity({ days }: { days: DayRow[] }) {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
   return (
     <div className="rounded-2xl bg-card px-4 py-4 ring-1 ring-border">
       <p className="text-[11px] tracking-wide text-muted-foreground uppercase">
         {label}
       </p>
       <p className="mt-1 athar-headline">{value}</p>
+      {hint && (
+        <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
+      )}
     </div>
   );
 }
