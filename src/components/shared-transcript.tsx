@@ -55,7 +55,11 @@ export function SharedTranscript({
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
-        {transcript.media_kind === "video" ? (
+        {!transcript.media_url ? (
+          <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+            Playback isn&apos;t available for this transcript.
+          </p>
+        ) : transcript.media_kind === "video" ? (
           <video
             ref={mediaRef as React.RefObject<HTMLVideoElement>}
             src={transcript.media_url}

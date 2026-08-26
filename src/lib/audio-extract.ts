@@ -17,8 +17,8 @@ import {
  * 16kHz mono audio — under the limit, faster to upload, and cheaper to keep.
  *
  * The decode runs in an OfflineAudioContext, which resamples as fast as the
- * machine allows rather than in real time, so a ten-minute video takes
- * seconds rather than ten minutes.
+ * machine allows rather than in real time, so a long video takes seconds
+ * rather than playing out in real time.
  */
 
 export class UnsupportedMediaError extends Error {}
@@ -93,9 +93,7 @@ async function decodeToMono(bytes: ArrayBuffer, filename: string): Promise<Float
   const context = new AudioCtx();
   let decoded: AudioBuffer;
   try {
-    // decodeAudioData detaches the buffer, so it gets a copy — the caller's
-    // file may be needed again for the upload to storage.
-    decoded = await context.decodeAudioData(bytes.slice(0));
+    decoded = await context.decodeAudioData(bytes);
   } catch {
     throw new UnsupportedMediaError(
       `Could not read the audio in ${filename}. Export it as MP4 or MP3 and try again — ProRes and MKV cannot be decoded in a browser.`

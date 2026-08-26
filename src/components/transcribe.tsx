@@ -27,6 +27,7 @@ import {
   extractAudioChunks,
   type ExtractedChunk,
 } from "@/lib/audio-extract";
+import { APP_FORMDATA_MAX_BYTES, concatWavChunks } from "@/lib/audio-chunks";
 import { cn, postJson, readJson } from "@/lib/utils";
 import type { ClientRecord, TranscriptRecord } from "@/lib/types";
 
@@ -139,44 +140,81 @@ export function Transcribe({
   // --- upload --------------------------------------------------------------
 
   /**
-   * Straight to storage where the Space allows it, through the app where it
-   * doesn't. A two-hour interview is gigabytes, and pushing that through a
-   * Node process buffers the whole file in memory for no reason.
+   * Store the extracted WAV so the player and Retry have something to
+   * read later. Direct-to-Spaces first; the app-server FormData path
+   * only for files that fit it. A video is never posted through here —
+   * that is the "Failed to parse body as FormData" crash.
    */
   const uploadFile = async (file: File): Promise<{ url: string; kind: "audio" | "video" }> => {
-    try {
-      const { res, json } = await postJson<{
-        uploadUrl?: string;
-        publicUrl?: string;
-        mediaKind?: "audio" | "video";
-        error?: string;
-      }>("/api/transcripts/upload-url", {
-        filename: file.name,
-        contentType: file.type,
-      });
-      if (!res.ok || !json.uploadUrl || !json.publicUrl) {
-        throw new Error(json.error ?? "Could not prepare the upload");
-      }
+    const host = window.location.hostname;
+    const local =
+      host === "localhost" || host === "127.0.0.1" || host === "[::1]";
+    // Localhost is not on the Space CORS list. Skip the PUT so a small file
+    // goes through the app server instead of failing the preflight first.
+    const tryDirectPut = !(local && file.size <= APP_FORMDATA_MAX_BYTES);
 
-      await putWithProgress(json.uploadUrl, file, (percent) =>
-        setJob((j) => (j ? { ...j, stage: "uploading", percent } : j))
-      );
-      return { url: json.publicUrl, kind: json.mediaKind ?? "audio" };
-    } catch (err) {
-      // Most likely no CORS rule on the Space. The fallback is slower and
-      // capped, but it means nobody is blocked on a storage setting.
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/api/transcripts/upload", { method: "POST", body: form });
-      const json = await readJson<{
-        publicUrl?: string;
-        mediaKind?: "audio" | "video";
-        error?: string;
-      }>(res);
-      if (!res.ok || !json.publicUrl) {
-        throw new Error(json.error ?? (err instanceof Error ? err.message : "Upload failed"));
+    if (tryDirectPut) {
+      try {
+        const { res, json } = await postJson<{
+          uploadUrl?: string;
+          publicUrl?: string;
+          mediaKind?: "audio" | "video";
+          error?: string;
+        }>("/api/transcripts/upload-url", {
+          filename: file.name,
+          contentType: file.type,
+        });
+        if (!res.ok || !json.uploadUrl || !json.publicUrl) {
+          throw new Error(json.error ?? "Could not prepare the upload");
+        }
+
+        await putWithProgress(json.uploadUrl, file, (percent) =>
+          setJob((j) => (j ? { ...j, stage: "uploading", percent } : j))
+        );
+        return { url: json.publicUrl, kind: json.mediaKind ?? "audio" };
+      } catch (err) {
+        if (file.size > APP_FORMDATA_MAX_BYTES) {
+          throw new Error(
+            err instanceof Error
+              ? err.message
+              : "This file is too large to send through the app. Add a CORS PUT rule on the Space and retry."
+          );
+        }
       }
-      return { url: json.publicUrl, kind: json.mediaKind ?? "audio" };
+    }
+
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch("/api/transcripts/upload", { method: "POST", body: form });
+    const json = await readJson<{
+      publicUrl?: string;
+      mediaKind?: "audio" | "video";
+      error?: string;
+    }>(res);
+    if (!res.ok || !json.publicUrl) {
+      throw new Error(json.error ?? "Upload failed");
+    }
+    return { url: json.publicUrl, kind: json.mediaKind ?? "audio" };
+  };
+
+  /**
+   * Keep transcription moving even when storage CORS is missing and the
+   * WAV is too big for the app-server fallback. Chunks still go to Whisper;
+   * the player just will not have a file.
+   */
+  const storeExtractedAudio = async (
+    file: File
+  ): Promise<{ url: string; kind: "audio" | "video" } | null> => {
+    try {
+      return await uploadFile(file);
+    } catch (err) {
+      if (file.size > APP_FORMDATA_MAX_BYTES) {
+        toast.info(
+          "Transcript will run. Playback needs a CORS PUT rule on the Space."
+        );
+        return null;
+      }
+      throw err;
     }
   };
 
@@ -264,12 +302,18 @@ export function Transcribe({
         }
 
         setJob({ name: file.name, stage: "uploading", percent: 0 });
-        const { url, kind } = await uploadFile(file);
+        const wav = concatWavChunks(chunks.map((chunk) => chunk.wav));
+        const audioFile = new File(
+          [wav],
+          `${file.name.replace(/\.[^.]+$/, "") || "audio"}.wav`,
+          { type: "audio/wav" }
+        );
+        const stored = await storeExtractedAudio(audioFile);
         await start({
-          mediaUrl: url,
-          mediaKind: kind,
+          mediaUrl: stored?.url ?? "",
+          mediaKind: stored?.kind ?? "audio",
           title: file.name.replace(/\.[^.]+$/, ""),
-          mediaBytes: file.size,
+          mediaBytes: stored ? audioFile.size : undefined,
           chunks,
         });
       } catch (err) {

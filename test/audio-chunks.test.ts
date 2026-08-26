@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  APP_FORMDATA_MAX_BYTES,
   CHUNK_SECONDS,
   MAX_UPLOAD_BYTES,
   SAMPLE_RATE,
   chunkFitsLimit,
+  concatWavChunks,
   encodeWav,
   planChunks,
   wavBytesFor,
@@ -17,6 +19,10 @@ describe("wavBytesFor", () => {
 });
 
 describe("the chunk size", () => {
+  it("fits inside the app-server FormData ceiling", () => {
+    expect(wavBytesFor(CHUNK_SECONDS)).toBeLessThan(APP_FORMDATA_MAX_BYTES);
+  });
+
   it("fits inside OpenAI's 25MB limit with room to spare", () => {
     expect(chunkFitsLimit(CHUNK_SECONDS)).toBe(true);
     expect(wavBytesFor(CHUNK_SECONDS)).toBeLessThan(MAX_UPLOAD_BYTES);
@@ -35,9 +41,9 @@ describe("planChunks", () => {
 
   it("covers the whole recording with no gaps or overlap", () => {
     const chunks = planChunks(1500);
-    expect(chunks).toHaveLength(3);
-    expect(chunks[0]).toEqual({ index: 0, startS: 0, endS: 600 });
-    expect(chunks[2]).toEqual({ index: 2, startS: 1200, endS: 1500 });
+    expect(chunks).toHaveLength(7);
+    expect(chunks[0]).toEqual({ index: 0, startS: 0, endS: 240 });
+    expect(chunks[6]).toEqual({ index: 6, startS: 1440, endS: 1500 });
     // Every second of the recording belongs to exactly one chunk.
     chunks.forEach((chunk, i) => {
       if (i > 0) expect(chunk.startS).toBe(chunks[i - 1].endS);
@@ -94,5 +100,24 @@ describe("encodeWav", () => {
     const view = new DataView(encodeWav(new Float32Array([2, -2])));
     expect(view.getInt16(44, true)).toBe(32767);
     expect(view.getInt16(46, true)).toBe(-32768);
+  });
+});
+
+describe("concatWavChunks", () => {
+  it("returns a single chunk unchanged", () => {
+    const one = encodeWav(new Float32Array([0.1, -0.1]));
+    expect(concatWavChunks([one])).toBe(one);
+  });
+
+  it("joins PCM and rewrites the header lengths", () => {
+    const a = encodeWav(new Float32Array([0.5, -0.5]));
+    const b = encodeWav(new Float32Array([1, -1, 0]));
+    const joined = concatWavChunks([a, b]);
+    const view = new DataView(joined);
+    expect(joined.byteLength).toBe(44 + 5 * 2);
+    expect(view.getUint32(40, true)).toBe(10);
+    expect(view.getUint32(4, true)).toBe(36 + 10);
+    expect(view.getInt16(44, true)).toBe(new DataView(a).getInt16(44, true));
+    expect(view.getInt16(48, true)).toBe(new DataView(b).getInt16(44, true));
   });
 });

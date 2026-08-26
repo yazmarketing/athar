@@ -20,10 +20,18 @@ const WAV_HEADER_BYTES = 44;
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 /**
- * Ten minutes: 19.2MB as 16kHz mono WAV, comfortably inside the 25MB cap with
- * room for the header and any rounding.
+ * App-server FormData parsing dies on bodies much past this — the same
+ * ceiling as `/api/upload`. Chunks always travel that path, so they have
+ * to fit it, not only OpenAI's 25MB cap.
  */
-export const CHUNK_SECONDS = 600;
+export const APP_FORMDATA_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Four minutes: ~7.3MB as 16kHz mono WAV, under the FormData ceiling with
+ * room for the multipart wrapper. OpenAI would take ten minutes; the
+ * gateway would not.
+ */
+export const CHUNK_SECONDS = 240;
 
 /** Bytes a WAV of this many seconds will occupy. */
 export function wavBytesFor(seconds: number): number {
@@ -105,4 +113,39 @@ export function encodeWav(samples: Float32Array, sampleRate = SAMPLE_RATE): Arra
     offset += BYTES_PER_SAMPLE;
   }
   return buffer;
+}
+
+/**
+ * Join already-encoded WAV chunks into one file for storage / playback.
+ *
+ * Each chunk is a complete WAV; stitching means copying PCM and rewriting
+ * the header lengths. A single chunk is returned as-is so a short clip
+ * never allocates a second buffer.
+ */
+export function concatWavChunks(chunks: ArrayBuffer[]): ArrayBuffer {
+  if (chunks.length === 0) return encodeWav(new Float32Array());
+  if (chunks.length === 1) return chunks[0];
+
+  let pcmBytes = 0;
+  for (const chunk of chunks) {
+    if (chunk.byteLength < WAV_HEADER_BYTES) {
+      throw new Error("Invalid WAV chunk");
+    }
+    pcmBytes += chunk.byteLength - WAV_HEADER_BYTES;
+  }
+
+  const out = new ArrayBuffer(WAV_HEADER_BYTES + pcmBytes);
+  const bytes = new Uint8Array(out);
+  bytes.set(new Uint8Array(chunks[0], 0, WAV_HEADER_BYTES));
+  let offset = WAV_HEADER_BYTES;
+  for (const chunk of chunks) {
+    const pcm = new Uint8Array(chunk, WAV_HEADER_BYTES);
+    bytes.set(pcm, offset);
+    offset += pcm.length;
+  }
+
+  const view = new DataView(out);
+  view.setUint32(4, 36 + pcmBytes, true);
+  view.setUint32(40, pcmBytes, true);
+  return out;
 }

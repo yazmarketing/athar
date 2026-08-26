@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
 import { requireCreator } from "@/lib/authz";
+import { resolveDbUserId } from "@/lib/auth-users";
 import { logAudit } from "@/lib/audit";
 import { createTranscript, listTranscripts, updateTranscript } from "@/lib/transcripts";
 import { whisperApiConfigured } from "@/lib/openai-whisper";
@@ -27,9 +28,10 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Start a transcription. The media is already in our Space by this point —
- * the browser either uploaded it or picked an existing render — so all this
- * does is write the row and hand the worker a URL.
+ * Start a transcription. The browser has already decoded the audio. Storage
+ * of the WAV is best-effort: a missing CORS rule on the Space used to crash
+ * the upload with "Failed to parse body as FormData", so a job can start
+ * with no media_url and still transcribe from the chunks in hand.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -49,9 +51,6 @@ export async function POST(req: NextRequest) {
       projectId?: string | null;
     };
 
-    if (!body.mediaUrl?.trim()) {
-      return NextResponse.json({ error: "mediaUrl is required" }, { status: 400 });
-    }
     if (!whisperApiConfigured()) {
       return NextResponse.json(
         {
@@ -62,9 +61,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const createdBy = await resolveDbUserId(auth.user);
+
     const transcript = await createTranscript({
       title: body.title ?? "",
-      mediaUrl: body.mediaUrl.trim(),
+      mediaUrl: body.mediaUrl?.trim() ?? "",
       mediaKind: body.mediaKind === "video" ? "video" : "audio",
       mediaBytes: body.mediaBytes ?? null,
       task: body.task === "translate" ? "translate" : "transcribe",
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
       language: body.language ?? null,
       clientId: body.clientId ?? null,
       projectId: body.projectId ?? null,
-      createdBy: auth.user.id,
+      createdBy,
     });
 
     // Nothing is submitted here. The browser has the decoded audio and posts
@@ -92,7 +93,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ transcript });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Create failed";
+    const raw = err instanceof Error ? err.message : "Create failed";
+    const message = /foreign key constraint/i.test(raw)
+      ? "Could not save the transcript against this account. Sign out and back in, then retry."
+      : raw;
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -346,6 +346,10 @@ export function TranscriptDetail({
    * copy of the audio to work from.
    */
   const retry = async () => {
+    if (!transcript?.media_url) {
+      toast.error("This transcript has no stored audio to retry from");
+      return;
+    }
     setBusy("retry");
     try {
       const { res, json } = await postJson<{ error?: string }>(
@@ -590,7 +594,8 @@ export function TranscriptDetail({
             variant="outline"
             size="sm"
             className="gap-2"
-            disabled={busy === "retry"}
+            disabled={busy === "retry" || !transcript.media_url}
+            title={!transcript.media_url ? "No stored audio to retry from" : "Retry"}
             onClick={() => void retry()}
           >
             {busy === "retry" ? (
@@ -607,7 +612,12 @@ export function TranscriptDetail({
         <div className="flex min-h-0 flex-col gap-3">
           {/* Player */}
           <div className="overflow-hidden rounded-xl border border-white/8 bg-black/40">
-            {isVideo ? (
+            {!transcript.media_url ? (
+              <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                Playback isn&apos;t available — the file wasn&apos;t stored. The
+                transcript below is still complete.
+              </p>
+            ) : isVideo ? (
               <video
                 ref={mediaRef as React.RefObject<HTMLVideoElement>}
                 src={transcript.media_url}

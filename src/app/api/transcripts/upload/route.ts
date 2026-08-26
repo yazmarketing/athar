@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
+import { APP_FORMDATA_MAX_BYTES } from "@/lib/audio-chunks";
 import { uploadPublicObject } from "@/lib/storage";
 import { mediaExtension, mediaKindFor } from "@/lib/media-types";
 
@@ -9,13 +10,11 @@ import { mediaExtension, mediaKindFor } from "@/lib/media-types";
  *
  * This path buffers the whole file in memory. Athar runs on a 1 GiB App
  * Platform instance, so a large upload here does not fail politely: it takes
- * the studio down for everyone, mid-render. The cap is therefore set where a
- * voice memo or a short clip still works and anything real is pushed onto the
- * direct-to-Spaces path, which never touches this process.
+ * the studio down for everyone, mid-render. The cap matches the FormData
+ * parser: past ~8MB `req.formData()` throws "Failed to parse body as
+ * FormData" before the size check can run.
  */
 export const maxDuration = 300;
-
-const MAX_BYTES = 25 * 1024 * 1024;
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,13 +33,13 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (file.size > MAX_BYTES) {
+    if (file.size > APP_FORMDATA_MAX_BYTES) {
       return NextResponse.json(
         {
           error:
             "This file has to go straight to storage, and the browser could not: " +
-            "add a CORS rule on the Space allowing PUT from this origin " +
-            "(see the Transcribe section of the README). Files under 25MB can come through here.",
+            "add a CORS rule on the Space allowing PUT from this origin. " +
+            "Files under 8MB can come through here.",
         },
         { status: 413 }
       );
@@ -56,6 +55,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ publicUrl: url, path, mediaKind: kind });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Upload failed";
+    if (/formData/i.test(message)) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not read the file. Uploads through this path must be 8MB or smaller.",
+        },
+        { status: 413 }
+      );
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
+

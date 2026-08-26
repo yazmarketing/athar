@@ -93,8 +93,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Chunk failed";
     const { id } = await params;
-    await updateTranscript(id, { status: "failed", error: message.slice(0, 2000) });
-    return NextResponse.json({ error: message }, { status: 502 });
+    const friendly = /formData/i.test(message)
+      ? "Could not read that audio chunk. Try a shorter file, or add a CORS PUT rule on the Space."
+      : message;
+    await updateTranscript(id, { status: "failed", error: friendly.slice(0, 2000) });
+    return NextResponse.json({ error: friendly }, { status: 502 });
   }
 }
 
