@@ -41,53 +41,64 @@ export async function GET(req: NextRequest) {
       and ($2::date is null or (created_at at time zone 'Asia/Dubai')::date < $2::date)
     `;
 
-    // One probe decides every query below — transcripts is a self-healing
-    // table like the rest of this app, so a database that has never run a
-    // transcript simply doesn't have it yet.
+    // Each self-healing table may not exist yet on a fresh database — one
+    // probe per table decides whether it joins the ledger below.
     let hasTranscripts = true;
     try {
       await pool.query("select 1 from transcripts limit 1");
     } catch {
       hasTranscripts = false;
     }
+    let hasTts = true;
+    try {
+      await pool.query("select 1 from tts_generations limit 1");
+    } catch {
+      hasTts = false;
+    }
 
-    // Spend is the honest total across everything billed — generations and
-    // transcription both. Count stays generations-only: "Total generations"
-    // says what it is, and the transcript count already has its own card.
-    const TOTALS_SQL = hasTranscripts
-      ? `select
-           (coalesce((select sum(cost) from generations where ${IN_RANGE}), 0)
-             + coalesce((select sum(cost) from transcripts where status = 'ready' and ${IN_RANGE}), 0))::float as total_cost,
-           (select count(*) from generations where ${IN_RANGE})::int as total_count,
-           (coalesce((select sum(cost) from generations where created_at > now() - interval '30 days'), 0)
-             + coalesce((select sum(cost) from transcripts where status = 'ready' and created_at > now() - interval '30 days'), 0))::float as cost_30d,
-           (select count(*) from generations where created_at > now() - interval '30 days')::int as count_30d`
-      : `select
-           coalesce((select sum(cost) from generations where ${IN_RANGE}), 0)::float as total_cost,
-           (select count(*) from generations where ${IN_RANGE})::int as total_count,
-           coalesce((select sum(cost) from generations where created_at > now() - interval '30 days'), 0)::float as cost_30d,
-           (select count(*) from generations where created_at > now() - interval '30 days')::int as count_30d`;
+    // Every mode's spend in one ledger: 'audio' (transcription) and 'tts'
+    // (voice-over generation) join the same rotation as every render mode,
+    // rather than sitting off as separate footnotes for whichever provider
+    // bills per minute or per character instead of per call.
+    const combinedSources = [
+      `select mode, model_endpoint, cost, user_id, project_id, created_at from generations`,
+    ];
+    if (hasTranscripts) {
+      combinedSources.push(
+        `select 'audio' as mode, 'openai:whisper-1' as model_endpoint, cost,
+                created_by as user_id, project_id, created_at
+         from transcripts where status = 'ready'`
+      );
+    }
+    if (hasTts) {
+      combinedSources.push(
+        `select 'tts' as mode, 'munsit:' || nullif(model, '') as model_endpoint, cost,
+                created_by as user_id, project_id, created_at
+         from tts_generations where status = 'ready'`
+      );
+    }
+    const COMBINED = combinedSources.join(" union all ");
 
-    // 'audio' joins the same rotation as every render mode — one ledger, not
-    // a separate footnote for whichever provider happens to bill by the
-    // minute instead of per call.
-    const BY_MODE_SQL = hasTranscripts
-      ? `select mode, coalesce(sum(cost), 0)::float as cost, count(*)::int as count from (
-           select mode, cost, created_at from generations
-           union all
-           select 'audio' as mode, cost, created_at from transcripts where status = 'ready'
-         ) combined where ${IN_RANGE} group by mode order by cost desc`
-      : `select mode, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
-         from generations where ${IN_RANGE} group by mode order by cost desc`;
-
-    const BY_MODEL_SQL = hasTranscripts
-      ? `select model_endpoint, coalesce(sum(cost), 0)::float as cost, count(*)::int as count from (
-           select model_endpoint, cost, created_at from generations
-           union all
-           select 'openai:whisper-1' as model_endpoint, cost, created_at from transcripts where status = 'ready'
-         ) combined where ${IN_RANGE} group by model_endpoint order by cost desc limit 12`
-      : `select model_endpoint, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
-         from generations where ${IN_RANGE} group by model_endpoint order by cost desc limit 12`;
+    const TOTALS_SQL = `
+      with combined as (${COMBINED})
+      select
+        coalesce((select sum(cost) from combined where ${IN_RANGE}), 0)::float as total_cost,
+        (select count(*) from generations where ${IN_RANGE})::int as total_count,
+        coalesce(
+          (select sum(cost) from combined where created_at > now() - interval '30 days'), 0
+        )::float as cost_30d,
+        (select count(*) from generations where created_at > now() - interval '30 days')::int as count_30d
+    `;
+    const BY_MODE_SQL = `
+      with combined as (${COMBINED})
+      select mode, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
+      from combined where ${IN_RANGE} group by mode order by cost desc
+    `;
+    const BY_MODEL_SQL = `
+      with combined as (${COMBINED})
+      select model_endpoint, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
+      from combined where ${IN_RANGE} group by model_endpoint order by cost desc limit 12
+    `;
 
     const [totals, byMode, byModel, audit] = await Promise.all([
       pool.query(TOTALS_SQL, [from, to]),
@@ -113,14 +124,15 @@ export async function GET(req: NextRequest) {
         : dubaiTodayOffset(to as string, -1);
 
     const DAILY_SQL = (withTranscripts: boolean) => `
-      with days as (
+      with combined as (${COMBINED}),
+      days as (
         select generate_series($3::date, $4::date, interval '1 day')::date as day
       ),
       gen as (
         select (created_at at time zone 'Asia/Dubai')::date as day,
                coalesce(sum(cost), 0)::float as cost,
                count(*)::int as count
-        from generations
+        from combined
         where ${IN_RANGE}
         group by 1
       )${
@@ -129,8 +141,7 @@ export async function GET(req: NextRequest) {
       tr as (
         select (created_at at time zone 'Asia/Dubai')::date as day,
                count(*)::int as count,
-               coalesce(sum(duration_s), 0)::float as seconds,
-               coalesce(sum(cost), 0)::float as cost
+               coalesce(sum(duration_s), 0)::float as seconds
         from transcripts
         where status = 'ready' and ${IN_RANGE}
         group by 1
@@ -138,7 +149,7 @@ export async function GET(req: NextRequest) {
           : ""
       }
       select to_char(d.day, 'YYYY-MM-DD') as day,
-             coalesce(g.cost, 0)::float + ${withTranscripts ? "coalesce(t.cost, 0)::float" : "0"} as cost,
+             coalesce(g.cost, 0)::float as cost,
              coalesce(g.count, 0)::int as count,
              ${withTranscripts ? "coalesce(t.count, 0)::int" : "0"} as transcript_count,
              ${withTranscripts ? "coalesce(t.seconds, 0)::float" : "0"} as audio_seconds
@@ -161,24 +172,30 @@ export async function GET(req: NextRequest) {
 
     let byUser: unknown[] = [];
     try {
-      const sql = hasTranscripts
-        ? `select user_id, label, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
-           from (
-             select g.user_id, coalesce(u.email, 'unassigned') as label, g.cost, g.created_at
-             from generations g left join users u on u.id = g.user_id
-             union all
-             select t.created_by as user_id, coalesce(u2.email, 'unassigned') as label, t.cost, t.created_at
-             from transcripts t left join users u2 on u2.id = t.created_by
-             where t.status = 'ready'
-           ) combined
-           where ${IN_RANGE}
-           group by user_id, label order by cost desc limit 12`
-        : `select g.user_id, coalesce(u.email, 'unassigned') as label,
-                  coalesce(sum(g.cost), 0)::float as cost, count(*)::int as count
-           from generations g
-           left join users u on u.id = g.user_id
-           where ${IN_RANGE}
-           group by g.user_id, label order by cost desc limit 12`;
+      const labeledSources = [
+        `select g.user_id, coalesce(u.email, 'unassigned') as label, g.cost, g.created_at
+         from generations g left join users u on u.id = g.user_id`,
+      ];
+      if (hasTranscripts) {
+        labeledSources.push(
+          `select t.created_by as user_id, coalesce(u2.email, 'unassigned') as label, t.cost, t.created_at
+           from transcripts t left join users u2 on u2.id = t.created_by
+           where t.status = 'ready'`
+        );
+      }
+      if (hasTts) {
+        labeledSources.push(
+          `select v.created_by as user_id, coalesce(u3.email, 'unassigned') as label, v.cost, v.created_at
+           from tts_generations v left join users u3 on u3.id = v.created_by
+           where v.status = 'ready'`
+        );
+      }
+      const sql = `
+        select user_id, label, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
+        from (${labeledSources.join(" union all ")}) combined
+        where ${IN_RANGE}
+        group by user_id, label order by cost desc limit 12
+      `;
       byUser = (await pool.query(sql, [from, to])).rows;
     } catch {
       /* users table missing */
@@ -186,23 +203,15 @@ export async function GET(req: NextRequest) {
 
     let byProject: unknown[] = [];
     try {
-      const sql = hasTranscripts
-        ? `select coalesce(p.name, 'No project') as label,
-                  coalesce(sum(c.cost), 0)::float as cost, count(*)::int as count
-           from (
-             select project_id, cost, created_at from generations
-             union all
-             select project_id, cost, created_at from transcripts where status = 'ready'
-           ) c
-           left join projects p on p.id = c.project_id
-           where ${IN_RANGE}
-           group by 1 order by cost desc limit 12`
-        : `select coalesce(p.name, 'No project') as label,
-                  coalesce(sum(g.cost), 0)::float as cost, count(*)::int as count
-           from generations g
-           left join projects p on p.id = g.project_id
-           where ${IN_RANGE}
-           group by 1 order by cost desc limit 12`;
+      const sql = `
+        with combined as (${COMBINED})
+        select coalesce(p.name, 'No project') as label,
+               coalesce(sum(c.cost), 0)::float as cost, count(*)::int as count
+        from combined c
+        left join projects p on p.id = c.project_id
+        where ${IN_RANGE}
+        group by 1 order by cost desc limit 12
+      `;
       byProject = (await pool.query(sql, [from, to])).rows;
     } catch {
       /* projects table missing */
@@ -228,6 +237,25 @@ export async function GET(req: NextRequest) {
       transcription = res.rows[0] ?? null;
     }
 
+    // Voice-overs generated via Munsit — same shape as `transcription`, one
+    // detail row behind the totals above.
+    let tts: Record<string, number> | null = null;
+    if (hasTts) {
+      const res = await pool.query(
+        `select count(*)::int as count,
+                coalesce(sum(duration_s), 0)::float as audio_seconds,
+                coalesce(sum(char_count), 0)::float as char_count,
+                coalesce(sum(cost), 0)::float as cost,
+                count(*) filter (where created_at > now() - interval '30 days')::int as count_30d,
+                coalesce(sum(duration_s) filter (where created_at > now() - interval '30 days'), 0)::float as audio_seconds_30d,
+                coalesce(sum(cost) filter (where created_at > now() - interval '30 days'), 0)::float as cost_30d
+         from tts_generations
+         where status = 'ready' and ${IN_RANGE}`,
+        [from, to]
+      );
+      tts = res.rows[0] ?? null;
+    }
+
     return NextResponse.json({
       range: { ...range, today },
       totals: totals.rows[0],
@@ -237,6 +265,7 @@ export async function GET(req: NextRequest) {
       byProject,
       byDay,
       transcription,
+      tts,
       audit,
     });
   } catch (err) {

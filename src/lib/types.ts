@@ -456,3 +456,88 @@ export type TranscriptRecord = {
   /** Present on single-transcript responses. */
   segments?: TranscriptSegmentRecord[];
 };
+
+// ---------------------------------------------------------------------------
+// Text-to-speech (Munsit)
+// ---------------------------------------------------------------------------
+
+export type TtsStatus = "ready" | "failed";
+
+/** One block of a generation request, in the order it was spoken. */
+export type TtsSegment =
+  | { type: "speech"; voiceId: string; voiceName: string; text: string }
+  | { type: "pause"; ms: number };
+
+/** Per-character alignment for one speech segment, offset onto the full track. */
+export type TtsAlignment = {
+  characters: string[];
+  startS: number[];
+  endS: number[];
+};
+
+/** Mirrors the `tts_generations` table. */
+export type TtsGenerationRecord = {
+  id: string;
+  title: string;
+  status: TtsStatus;
+  error: string | null;
+  segments: TtsSegment[];
+  text: string;
+  model: string;
+  stability: number;
+  speed: number;
+  sample_rate: number;
+  dialect: string;
+  word_timestamps: boolean;
+  timestamps: TtsAlignment[] | null;
+  char_count: number;
+  cost: number;
+  output_url: string | null;
+  duration_s: number | null;
+  render_ms: number | null;
+  client_id: string | null;
+  project_id: string | null;
+  created_by: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  /** Present on list responses. */
+  client_name?: string | null;
+  project_name?: string | null;
+  created_by_name?: string | null;
+};
+
+/** A built-in Munsit voice, fetched live from GET /voices. */
+export type MunsitVoice = {
+  voice_id: string;
+  name: string;
+  description: string | null;
+  gender: "male" | "female" | null;
+  age: string | null;
+  languages: string[];
+  dialect: string[];
+  type: string | null;
+  sample_url: string | null;
+  avatar_url?: string | null;
+  /** Present once merged with our own cloned voices — see /api/tts/voices. */
+  source?: "library" | "cloned";
+  /** The tts_voices row id — only set for cloned voices, used to delete them. */
+  id?: string;
+};
+
+/** Mirrors the `tts_voices` table — our team's cloned voices. */
+export type TtsVoiceRecord = {
+  id: string;
+  munsit_voice_id: string;
+  name: string;
+  description: string | null;
+  gender: string | null;
+  age: string | null;
+  languages: string[];
+  dialects: string[];
+  sample_url: string | null;
+  avatar_url: string | null;
+  created_by: string | null;
+  created_at: string;
+};

@@ -633,6 +633,7 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-3-pro-image": "Nano Banana Pro",
   "nano-banana-pro": "Nano Banana Pro",
   "whisper-1": "Whisper",
+  "faseeh-v1-preview": "Athar Voice",
 };
 
 export function friendlyModelName(endpoint: string | null | undefined): string {

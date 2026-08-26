@@ -84,11 +84,34 @@ type UsageData = {
     audio_seconds_30d: number;
     cost_30d: number;
   } | null;
+  /** Null until the first voice-over has been generated. */
+  tts: {
+    count: number;
+    audio_seconds: number;
+    char_count: number;
+    cost: number;
+    count_30d: number;
+    audio_seconds_30d: number;
+    cost_30d: number;
+  } | null;
   audit: AuditRow[];
 };
 
 function usd(v: number) {
   return `$${v.toFixed(2)}`;
+}
+
+/** "N renders + N transcripts + N voice-overs" — only the parts that apply. */
+function generationCountHint(
+  data: UsageData,
+  key: "count" | "count_30d"
+): string | undefined {
+  const parts = [`${data.totals[key === "count" ? "total_count" : "count_30d"]} renders`];
+  const transcriptCount = data.transcription?.[key];
+  const ttsCount = data.tts?.[key];
+  if (transcriptCount) parts.push(`${transcriptCount} transcripts`);
+  if (ttsCount) parts.push(`${ttsCount} voice-overs`);
+  return parts.length > 1 ? parts.join(" + ") : undefined;
 }
 
 /** Map raw audit action codes to plain-English verbs. */
@@ -391,6 +414,27 @@ export function UsagePanel() {
         </div>
       )}
 
+      {/* Munsit text-to-speech — its spend is already folded into the totals
+          above and into By type / By model / By user below. This row is
+          just the detail behind that: how much audio, how much text. */}
+      {data.tts && data.tts.count > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            label="Voice generated"
+            value={`${(data.tts.audio_seconds / 3600).toFixed(1)}h`}
+          />
+          <StatCard label="Voice spend" value={usd(data.tts.cost)} />
+          <StatCard
+            label="Voice — last 30 days"
+            value={`${(data.tts.audio_seconds_30d / 3600).toFixed(1)}h`}
+          />
+          <StatCard
+            label="Characters synthesized"
+            value={data.tts.char_count.toLocaleString()}
+          />
+        </div>
+      )}
+
       {/* Spend and generation counts for the selected window. All-time also
           shows the last 30 days so a quiet month is not mistaken for zero. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -401,13 +445,11 @@ export function UsagePanel() {
         <StatCard
           label={rangeKind === "all" ? "Total generations" : "Generations"}
           value={String(
-            data.totals.total_count + (data.transcription?.count ?? 0)
+            data.totals.total_count +
+              (data.transcription?.count ?? 0) +
+              (data.tts?.count ?? 0)
           )}
-          hint={
-            data.transcription?.count
-              ? `${data.totals.total_count} renders + ${data.transcription.count} transcripts`
-              : undefined
-          }
+          hint={generationCountHint(data, "count")}
         />
         {rangeKind === "all" && (
           <>
@@ -418,13 +460,11 @@ export function UsagePanel() {
             <StatCard
               label="Generations — last 30 days"
               value={String(
-                data.totals.count_30d + (data.transcription?.count_30d ?? 0)
+                data.totals.count_30d +
+                  (data.transcription?.count_30d ?? 0) +
+                  (data.tts?.count_30d ?? 0)
               )}
-              hint={
-                data.transcription?.count_30d
-                  ? `${data.totals.count_30d} renders + ${data.transcription.count_30d} transcripts`
-                  : undefined
-              }
+              hint={generationCountHint(data, "count_30d")}
             />
           </>
         )}

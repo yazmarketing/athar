@@ -22,6 +22,7 @@ import {
   Images,
   Library,
   Loader2,
+  Mic,
   Moon,
   Paperclip,
   Plus,
@@ -65,6 +66,7 @@ import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
 import { Storyboards } from "@/components/storyboard";
 import { Transcribe } from "@/components/transcribe";
+import { TextToSpeech } from "@/components/text-to-speech";
 import { WelcomeCelebration } from "@/components/welcome-celebration";
 import {
   OnboardingTour,
@@ -249,6 +251,7 @@ type View =
   | "orchestrate"
   | "storyboard"
   | "transcribe"
+  | "tts"
   | "team";
 
 function isVideo(g: GenerationRecord) {
@@ -2875,6 +2878,13 @@ export function Studio() {
             "Transcribe",
             "transcribe"
           )}
+          {navBtn(
+            view === "tts",
+            () => setView("tts"),
+            <Mic className="size-4" />,
+            "Voice",
+            "tts"
+          )}
           {isManagement &&
             navBtn(
               view === "usage",
@@ -3373,6 +3383,11 @@ export function Studio() {
                     onClick: () => setView("transcribe"),
                   },
                   {
+                    label: "Voice",
+                    icon: Mic,
+                    onClick: () => setView("tts"),
+                  },
+                  {
                     label: "Variations",
                     icon: Shuffle,
                     onClick: () => {
@@ -3609,6 +3624,28 @@ export function Studio() {
                 defaultProjectId={activeProjectId}
                 isAdmin={isManagement}
                 onOpenStoryboard={() => setView("storyboard")}
+              />
+            </div>
+          </>
+        )}
+
+        {view === "tts" && (
+          <>
+            <header className="flex items-center justify-between px-6 py-5 sm:px-8">
+              <div>
+                <h1 className="athar-headline">Voice</h1>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Arabic voice-overs from text — pick a voice, write the
+                  lines, generate
+                </p>
+              </div>
+            </header>
+            <div className="flex min-h-0 flex-1 flex-col px-6 pb-10 sm:px-8">
+              <TextToSpeech
+                clients={clients}
+                defaultClientId={activeClientId}
+                defaultProjectId={activeProjectId}
+                isAdmin={isManagement}
               />
             </div>
           </>
