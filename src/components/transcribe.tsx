@@ -45,6 +45,8 @@ type Props = {
   defaultProjectId?: string | null;
   isAdmin?: boolean;
   onOpenStoryboard?: (storyboardId: string) => void;
+  /** Opened once on mount/change — e.g. arriving here from a Library card. */
+  initialOpenId?: string | null;
 };
 
 /** Select can't hold an empty value, so "no client" needs a sentinel. */
@@ -94,9 +96,14 @@ export function Transcribe({
   defaultProjectId,
   isAdmin,
   onOpenStoryboard,
+  initialOpenId,
 }: Props) {
   const [transcripts, setTranscripts] = useState<TranscriptRecord[]>([]);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
+
+  useEffect(() => {
+    if (initialOpenId) setOpenId(initialOpenId);
+  }, [initialOpenId]);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [loading, setLoading] = useState(true);
   /** What the box under the drop zone is doing right now. */

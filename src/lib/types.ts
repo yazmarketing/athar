@@ -498,6 +498,8 @@ export type TtsGenerationRecord = {
   client_id: string | null;
   project_id: string | null;
   created_by: string | null;
+  /** Every regenerate of the same script shares this — see tts.ts. */
+  group_id: string;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -538,6 +540,17 @@ export type TtsVoiceRecord = {
   dialects: string[];
   sample_url: string | null;
   avatar_url: string | null;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** Mirrors the `tts_voice_favorites` table — shared across the team, not per-user. */
+export type TtsFavoriteVoice = {
+  id: string;
+  voice_id: string;
+  voice_name: string;
+  /** Null means every client. */
+  client_id: string | null;
   created_by: string | null;
   created_at: string;
 };

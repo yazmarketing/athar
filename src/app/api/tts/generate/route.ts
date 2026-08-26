@@ -27,6 +27,8 @@ type GenerateBody = {
   title?: string;
   clientId?: string | null;
   projectId?: string | null;
+  /** Continues an existing work's version history — omit to start a new one. */
+  groupId?: string | null;
   model?: string;
   stability?: number;
   speed?: number;
@@ -113,6 +115,7 @@ export async function POST(req: NextRequest) {
               charCount,
               clientId: body.clientId ?? null,
               projectId: body.projectId ?? null,
+              groupId: body.groupId ?? null,
               createdBy,
             }).catch((err) => console.error("tts: streamed persist failed", err));
             return;
@@ -166,6 +169,7 @@ export async function POST(req: NextRequest) {
       renderMs,
       clientId: body.clientId ?? null,
       projectId: body.projectId ?? null,
+      groupId: body.groupId ?? null,
       createdBy,
     });
 
@@ -299,6 +303,7 @@ async function persistStreamed(opts: {
   charCount: number;
   clientId: string | null;
   projectId: string | null;
+  groupId: string | null;
   createdBy: string | null;
 }) {
   const wav = buildWav({ ...AUDIO_FORMAT, sampleRate: opts.sampleRate, data: opts.pcm });
@@ -326,6 +331,7 @@ async function persistStreamed(opts: {
     renderMs: opts.renderMs,
     clientId: opts.clientId,
     projectId: opts.projectId,
+    groupId: opts.groupId,
     createdBy: opts.createdBy,
   });
 }

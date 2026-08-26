@@ -17,12 +17,17 @@ export function munsitApiConfigured(): boolean {
 }
 
 /**
- * Munsit bills from a wallet at an undocumented per-character rate — set
- * MUNSIT_COST_PER_CHAR once you know your plan's actual rate. Char counts are
- * always tracked regardless, so nothing is lost by leaving this at 0.
+ * There's no billing API to read a real charge back from (checked their
+ * OpenAPI spec directly — nothing for account/credits/usage exists), so this
+ * is an estimate from published pricing, same as WHISPER_COST_PER_MINUTE.
+ * Faseeh TTS costs 2 credits/character; the Pro plan ($10/200,000 credits)
+ * prices a credit at $0.00005, so 2 × $0.00005 = $0.0001/character.
+ * Override with MUNSIT_COST_PER_CHAR if the account is on a different plan.
  */
+export const DEFAULT_MUNSIT_COST_PER_CHAR = 0.0001;
+
 export function munsitCost(charCount: number): number {
-  const rate = Number(process.env.MUNSIT_COST_PER_CHAR) || 0;
+  const rate = Number(process.env.MUNSIT_COST_PER_CHAR) || DEFAULT_MUNSIT_COST_PER_CHAR;
   return Math.max(0, charCount) * rate;
 }
 

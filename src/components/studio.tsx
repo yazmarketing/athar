@@ -138,6 +138,8 @@ import {
   type PromptInputs,
   type ReferenceAssetRecord,
   type StylePresetRecord,
+  type TranscriptRecord,
+  type TtsGenerationRecord,
 } from "@/lib/types";
 import {
   ACTIVE_CLIENT_STORAGE_KEY,
@@ -167,6 +169,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AtharLogo, ATHAR_LOCKUP_MIN_HEIGHT } from "@/components/athar-logo";
+import { Waveform } from "@/components/waveform";
 import { YazMediaLogo } from "@/components/yaz-media-logo";
 import {
   NotificationsBell,
@@ -406,8 +409,22 @@ export function Studio() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [typeFilter, setTypeFilter] = useState<"all" | "image" | "video">(
-    "all"
+  const [typeFilter, setTypeFilter] = useState<
+    "all" | "image" | "video" | "voice" | "transcript"
+  >("all");
+  const [libraryVoices, setLibraryVoices] = useState<TtsGenerationRecord[] | null>(null);
+  const [libraryTranscripts, setLibraryTranscripts] = useState<TranscriptRecord[] | null>(
+    null
+  );
+  const [voiceDetailTarget, setVoiceDetailTarget] = useState<TtsGenerationRecord | null>(
+    null
+  );
+  /** Set by "Continue editing" in the Library voice modal, consumed once by the Voice page. */
+  const [continueVoiceGeneration, setContinueVoiceGeneration] =
+    useState<TtsGenerationRecord | null>(null);
+  /** Set right before switching to Transcribe from a Library transcript card. */
+  const [libraryOpenTranscriptId, setLibraryOpenTranscriptId] = useState<string | null>(
+    null
   );
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine">("all");
   /** Favourites are marked on cards; this is how you actually get to them. */
@@ -808,6 +825,37 @@ export function Studio() {
     }
   }, [activeProjectId, ownerFilter, activeClientId]);
 
+  /**
+   * Voice-overs and transcripts for the Library — same scope rules as
+   * loadGallery, but only Library actually needs them (Create's gallery
+   * strip is images/videos only, so this stays off that path).
+   */
+  const loadLibraryExtras = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (activeProjectId) params.set("projectId", activeProjectId);
+    if (activeClientId) params.set("clientId", activeClientId);
+    if (ownerFilter === "mine") params.set("owner", "mine");
+    const qs = params.size ? `?${params.toString()}` : "";
+    try {
+      const [ttsRes, transcriptsRes] = await Promise.all([
+        fetch(`/api/tts${qs}`),
+        fetch(`/api/transcripts${qs}`),
+      ]);
+      const ttsJson = await ttsRes.json().catch(() => ({}));
+      const transcriptsJson = await transcriptsRes.json().catch(() => ({}));
+      setLibraryVoices(ttsRes.ok ? (ttsJson.generations ?? []) : []);
+      setLibraryTranscripts(transcriptsRes.ok ? (transcriptsJson.transcripts ?? []) : []);
+    } catch {
+      setLibraryVoices([]);
+      setLibraryTranscripts([]);
+    }
+  }, [activeProjectId, activeClientId, ownerFilter]);
+
+  useEffect(() => {
+    if (view !== "library") return;
+    void loadLibraryExtras();
+  }, [view, loadLibraryExtras]);
+
   useEffect(() => {
     if (view !== "create") return;
     const params = new URLSearchParams();
@@ -1119,6 +1167,9 @@ export function Studio() {
 
   const filtered = useMemo(() => {
     if (!generations) return null;
+    // Voice-overs and transcripts aren't GenerationRecords — this list stays
+    // renders-only, and the Library grid adds the other two kinds itself.
+    if (typeFilter === "voice" || typeFilter === "transcript") return [];
     const q = query.trim().toLowerCase();
     let list = generations;
     if (favoritesOnly) list = list.filter((g) => Boolean(g.is_favorite));
@@ -1132,6 +1183,49 @@ export function Studio() {
         g.model_endpoint.toLowerCase().includes(q)
     );
   }, [generations, query, typeFilter, favoritesOnly]);
+
+  /**
+   * Library's own view of the world — renders plus voice-overs and
+   * transcripts, each tagged with `kind` so one grid can render all of them
+   * and one filter can pick among them. Interleaved by date when "All
+   * types" is selected, so it reads as one timeline, not three separate
+   * lists stacked on top of each other.
+   */
+  type LibraryEntry =
+    | { kind: "render"; created_at: string; data: GenerationRecord }
+    | { kind: "voice"; created_at: string; data: TtsGenerationRecord }
+    | { kind: "transcript"; created_at: string; data: TranscriptRecord };
+
+  const libraryEntries = useMemo((): LibraryEntry[] => {
+    const q = query.trim().toLowerCase();
+    const entries: LibraryEntry[] = [];
+
+    if (typeFilter === "all" || typeFilter === "image" || typeFilter === "video") {
+      for (const g of filtered ?? []) {
+        entries.push({ kind: "render", created_at: g.created_at, data: g });
+      }
+    }
+    if (typeFilter === "all" || typeFilter === "voice") {
+      for (const v of libraryVoices ?? []) {
+        if (v.status !== "ready") continue;
+        if (q && !v.title.toLowerCase().includes(q) && !v.text.toLowerCase().includes(q)) {
+          continue;
+        }
+        entries.push({ kind: "voice", created_at: v.created_at, data: v });
+      }
+    }
+    if (typeFilter === "all" || typeFilter === "transcript") {
+      for (const t of libraryTranscripts ?? []) {
+        if (t.status !== "ready") continue;
+        if (q && !t.title.toLowerCase().includes(q)) continue;
+        entries.push({ kind: "transcript", created_at: t.created_at, data: t });
+      }
+    }
+
+    return entries.sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }, [filtered, libraryVoices, libraryTranscripts, typeFilter, query]);
 
 
   const submit = useCallback(
@@ -2677,6 +2771,85 @@ export function Studio() {
     </article>
   );
 
+  /** Audio has no visual, so voice-overs and transcripts get an icon tile
+      instead of the image/video preview `renderCard` uses. */
+  const renderVoiceCard = (v: TtsGenerationRecord, i: number) => (
+    <article
+      key={v.id}
+      className="animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+    >
+      <button
+        type="button"
+        className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-gold-soft/25 to-transparent text-left transition group-hover:from-gold-soft/40"
+        onClick={() => setVoiceDetailTarget(v)}
+        title="Open voice-over"
+      >
+        <span className="flex size-11 items-center justify-center rounded-full bg-white/8">
+          <Mic className="size-5 text-gold" />
+        </span>
+        <span className="px-4 text-center text-xs text-muted-foreground">
+          {v.duration_s ? `${v.duration_s.toFixed(1)}s` : "Voice-over"}
+        </span>
+      </button>
+      <div className="pointer-events-none absolute top-2 left-2 z-10">
+        <span className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+          Voice-over
+        </span>
+      </div>
+      <div className="p-3">
+        <p className="truncate text-sm text-foreground">{v.title}</p>
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          {[v.client_name, v.cost > 0 ? `$${v.cost.toFixed(3)}` : null, new Date(v.created_at).toLocaleDateString()]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      </div>
+    </article>
+  );
+
+  const renderTranscriptCard = (t: TranscriptRecord, i: number) => (
+    <article
+      key={t.id}
+      className="animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
+    >
+      <button
+        type="button"
+        className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-white/8 to-transparent text-left transition group-hover:from-white/12"
+        onClick={() => {
+          setLibraryOpenTranscriptId(t.id);
+          setView("transcribe");
+        }}
+        title="Open transcript"
+      >
+        <span className="flex size-11 items-center justify-center rounded-full bg-white/8">
+          {t.media_kind === "video" ? (
+            <Film className="size-5 text-muted-foreground" />
+          ) : (
+            <AudioLines className="size-5 text-muted-foreground" />
+          )}
+        </span>
+        <span className="px-4 text-center text-xs text-muted-foreground">
+          {t.duration_s ? `${Math.round(t.duration_s)}s` : "Transcript"}
+        </span>
+      </button>
+      <div className="pointer-events-none absolute top-2 left-2 z-10">
+        <span className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+          Transcript
+        </span>
+      </div>
+      <div className="p-3">
+        <p className="truncate text-sm text-foreground">{t.title}</p>
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+          {[t.client_name, t.language?.toUpperCase(), new Date(t.created_at).toLocaleDateString()]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      </div>
+    </article>
+  );
+
   const galleryLoader = (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
       <Loader2 className="size-5 animate-spin" />
@@ -3624,6 +3797,7 @@ export function Studio() {
                 defaultProjectId={activeProjectId}
                 isAdmin={isManagement}
                 onOpenStoryboard={() => setView("storyboard")}
+                initialOpenId={libraryOpenTranscriptId}
               />
             </div>
           </>
@@ -3646,6 +3820,7 @@ export function Studio() {
                 defaultClientId={activeClientId}
                 defaultProjectId={activeProjectId}
                 isAdmin={isManagement}
+                initialGeneration={continueVoiceGeneration}
               />
             </div>
           </>
@@ -3997,6 +4172,8 @@ export function Studio() {
                         <SelectItem value="all">All types</SelectItem>
                         <SelectItem value="image">Images</SelectItem>
                         <SelectItem value="video">Videos</SelectItem>
+                        <SelectItem value="voice">Voice-overs</SelectItem>
+                        <SelectItem value="transcript">Transcripts</SelectItem>
                       </SelectContent>
                     </Select>
                     {/* The dock's client/project chips only exist in Create,
@@ -4081,14 +4258,19 @@ export function Studio() {
                     </button>
                   </div>
 
-                  {filtered === null || galleryLoading ? (
+                  {filtered === null ||
+                  galleryLoading ||
+                  libraryVoices === null ||
+                  libraryTranscripts === null ? (
                     galleryLoader
-                  ) : filtered.length === 0 ? (
+                  ) : libraryEntries.length === 0 ? (
                     <div className="flex h-[min(48vh,380px)] flex-col items-center justify-center text-center">
                       <Sparkles className="mb-3 size-6 text-gold" />
                       {/* An empty *source* list is a different story from a
                           search/type filter that matched nothing. */}
-                      {(generations?.length ?? 0) === 0 ? (
+                      {(generations?.length ?? 0) === 0 &&
+                      libraryVoices.length === 0 &&
+                      libraryTranscripts.length === 0 ? (
                         <>
                           <p className="athar-headline">
                             {activeProject
@@ -4140,7 +4322,13 @@ export function Studio() {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                      {filtered.map((g, i) => renderCard(g, i))}
+                      {libraryEntries.map((entry, i) =>
+                        entry.kind === "render"
+                          ? renderCard(entry.data, i)
+                          : entry.kind === "voice"
+                            ? renderVoiceCard(entry.data, i)
+                            : renderTranscriptCard(entry.data, i)
+                      )}
                     </div>
                   )}
                 </>
@@ -4221,6 +4409,53 @@ export function Studio() {
             setView("home");
           }}
         />
+
+        <Dialog
+          open={voiceDetailTarget != null}
+          onOpenChange={(open) => !open && setVoiceDetailTarget(null)}
+        >
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{voiceDetailTarget?.title}</DialogTitle>
+            </DialogHeader>
+            {voiceDetailTarget?.output_url && (
+              <div className="space-y-3">
+                <Waveform src={voiceDetailTarget.output_url} />
+                <audio src={voiceDetailTarget.output_url} controls className="w-full" />
+                <p className="text-xs text-muted-foreground">
+                  {[
+                    voiceDetailTarget.client_name,
+                    voiceDetailTarget.duration_s
+                      ? `${voiceDetailTarget.duration_s.toFixed(1)}s`
+                      : null,
+                    voiceDetailTarget.cost > 0
+                      ? `$${voiceDetailTarget.cost.toFixed(3)}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+                {voiceDetailTarget.text && (
+                  <p dir="rtl" className="rounded-lg border border-white/8 p-3 text-sm leading-relaxed">
+                    {voiceDetailTarget.text}
+                  </p>
+                )}
+                <Button
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-full bg-gold px-4 text-xs text-primary-foreground"
+                  onClick={() => {
+                    setContinueVoiceGeneration(voiceDetailTarget);
+                    setVoiceDetailTarget(null);
+                    setView("tts");
+                  }}
+                >
+                  <RefreshCw className="size-3" />
+                  Continue editing
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <AssetLibraryDialog
           open={assetIdOpen}

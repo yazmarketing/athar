@@ -1,6 +1,13 @@
 import "server-only";
+import { randomBytes } from "crypto";
 import { db, onceProcess } from "@/lib/db";
-import type { TtsAlignment, TtsGenerationRecord, TtsSegment, TtsVoiceRecord } from "@/lib/types";
+import type {
+  TtsAlignment,
+  TtsFavoriteVoice,
+  TtsGenerationRecord,
+  TtsSegment,
+  TtsVoiceRecord,
+} from "@/lib/types";
 
 /**
  * Text-to-speech store. Mirrors db/migrations/028_tts.sql and, like every
@@ -33,11 +40,23 @@ async function ensureTtsTablesUncached() {
       client_id uuid references public.clients (id) on delete set null,
       project_id uuid references public.projects (id) on delete set null,
       created_by uuid references public.users (id) on delete set null,
+      -- Every regenerate of the same script shares its first generation's
+      -- group_id — that's what "Versions" in the sidebar actually lists.
+      -- A brand new script gets a fresh one (the column default).
+      group_id uuid not null default gen_random_uuid(),
       archived_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       completed_at timestamptz
     )
+  `);
+  await db().query(`
+    alter table public.tts_generations
+      add column if not exists group_id uuid not null default gen_random_uuid()
+  `);
+  await db().query(`
+    create index if not exists tts_generations_group_idx
+      on public.tts_generations (group_id, created_at desc)
   `);
   await db().query(`
     create table if not exists public.tts_voices (
@@ -67,6 +86,33 @@ async function ensureTtsTablesUncached() {
     create index if not exists tts_generations_fts_idx
       on public.tts_generations
       using gin (to_tsvector('simple', text))
+  `);
+  await db().query(`
+    create table if not exists public.tts_voice_favorites (
+      id uuid primary key default gen_random_uuid(),
+      voice_id text not null,
+      voice_name text not null,
+      -- Null means "every client" — a favorite saved before one was picked,
+      -- or one the team wants available everywhere.
+      client_id uuid references public.clients (id) on delete cascade,
+      created_by uuid references public.users (id) on delete set null,
+      created_at timestamptz not null default now()
+    )
+  `);
+  await db().query(`
+    create unique index if not exists tts_voice_favorites_unique_idx
+      on public.tts_voice_favorites
+      (voice_id, coalesce(client_id, '00000000-0000-0000-0000-000000000000'::uuid))
+  `);
+  await db().query(`
+    create table if not exists public.tts_shares (
+      token text primary key,
+      generation_id uuid not null
+        references public.tts_generations (id) on delete cascade,
+      created_by uuid references public.users (id) on delete set null,
+      created_at timestamptz not null default now(),
+      revoked_at timestamptz
+    )
   `);
 }
 
@@ -108,15 +154,17 @@ export async function createTtsGeneration(input: {
   clientId?: string | null;
   projectId?: string | null;
   createdBy?: string | null;
+  /** Continues an existing work's version history — omit to start a new one. */
+  groupId?: string | null;
 }): Promise<TtsGenerationRecord> {
   await ensureTtsTables();
   const { rows } = await db().query<TtsGenerationRecord>(
     `insert into tts_generations
        (title, status, error, segments, text, model, stability, speed, sample_rate,
         dialect, word_timestamps, timestamps, char_count, cost, output_url,
-        duration_s, render_ms, client_id, project_id, created_by, completed_at)
+        duration_s, render_ms, client_id, project_id, created_by, group_id, completed_at)
      values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14,
-             $15, $16, $17, $18, $19, $20, now())
+             $15, $16, $17, $18, $19, $20, coalesce($21::uuid, gen_random_uuid()), now())
      returning *`,
     [
       input.title?.trim() || "Untitled voice-over",
@@ -139,6 +187,7 @@ export async function createTtsGeneration(input: {
       input.clientId ?? null,
       input.projectId ?? null,
       input.createdBy ?? null,
+      input.groupId ?? null,
     ]
   );
   return rows[0];
@@ -148,6 +197,8 @@ export async function listTtsGenerations(opts: {
   clientId?: string | null;
   projectId?: string | null;
   createdBy?: string | null;
+  /** Just the versions of one work — see the group_id comment on the table. */
+  groupId?: string | null;
   includeArchived?: boolean;
   limit?: number;
 }): Promise<TtsGenerationRecord[]> {
@@ -158,13 +209,15 @@ export async function listTtsGenerations(opts: {
        and ($2::uuid is null or g.project_id = $2::uuid)
        and ($3::uuid is null or g.created_by = $3::uuid)
        and ($4::boolean or g.archived_at is null)
+       and ($5::uuid is null or g.group_id = $5::uuid)
      order by g.created_at desc
-     limit $5`,
+     limit $6`,
     [
       opts.clientId || null,
       opts.projectId || null,
       opts.createdBy || null,
       Boolean(opts.includeArchived),
+      opts.groupId || null,
       Math.min(opts.limit ?? 100, 400),
     ]
   );
@@ -296,4 +349,85 @@ export async function listTtsVoices(): Promise<TtsVoiceRecord[]> {
 export async function deleteTtsVoice(id: string): Promise<void> {
   await ensureTtsTables();
   await db().query(`delete from tts_voices where id = $1`, [id]);
+}
+
+// --- favorite voices -----------------------------------------------------
+
+/**
+ * Favorite a voice for a client — shared across the team, not per-user, so
+ * whoever picks up a client's work next sees the same shortlist. Idempotent:
+ * favoriting an already-favorited voice just returns the existing row.
+ */
+export async function favoriteVoice(input: {
+  voiceId: string;
+  voiceName: string;
+  clientId?: string | null;
+  createdBy?: string | null;
+}): Promise<TtsFavoriteVoice> {
+  await ensureTtsTables();
+  const { rows } = await db().query<TtsFavoriteVoice>(
+    `insert into tts_voice_favorites (voice_id, voice_name, client_id, created_by)
+     values ($1, $2, $3, $4)
+     on conflict (voice_id, coalesce(client_id, '00000000-0000-0000-0000-000000000000'::uuid))
+     do update set voice_name = excluded.voice_name
+     returning *`,
+    [input.voiceId, input.voiceName, input.clientId ?? null, input.createdBy ?? null]
+  );
+  return rows[0];
+}
+
+export async function unfavoriteVoice(voiceId: string, clientId?: string | null): Promise<void> {
+  await ensureTtsTables();
+  await db().query(
+    `delete from tts_voice_favorites
+     where voice_id = $1 and client_id is not distinct from $2::uuid`,
+    [voiceId, clientId ?? null]
+  );
+}
+
+/** Favorites for this client, plus every client-agnostic ("global") one. */
+export async function listFavoriteVoices(clientId?: string | null): Promise<TtsFavoriteVoice[]> {
+  await ensureTtsTables();
+  const { rows } = await db().query<TtsFavoriteVoice>(
+    `select * from tts_voice_favorites
+     where client_id is null or client_id = $1::uuid
+     order by created_at desc`,
+    [clientId ?? null]
+  );
+  return rows;
+}
+
+// --- share links -----------------------------------------------------
+
+export async function createTtsShare(
+  generationId: string,
+  createdBy?: string | null
+): Promise<string> {
+  await ensureTtsTables();
+  const token = randomBytes(16).toString("hex");
+  await db().query(
+    `insert into tts_shares (token, generation_id, created_by)
+     values ($1, $2, $3)`,
+    [token, generationId, createdBy ?? null]
+  );
+  return token;
+}
+
+export async function getSharedTtsGeneration(
+  token: string
+): Promise<TtsGenerationRecord | null> {
+  await ensureTtsTables();
+  const { rows } = await db().query<{ generation_id: string }>(
+    `select generation_id from tts_shares
+     where token = $1 and revoked_at is null`,
+    [token]
+  );
+  const id = rows[0]?.generation_id;
+  if (!id) return null;
+  return getTtsGeneration(id);
+}
+
+export async function revokeTtsShare(token: string): Promise<void> {
+  await ensureTtsTables();
+  await db().query(`update tts_shares set revoked_at = now() where token = $1`, [token]);
 }

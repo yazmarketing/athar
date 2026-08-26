@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  Check,
+  ChevronDown,
   Copy,
   Loader2,
   Mic,
@@ -12,6 +14,7 @@ import {
   RefreshCw,
   Search,
   Sparkles,
+  Star,
   Trash2,
   UploadCloud,
 } from "lucide-react";
@@ -25,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { ageMeta, dialectMeta, languageMeta, type LocaleMeta } from "@/config/tts";
 import { cn, readJson } from "@/lib/utils";
 import type { MunsitVoice } from "@/lib/types";
 
@@ -40,6 +44,9 @@ type Props = {
   onRefresh: () => void;
   selectedVoiceId?: string | null;
   onSelect: (voice: MunsitVoice) => void;
+  /** voice_ids favorited for the active client (plus every global one). */
+  favoriteVoiceIds: Set<string>;
+  onToggleFavorite: (voice: MunsitVoice) => void;
 };
 
 /** Deterministic gradient + initial, for voices Munsit doesn't give an avatar for. */
@@ -90,12 +97,16 @@ export function VoiceLibraryDialog({
   onRefresh,
   selectedVoiceId,
   onSelect,
+  favoriteVoiceIds,
+  onToggleFavorite,
 }: Props) {
   const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
   const [language, setLanguage] = useState<string>("all");
   const [dialect, setDialect] = useState<string>("all");
+  const [age, setAge] = useState<string>("all");
   const [gender, setGender] = useState<string>("all");
+  const [openFilter, setOpenFilter] = useState<"language" | "dialect" | "age" | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [cloning, setCloning] = useState(false);
@@ -122,6 +133,7 @@ export function VoiceLibraryDialog({
       setQuery("");
       setLanguage("all");
       setDialect("all");
+      setAge("all");
       setGender("all");
       setCloning(false);
     } else {
@@ -142,12 +154,17 @@ export function VoiceLibraryDialog({
     () => Array.from(new Set(base.flatMap((v) => v.dialect))).sort(),
     [base]
   );
+  const ageOptions = useMemo(
+    () => Array.from(new Set(base.map((v) => v.age).filter((a): a is string => Boolean(a)))).sort(),
+    [base]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return base.filter((v) => {
+    const matches = base.filter((v) => {
       if (language !== "all" && !v.languages.includes(language)) return false;
       if (dialect !== "all" && !v.dialect.includes(dialect)) return false;
+      if (age !== "all" && v.age !== age) return false;
       if (gender !== "all" && v.gender !== gender) return false;
       if (!q) return true;
       return (
@@ -156,7 +173,15 @@ export function VoiceLibraryDialog({
         v.dialect.some((d) => d.toLowerCase().includes(q))
       );
     });
-  }, [base, query, language, dialect, gender]);
+    // Favorited voices first, for reuse across the team on this client —
+    // otherwise a stable sort so nothing else jumps around.
+    if (tab !== "all") return matches;
+    return [...matches].sort((a, b) => {
+      const fa = favoriteVoiceIds.has(a.voice_id) ? 1 : 0;
+      const fb = favoriteVoiceIds.has(b.voice_id) ? 1 : 0;
+      return fb - fa;
+    });
+  }, [base, query, language, dialect, age, gender, tab, favoriteVoiceIds]);
 
   /** "Collections" — Munsit doesn't expose real collections via the API, so
       this groups the library by dialect, which is what a team actually
@@ -218,6 +243,26 @@ export function VoiceLibraryDialog({
             </p>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(voice)}
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-full transition",
+            favoriteVoiceIds.has(voice.voice_id)
+              ? "text-gold"
+              : "text-muted-foreground hover:bg-white/8 hover:text-foreground"
+          )}
+          title={
+            favoriteVoiceIds.has(voice.voice_id)
+              ? "Remove from favorites for this client"
+              : "Favorite for this client — reusable by the whole team"
+          }
+        >
+          <Star
+            className="size-3.5"
+            fill={favoriteVoiceIds.has(voice.voice_id) ? "currentColor" : "none"}
+          />
+        </button>
         {voice.sample_url && (
           <button
             type="button"
@@ -337,17 +382,33 @@ export function VoiceLibraryDialog({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5 px-5 pt-3">
-                  <FilterSelect
+                  <LocaleDropdown
+                    label="Language"
                     value={language}
                     onChange={setLanguage}
                     options={languageOptions}
-                    label="Language"
+                    meta={languageMeta}
+                    open={openFilter === "language"}
+                    onOpenChange={(o) => setOpenFilter(o ? "language" : null)}
                   />
-                  <FilterSelect
+                  <LocaleDropdown
+                    label="Dialect"
                     value={dialect}
                     onChange={setDialect}
                     options={dialectOptions}
-                    label="Dialect"
+                    meta={dialectMeta}
+                    open={openFilter === "dialect"}
+                    onOpenChange={(o) => setOpenFilter(o ? "dialect" : null)}
+                  />
+                  <LocaleDropdown
+                    label="Age"
+                    value={age}
+                    onChange={setAge}
+                    options={ageOptions}
+                    meta={ageMeta}
+                    showFlag={false}
+                    open={openFilter === "age"}
+                    onOpenChange={(o) => setOpenFilter(o ? "age" : null)}
                   />
                   {(["male", "female"] as const).map((g) => (
                     <button
@@ -429,31 +490,99 @@ export function VoiceLibraryDialog({
   );
 }
 
-function FilterSelect({
+/**
+ * A filter dropdown showing a flag (or other icon) per option, matching
+ * Munsit's own picker — much easier to scan than plain code strings like
+ * "najdi" or "en" in a bare `<select>`.
+ */
+function LocaleDropdown({
+  label,
   value,
   onChange,
   options,
-  label,
+  meta,
+  showFlag = true,
+  open,
+  onOpenChange,
 }: {
+  label: string;
   value: string;
   onChange: (v: string) => void;
   options: string[];
-  label: string;
+  meta: (code: string) => LocaleMeta;
+  showFlag?: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onOpenChange(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [open, onOpenChange]);
+
   if (options.length === 0) return null;
+  const active = value !== "all" ? meta(value) : null;
+
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="h-7 rounded-full bg-white/5 px-3 text-xs text-muted-foreground ring-1 ring-white/10 outline-none hover:text-foreground"
-    >
-      <option value="all">{label}</option>
-      {options.map((o) => (
-        <option key={o} value={o} className="bg-background text-foreground">
-          {o}
-        </option>
-      ))}
-    </select>
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className={cn(
+          "flex h-8 items-center gap-1.5 rounded-full px-3 text-xs transition",
+          active
+            ? "bg-white text-black"
+            : "bg-white/5 text-muted-foreground ring-1 ring-white/10 hover:text-foreground"
+        )}
+      >
+        {active && showFlag && <span className="text-sm leading-none">{active.flag}</span>}
+        <span>{active ? active.label : label}</span>
+        <ChevronDown className="size-3.5 opacity-60" />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 z-20 mt-1.5 max-h-64 w-56 overflow-y-auto rounded-xl bg-popover p-1.5 shadow-lg ring-1 ring-foreground/10">
+          <button
+            type="button"
+            onClick={() => {
+              onChange("all");
+              onOpenChange(false);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-sm transition hover:bg-white/8"
+          >
+            <span className="text-muted-foreground">Any {label.toLowerCase()}</span>
+            {value === "all" && <Check className="size-3.5 text-gold" />}
+          </button>
+          {options.map((code) => {
+            const m = meta(code);
+            const selected = value === code;
+            return (
+              <button
+                key={code}
+                type="button"
+                onClick={() => {
+                  onChange(code);
+                  onOpenChange(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm transition hover:bg-white/8",
+                  selected && "bg-gold-soft/20"
+                )}
+              >
+                {showFlag && <span className="text-base leading-none">{m.flag}</span>}
+                <span className="min-w-0 flex-1 truncate">{m.label}</span>
+                {selected && <Check className="size-3.5 shrink-0 text-gold" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

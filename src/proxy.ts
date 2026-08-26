@@ -27,6 +27,14 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
+  // Public voice links: /v/<token> and its download endpoint. Same reasoning.
+  if (
+    /^\/v\/[A-Za-z0-9_-]{16,128}$/.test(pathname) ||
+    /^\/api\/tts\/share\/[A-Za-z0-9_-]{16,128}\/download$/.test(pathname)
+  ) {
+    return NextResponse.next();
+  }
+
   if (
     pathname.startsWith("/api/auth") ||
     pathname === "/api/register" ||

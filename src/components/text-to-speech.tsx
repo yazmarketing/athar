@@ -9,12 +9,12 @@ import {
   Clock,
   Download,
   Headphones,
+  Link2,
   Loader2,
   Megaphone,
   MessageCircle,
   Mic,
   Plus,
-  Search,
   Sparkles,
   Trash2,
   X,
@@ -31,23 +31,24 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { VoiceLibraryDialog } from "@/components/voice-library-dialog";
 import { Waveform } from "@/components/waveform";
+import { ProgressBar } from "@/components/generation-progress";
 import {
   DEFAULT_SAMPLE_RATE,
   DEFAULT_SPEED,
   DEFAULT_STABILITY,
-  DIALECT_OPTIONS,
   MAX_SPEED,
   MIN_SPEED,
   TTS_PRESETS,
-  type TtsDialect,
 } from "@/config/tts";
 import { MAX_TTS_CHARACTERS, totalCharCount } from "@/lib/tts-segments";
-import { cn, readJson } from "@/lib/utils";
+import { cn, postJson, readJson } from "@/lib/utils";
 import type {
   ClientRecord,
   MunsitVoice,
+  TtsFavoriteVoice,
   TtsGenerationRecord,
   TtsSegment,
 } from "@/lib/types";
@@ -57,6 +58,8 @@ type Props = {
   defaultClientId?: string | null;
   defaultProjectId?: string | null;
   isAdmin?: boolean;
+  /** Loaded once on mount/change — e.g. "Continue editing" from Library. */
+  initialGeneration?: TtsGenerationRecord | null;
 };
 
 /** Select can't hold an empty value, so "no client" needs a sentinel. */
@@ -89,7 +92,13 @@ function newId() {
 
 type EngineStatus = { configured?: boolean; ok?: boolean; error?: string };
 
-export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdmin }: Props) {
+export function TextToSpeech({
+  clients,
+  defaultClientId,
+  defaultProjectId,
+  isAdmin,
+  initialGeneration,
+}: Props) {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [voices, setVoices] = useState<MunsitVoice[] | null>(null);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -104,7 +113,6 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
   const [clientId, setClientId] = useState<string | null>(defaultClientId ?? null);
   const [stability, setStability] = useState(DEFAULT_STABILITY);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
-  const [dialect, setDialect] = useState<TtsDialect>("auto");
   const [streaming, setStreaming] = useState(true);
   const [wordTimestamps, setWordTimestamps] = useState(false);
 
@@ -112,11 +120,16 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
   const [result, setResult] = useState<TtsGenerationRecord | null>(null);
   const [resultAudioUrl, setResultAudioUrl] = useState<string | null>(null);
 
+  // Every regenerate of the same script (without starting fresh) shares this
+  // — Versions lists exactly the generations in this group, oldest to
+  // newest. Browsing everything else the team has made lives in Library now,
+  // not here — that's what stopped this tab from being usable at any scale.
+  const [currentGroupId, setCurrentGroupId] = useState<string | null>(null);
   const [rightTab, setRightTab] = useState<"settings" | "history">("settings");
-  const [history, setHistory] = useState<TtsGenerationRecord[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyQuery, setHistoryQuery] = useState("");
+  const [versions, setVersions] = useState<TtsGenerationRecord[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
   const [diacritizing, setDiacritizing] = useState<string | null>(null);
+  const [favorites, setFavorites] = useState<TtsFavoriteVoice[]>([]);
 
   const loadVoices = useCallback(async () => {
     setVoicesLoading(true);
@@ -133,16 +146,33 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
     }
   }, []);
 
-  const loadHistory = useCallback(async () => {
-    setHistoryLoading(true);
+  const loadVersions = useCallback(async (groupId: string | null) => {
+    if (!groupId) {
+      setVersions([]);
+      return;
+    }
+    setVersionsLoading(true);
     try {
-      const res = await fetch("/api/tts");
+      const res = await fetch(`/api/tts?groupId=${groupId}`);
       const json = await readJson<{ generations?: TtsGenerationRecord[] }>(res);
-      setHistory(json.generations ?? []);
+      setVersions(json.generations ?? []);
     } catch {
-      toast.error("Could not load history");
+      toast.error("Could not load versions");
     } finally {
-      setHistoryLoading(false);
+      setVersionsLoading(false);
+    }
+  }, []);
+
+  const loadFavorites = useCallback(async (forClientId: string | null) => {
+    try {
+      const url = forClientId
+        ? `/api/tts/favorites?clientId=${forClientId}`
+        : "/api/tts/favorites";
+      const res = await fetch(url);
+      const json = await readJson<{ favorites?: TtsFavoriteVoice[] }>(res);
+      setFavorites(json.favorites ?? []);
+    } catch {
+      // Favorites are a convenience — a failed load just leaves the list plain.
     }
   }, []);
 
@@ -152,8 +182,42 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
       .then(setEngine)
       .catch(() => setEngine({ configured: false, ok: false }));
     void loadVoices();
-    void loadHistory();
-  }, [loadVoices, loadHistory]);
+  }, [loadVoices]);
+
+  // Versions always tracks whatever work is currently loaded.
+  useEffect(() => {
+    void loadVersions(currentGroupId);
+  }, [currentGroupId, loadVersions]);
+
+  // Favorites are scoped per client — reload whenever the active one changes.
+  useEffect(() => {
+    void loadFavorites(clientId);
+  }, [clientId, loadFavorites]);
+
+  const toggleFavorite = async (voice: MunsitVoice) => {
+    const already = favorites.some((f) => f.voice_id === voice.voice_id);
+    try {
+      if (already) {
+        const url = clientId
+          ? `/api/tts/favorites?voiceId=${encodeURIComponent(voice.voice_id)}&clientId=${clientId}`
+          : `/api/tts/favorites?voiceId=${encodeURIComponent(voice.voice_id)}`;
+        const res = await fetch(url, { method: "DELETE" });
+        if (!res.ok) throw new Error();
+        setFavorites((prev) => prev.filter((f) => f.voice_id !== voice.voice_id));
+      } else {
+        const res = await fetch("/api/tts/favorites", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ voiceId: voice.voice_id, voiceName: voice.name, clientId }),
+        });
+        const json = await readJson<{ favorite?: TtsFavoriteVoice }>(res);
+        if (!res.ok || !json.favorite) throw new Error();
+        setFavorites((prev) => [...prev, json.favorite as TtsFavoriteVoice]);
+      }
+    } catch {
+      toast.error("Could not update favorites");
+    }
+  };
 
   // Default every unset speaker to the first available voice once voices load.
   useEffect(() => {
@@ -178,6 +242,10 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
     [blocks]
   );
   const charCount = totalCharCount(segments);
+  const favoriteVoiceIds = useMemo(
+    () => new Set(favorites.map((f) => f.voice_id)),
+    [favorites]
+  );
   const overLimit = charCount > MAX_TTS_CHARACTERS;
   const hasText = speechBlocks.some((b) => b.text.trim());
   const missingVoice = speechBlocks.some((b) => !b.voiceId);
@@ -260,15 +328,21 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
     if (resultAudioUrl) URL.revokeObjectURL(resultAudioUrl);
     setResultAudioUrl(null);
 
+    // Decided up front (not read back from the response) so both the
+    // streamed and buffered paths — and a fresh group's very first
+    // version — all agree on the same id to reload Versions with.
+    const groupId = currentGroupId ?? crypto.randomUUID();
+    if (!currentGroupId) setCurrentGroupId(groupId);
+
     try {
       const body = {
         title: title.trim() || speechBlocks[0]?.text.slice(0, 60),
         clientId,
         projectId: defaultProjectId ?? null,
+        groupId,
         stability,
         speed,
         sampleRate: DEFAULT_SAMPLE_RATE,
-        dialect,
         streaming: canStream,
         wordTimestamps,
         segments,
@@ -287,7 +361,7 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
         const url = URL.createObjectURL(wavBlob);
         setResultAudioUrl(url);
         toast.success("Generated");
-        void loadHistory();
+        void loadVersions(groupId);
         return;
       }
 
@@ -295,12 +369,22 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
       if (!res.ok || !json.generation) throw new Error(json.error ?? "Generation failed");
       setResult(json.generation);
       toast.success("Generated");
-      void loadHistory();
+      void loadVersions(groupId);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Generation failed");
     } finally {
       setGenerating(false);
     }
+  };
+
+  /** Clears the canvas and starts a brand-new work — a fresh Versions group. */
+  const startFresh = () => {
+    setBlocks([{ kind: "speaker", id: newId(), voiceId: voices?.[0]?.voice_id ?? "", voiceName: voices?.[0]?.name ?? "", text: "" }]);
+    setTitle("");
+    setCurrentGroupId(null);
+    setResult(null);
+    if (resultAudioUrl) URL.revokeObjectURL(resultAudioUrl);
+    setResultAudioUrl(null);
   };
 
   const openLibraryFor = (blockId: string) => {
@@ -311,18 +395,6 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
   const targetBlock = libraryTarget ? blocks.find((b) => b.id === libraryTarget) : null;
   const currentTargetVoiceId = targetBlock?.kind === "speaker" ? targetBlock.voiceId : null;
 
-  const runHistorySearch = async () => {
-    const q = historyQuery.trim();
-    if (!q) {
-      void loadHistory();
-      return;
-    }
-    const res = await fetch(`/api/tts/search?q=${encodeURIComponent(q)}`);
-    const json = await readJson<{ hits?: { id: string }[] }>(res);
-    const ids = new Set((json.hits ?? []).map((h) => h.id));
-    setHistory((prev) => prev.filter((g) => ids.has(g.id)));
-  };
-
   const removeGeneration = async (generation: TtsGenerationRecord) => {
     const res = await fetch(`/api/tts/${generation.id}`, { method: "DELETE" });
     if (!res.ok) {
@@ -330,7 +402,7 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
       return;
     }
     toast.success("Deleted");
-    setHistory((prev) => prev.filter((g) => g.id !== generation.id));
+    setVersions((prev) => prev.filter((g) => g.id !== generation.id));
   };
 
   const loadIntoEditor = (generation: TtsGenerationRecord) => {
@@ -343,14 +415,63 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
     );
     setStability(generation.stability);
     setSpeed(generation.speed);
-    setDialect(generation.dialect as TtsDialect);
     setTitle(generation.title);
     setResult(generation);
-    setRightTab("settings");
+    setCurrentGroupId(generation.group_id);
+    setRightTab("history");
     toast.success("Loaded into editor");
   };
 
+  // Arriving here from Library's "Continue editing" — load it once.
+  useEffect(() => {
+    if (initialGeneration) loadIntoEditor(initialGeneration);
+  }, [initialGeneration]);
+
   const audioSrc = resultAudioUrl ?? result?.output_url ?? null;
+
+  /**
+   * A plain `<a download>` only downloads for a same-origin URL — the
+   * generated file lives on Spaces, a different origin, so the browser was
+   * navigating to it instead. Blob URLs (the streamed case) are already
+   * same-origin; everything else goes through the same /api/download proxy
+   * the image/video downloads use.
+   */
+  const downloadAudio = async () => {
+    if (!audioSrc) return;
+    const filename = `${(title || "voice-over").replace(/\s+/g, "-")}.wav`;
+    try {
+      const res = audioSrc.startsWith("blob:")
+        ? await fetch(audioSrc)
+        : await fetch(`/api/download?url=${encodeURIComponent(audioSrc)}`);
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("Could not download that file");
+    }
+  };
+
+  const shareGeneration = async (generation: TtsGenerationRecord) => {
+    const { res, json } = await postJson<{ path?: string; error?: string }>(
+      `/api/tts/${generation.id}/share`,
+      {}
+    );
+    if (!res.ok || !json.path) {
+      toast.error(json.error ?? "Could not create a link");
+      return;
+    }
+    const url = `${window.location.origin}${json.path}`;
+    await navigator.clipboard.writeText(url).catch(() => {});
+    toast.success("Read-only link copied");
+  };
 
   return (
     <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -372,6 +493,15 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
                 ? "Text-to-speech not set up — ask an admin"
                 : "Text-to-speech offline"}
           </span>
+          {currentGroupId && (
+            <button
+              type="button"
+              onClick={startFresh}
+              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              New script
+            </button>
+          )}
         </div>
 
         <div className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/8 p-4">
@@ -530,11 +660,24 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
             <Waveform src={audioSrc} />
             <audio src={audioSrc} controls className="w-full" />
             <div className="flex items-center gap-2">
-              <a href={audioSrc} download={`${(title || "voice-over").replace(/\s+/g, "-")}.wav`}>
-                <Button variant="outline" size="sm" className="h-8 gap-1.5 rounded-full px-3 text-xs">
-                  <Download className="size-3.5" /> Download
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 rounded-full px-3 text-xs"
+                onClick={() => void downloadAudio()}
+              >
+                <Download className="size-3.5" /> Download
+              </Button>
+              {result && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 rounded-full px-3 text-xs"
+                  onClick={() => void shareGeneration(result)}
+                >
+                  <Link2 className="size-3.5" /> Share
                 </Button>
-              </a>
+              )}
             </div>
           </div>
         )}
@@ -548,7 +691,7 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
               Settings
             </TabsTrigger>
             <TabsTrigger value="history" className="flex-1">
-              History
+              Versions
             </TabsTrigger>
           </TabsList>
 
@@ -625,21 +768,6 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-[11px] text-muted-foreground">Dialect</label>
-              <Select value={dialect} onValueChange={(v) => setDialect(v as TtsDialect)}>
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DIALECT_OPTIONS.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
 
             <label className="flex items-center justify-between gap-3">
               <span className="text-sm">
@@ -670,33 +798,42 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
           </TabsContent>
 
           <TabsContent value="history" className="mt-4 space-y-3">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={historyQuery}
-                  onChange={(e) => setHistoryQuery(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void runHistorySearch()}
-                  placeholder="Search voice-overs…"
-                  className="h-8 pl-8 text-xs"
-                />
-              </div>
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] text-muted-foreground">
+                {currentGroupId
+                  ? "Every version of this script, oldest first."
+                  : "Nothing loaded yet."}
+              </p>
+              {currentGroupId && (
+                <button
+                  type="button"
+                  onClick={startFresh}
+                  className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                >
+                  Start a new script
+                </button>
+              )}
             </div>
 
-            {historyLoading ? (
+            {versionsLoading ? (
               <div className="flex items-center justify-center py-8 text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
               </div>
-            ) : history.length === 0 ? (
+            ) : versions.length === 0 ? (
               <p className="py-8 text-center text-xs text-muted-foreground">
-                Nothing generated yet.
+                {currentGroupId
+                  ? "Generating…"
+                  : "Generate something to see its versions here. Everything else the team has made lives in Library."}
               </p>
             ) : (
               <div className="space-y-1.5">
-                {history.map((g) => (
+                {[...versions].reverse().map((g, idx) => (
                   <div
                     key={g.id}
-                    className="group flex items-center gap-1 rounded-lg border border-white/8 p-2.5 transition hover:bg-white/[0.03]"
+                    className={cn(
+                      "group flex items-center gap-1 rounded-lg border p-2.5 transition hover:bg-white/[0.03]",
+                      g.id === result?.id ? "border-gold/40 bg-gold-soft/10" : "border-white/8"
+                    )}
                   >
                     <button
                       type="button"
@@ -704,7 +841,12 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-medium">{g.title}</span>
+                        <span className="truncate text-xs font-medium">
+                          Version {idx + 1}
+                          {g.id === result?.id && (
+                            <span className="ml-1.5 text-gold">· current</span>
+                          )}
+                        </span>
                         {g.status === "failed" && (
                           <span className="shrink-0 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] text-destructive">
                             Failed
@@ -715,13 +857,25 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
                         {[
                           g.duration_s ? `${g.duration_s.toFixed(1)}s` : null,
                           g.cost > 0 ? `$${g.cost.toFixed(3)}` : null,
-                          g.client_name,
-                          new Date(g.created_at).toLocaleDateString(),
+                          new Date(g.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          }),
                         ]
                           .filter(Boolean)
                           .join(" · ")}
                       </p>
                     </button>
+                    {g.status === "ready" && (
+                      <button
+                        type="button"
+                        onClick={() => void shareGeneration(g)}
+                        className="shrink-0 rounded p-1.5 text-muted-foreground opacity-0 transition hover:bg-white/8 hover:text-foreground group-hover:opacity-100"
+                        title="Share"
+                      >
+                        <Link2 className="size-3.5" />
+                      </button>
+                    )}
                     {isAdmin && (
                       <button
                         type="button"
@@ -753,9 +907,78 @@ export function TextToSpeech({ clients, defaultClientId, defaultProjectId, isAdm
             updateBlock(libraryTarget, { voiceId: voice.voice_id, voiceName: voice.name });
           }
         }}
+        favoriteVoiceIds={favoriteVoiceIds}
+        onToggleFavorite={(voice) => void toggleFavorite(voice)}
       />
 
+      <GeneratingOverlay open={generating} multiSpeaker={speechBlocks.length > 1} />
     </div>
+  );
+}
+
+type Stage = { atS: number; label: string };
+
+const SINGLE_SPEAKER_STAGES: Stage[] = [
+  { atS: 0, label: "Reading your script…" },
+  { atS: 1.5, label: "Synthesizing speech…" },
+  { atS: 6, label: "Adding finishing touches…" },
+];
+
+const MULTI_SPEAKER_STAGES: Stage[] = [
+  { atS: 0, label: "Reading your script…" },
+  { atS: 1.5, label: "Synthesizing each speaker…" },
+  { atS: 6, label: "Mixing speakers together…" },
+  { atS: 10, label: "Adding finishing touches…" },
+];
+
+/** Time constant (s) for the eased bar — voice-overs land in seconds, not minutes. */
+const TAU_S = 7;
+
+function useElapsedSeconds(active: boolean) {
+  const [elapsedS, setElapsedS] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      setElapsedS(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setElapsedS((Date.now() - startedAt) / 1000);
+    }, 200);
+    return () => clearInterval(timer);
+  }, [active]);
+  return elapsedS;
+}
+
+/**
+ * Blocking popup shown while a generation is in flight — a spinner-in-a-
+ * button was easy to miss, especially for the longer multi-speaker case.
+ * Non-dismissable on purpose: there's nothing useful to do until it lands.
+ */
+function GeneratingOverlay({ open, multiSpeaker }: { open: boolean; multiSpeaker: boolean }) {
+  const elapsedS = useElapsedSeconds(open);
+  const stages = multiSpeaker ? MULTI_SPEAKER_STAGES : SINGLE_SPEAKER_STAGES;
+  let label = stages[0].label;
+  for (const s of stages) {
+    if (elapsedS >= s.atS) label = s.label;
+  }
+  const progress = Math.min(0.95, 1 - Math.exp(-elapsedS / TAU_S));
+
+  return (
+    <Dialog open={open} onOpenChange={() => {}}>
+      <DialogContent showCloseButton={false} className="gap-5 p-8 text-center sm:max-w-sm">
+        <div className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-gold-soft ring-1 ring-gold/25">
+          <Mic className="size-6 animate-pulse text-gold" />
+        </div>
+        <div className="space-y-1">
+          <p key={label} className="animate-in fade-in text-sm font-medium duration-500">
+            {label}
+          </p>
+          <p className="text-xs text-muted-foreground">{elapsedS.toFixed(0)}s</p>
+        </div>
+        <ProgressBar value={progress} />
+      </DialogContent>
+    </Dialog>
   );
 }
 

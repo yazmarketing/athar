@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
       clientId: params.get("clientId"),
       projectId: params.get("projectId"),
       createdBy: params.get("owner") === "mine" ? sessionUser.id : null,
+      groupId: params.get("groupId"),
       includeArchived: params.get("archived") === "true",
       limit: Number(params.get("limit")) || undefined,
     });

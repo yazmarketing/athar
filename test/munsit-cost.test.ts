@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from "vitest";
-import { munsitCost } from "@/lib/munsit-tts";
+import { DEFAULT_MUNSIT_COST_PER_CHAR, munsitCost } from "@/lib/munsit-tts";
 
 describe("munsitCost", () => {
   const originalRate = process.env.MUNSIT_COST_PER_CHAR;
@@ -9,9 +9,9 @@ describe("munsitCost", () => {
     else process.env.MUNSIT_COST_PER_CHAR = originalRate;
   });
 
-  it("defaults to 0 when no rate is configured", () => {
+  it("falls back to the Pro-plan estimate when no rate is configured", () => {
     delete process.env.MUNSIT_COST_PER_CHAR;
-    expect(munsitCost(1000)).toBe(0);
+    expect(munsitCost(1000)).toBeCloseTo(1000 * DEFAULT_MUNSIT_COST_PER_CHAR, 6);
   });
 
   it("scales linearly with character count once a rate is set", () => {

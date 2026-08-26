@@ -10,14 +10,6 @@ export const DEFAULT_SAMPLE_RATE = 24000;
 export const MIN_SPEED = 0.7;
 export const MAX_SPEED = 1.2;
 
-export type TtsDialect = "auto" | "emirati" | "fusha";
-
-export const DIALECT_OPTIONS: { id: TtsDialect; label: string }[] = [
-  { id: "auto", label: "Auto-detect" },
-  { id: "emirati", label: "Emirati" },
-  { id: "fusha", label: "Fus'ha (MSA)" },
-];
-
 export type TtsPreset = {
   id: string;
   label: string;
@@ -96,3 +88,62 @@ export const TTS_PRESETS: TtsPreset[] = [
 /** Filter option labels for the Voice Library — matches Munsit's own picker. */
 export const VOICE_AGE_OPTIONS = ["young", "middle", "elderly"] as const;
 export const VOICE_GENDER_OPTIONS = ["male", "female"] as const;
+
+/**
+ * Flag + display label for a language or dialect code. Voices come back
+ * from the API with whatever codes the provider uses, so this is a
+ * best-effort lookup with a graceful fallback for anything unrecognized —
+ * not an exhaustive enum.
+ */
+export type LocaleMeta = { flag: string; label: string };
+
+const LANGUAGE_META: Record<string, LocaleMeta> = {
+  ar: { flag: "🇸🇦", label: "Arabic" },
+  en: { flag: "🇺🇸", label: "English" },
+  fr: { flag: "🇫🇷", label: "French" },
+  es: { flag: "🇪🇸", label: "Spanish" },
+  hi: { flag: "🇮🇳", label: "Hindi" },
+  ur: { flag: "🇵🇰", label: "Urdu" },
+  tr: { flag: "🇹🇷", label: "Turkish" },
+};
+
+const DIALECT_META: Record<string, LocaleMeta> = {
+  auto: { flag: "🌐", label: "Auto-detect" },
+  fusha: { flag: "🌐", label: "MSA (Fus'ha)" },
+  msa: { flag: "🌐", label: "MSA (Fus'ha)" },
+  emirati: { flag: "🇦🇪", label: "Emirati" },
+  najdi: { flag: "🇸🇦", label: "Saudi" },
+  saudi: { flag: "🇸🇦", label: "Saudi" },
+  hijazi: { flag: "🇸🇦", label: "Hijazi" },
+  kuwaiti: { flag: "🇰🇼", label: "Kuwaiti" },
+  qatari: { flag: "🇶🇦", label: "Qatari" },
+  omani: { flag: "🇴🇲", label: "Omani" },
+  bahraini: { flag: "🇧🇭", label: "Bahraini" },
+  egyptian: { flag: "🇪🇬", label: "Egyptian" },
+  levantine: { flag: "🇯🇴", label: "Levantine" },
+  jordanian: { flag: "🇯🇴", label: "Jordanian" },
+  lebanese: { flag: "🇱🇧", label: "Lebanese" },
+  syrian: { flag: "🇸🇾", label: "Syrian" },
+  iraqi: { flag: "🇮🇶", label: "Iraqi" },
+  sudanese: { flag: "🇸🇩", label: "Sudanese" },
+  american: { flag: "🇺🇸", label: "American English" },
+  british: { flag: "🇬🇧", label: "British English" },
+  australian: { flag: "🇦🇺", label: "Australian English" },
+  indian: { flag: "🇮🇳", label: "Indian English" },
+};
+
+const AGE_META: Record<string, LocaleMeta> = {
+  young: { flag: "🧑", label: "Young" },
+  middle: { flag: "🧔", label: "Middle" },
+  elderly: { flag: "🧓", label: "Elderly" },
+};
+
+function metaFor(table: Record<string, LocaleMeta>, code: string): LocaleMeta {
+  const known = table[code.toLowerCase().trim()];
+  if (known) return known;
+  return { flag: "🗣️", label: code.charAt(0).toUpperCase() + code.slice(1) };
+}
+
+export const languageMeta = (code: string): LocaleMeta => metaFor(LANGUAGE_META, code);
+export const dialectMeta = (code: string): LocaleMeta => metaFor(DIALECT_META, code);
+export const ageMeta = (code: string): LocaleMeta => metaFor(AGE_META, code);
