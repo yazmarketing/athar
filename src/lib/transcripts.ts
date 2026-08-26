@@ -43,11 +43,17 @@ async function ensureTranscriptTablesUncached() {
       project_id uuid references public.projects (id) on delete set null,
       created_by uuid references public.users (id) on delete set null,
       render_ms integer,
+      -- OpenAI's whisper-1 is billed per minute — see openai-whisper.ts.
+      cost numeric(10, 4) not null default 0,
       archived_at timestamptz,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now(),
       completed_at timestamptz
     )
+  `);
+  await db().query(`
+    alter table public.transcripts
+      add column if not exists cost numeric(10, 4) not null default 0
   `);
   await db().query(`
     create table if not exists public.transcript_segments (
@@ -230,6 +236,7 @@ export type TranscriptPatch = {
   clientId?: string | null;
   projectId?: string | null;
   renderMs?: number | null;
+  cost?: number;
   archived?: boolean;
 };
 
@@ -251,6 +258,7 @@ const PATCH_COLUMNS: Record<keyof TranscriptPatch, string> = {
   clientId: "client_id",
   projectId: "project_id",
   renderMs: "render_ms",
+  cost: "cost",
   archived: "archived_at",
 };
 

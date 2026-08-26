@@ -66,8 +66,8 @@ type Props = {
 type Rail = "insights" | "ask" | "export";
 
 const EXPORT_FORMATS = [
-  { id: "srt", label: "SRT subtitles", hint: "Premiere, Resolve, YouTube" },
-  { id: "vtt", label: "VTT subtitles", hint: "Web players" },
+  { id: "srt", label: "SRT subtitles", hint: "Timecoded — Premiere, Resolve, YouTube" },
+  { id: "vtt", label: "VTT subtitles", hint: "Timecoded — web players" },
   { id: "txt", label: "Plain text", hint: "Paste into a doc" },
   { id: "md", label: "Markdown", hint: "Timecoded, for notes" },
   { id: "csv", label: "CSV", hint: "One row per line" },
@@ -960,6 +960,9 @@ export function TranscriptDetail({
                       <SelectItem value="segment">Every line</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground/70">
+                    For Text and Markdown — SRT and VTT are always timecoded.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -1065,8 +1068,8 @@ function InsightsRail({
           what was actually said.
         </p>
         <p className="text-[11px] text-muted-foreground/70">
-          Transcribing is local and free. This step, translation and Ask send
-          the text to a chat model, which is billed to the studio&rsquo;s key.
+          Transcribing is free. Reading it for you, translating, and Ask use
+          paid AI credit, same as generating an image or video.
         </p>
         <Button
           size="sm"

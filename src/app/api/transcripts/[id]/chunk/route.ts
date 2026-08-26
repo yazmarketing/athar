@@ -5,7 +5,7 @@ import {
   getTranscript,
   updateTranscript,
 } from "@/lib/transcripts";
-import { transcribeChunk } from "@/lib/openai-whisper";
+import { transcribeChunk, whisperCost } from "@/lib/openai-whisper";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -48,6 +48,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: "This job was cancelled" }, { status: 409 });
     }
 
+    const callStart = Date.now();
     const result = await transcribeChunk({
       audio: await audio.arrayBuffer(),
       filename: `chunk-${index}.wav`,
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       translate: transcript.task === "translate",
       vocabulary: transcript.vocabulary,
     });
+    const callMs = Date.now() - callStart;
 
     // The first chunk replaces whatever was there (this may be a re-run);
     // the rest append to it.
@@ -73,6 +75,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
 
     const done = index + 1 >= total;
+    // Chunks are contiguous and cover [0, total): the last one's own offset
+    // plus its own length is the recording's real duration — no need to
+    // accumulate across requests. Whisper bills each chunk by that same
+    // length, so the same number gives the total spend too.
+    const totalDurationS = done ? offsetS + result.duration : undefined;
     const updated = await updateTranscript(id, {
       status: done ? "ready" : "running",
       progress: done ? 100 : Math.round(((index + 1) / Math.max(1, total)) * 100),
@@ -83,6 +90,11 @@ export async function POST(req: NextRequest, { params }: Params) {
       language: index === 0 ? languageCode(result.language) : undefined,
       model: "whisper-1",
       device: "openai",
+      durationS: totalDurationS,
+      cost: totalDurationS != null ? whisperCost(totalDurationS) : undefined,
+      // Chunks arrive one at a time from the same client loop, so reading
+      // then adding here never races with itself.
+      renderMs: (transcript.render_ms ?? 0) + callMs,
     });
 
     return NextResponse.json({

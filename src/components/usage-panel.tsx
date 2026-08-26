@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  ChevronRight,
   ClipboardCopy,
   Download,
   Loader2,
@@ -16,6 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { friendlyModelName } from "@/config/models";
@@ -30,7 +37,15 @@ import {
   type UsageRangeKind,
 } from "@/lib/usage";
 
-type UsageRow = { label?: string; mode?: string; model_endpoint?: string; cost: number; count: number };
+type UsageRow = {
+  label?: string;
+  mode?: string;
+  model_endpoint?: string;
+  /** Present on byUser rows — null means unassigned. */
+  user_id?: string | null;
+  cost: number;
+  count: number;
+};
 type AuditRow = {
   id: string;
   user_email: string | null;
@@ -64,8 +79,10 @@ type UsageData = {
     count: number;
     audio_seconds: number;
     compute_ms: number;
+    cost: number;
     count_30d: number;
     audio_seconds_30d: number;
+    cost_30d: number;
   } | null;
   audit: AuditRow[];
 };
@@ -135,6 +152,9 @@ export function UsagePanel() {
   );
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [feedbackPreview, setFeedbackPreview] = useState("");
+  // A user id (or the "unassigned" bucket) whose drill-down is open — see
+  // UserAuditDialog. Null closes it.
+  const [userDrillId, setUserDrillId] = useState<string | null>(null);
 
   async function fetchFeedback(): Promise<string> {
     const params = new URLSearchParams({ days: String(feedbackDays) });
@@ -349,6 +369,28 @@ export function UsagePanel() {
         </div>
       </div>
 
+      {/* Transcription runs through OpenAI's hosted whisper-1, billed per
+          minute — its spend is already folded into the totals above and
+          into By type / By model / By user below. This row is just the
+          detail behind that: how much audio, and how long it took. */}
+      {data.transcription && data.transcription.count > 0 && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            label="Audio transcribed"
+            value={`${(data.transcription.audio_seconds / 3600).toFixed(1)}h`}
+          />
+          <StatCard label="Audio spend" value={usd(data.transcription.cost)} />
+          <StatCard
+            label="Audio — last 30 days"
+            value={`${(data.transcription.audio_seconds_30d / 3600).toFixed(1)}h`}
+          />
+          <StatCard
+            label="Processing time"
+            value={`${(data.transcription.compute_ms / 3600000).toFixed(1)}h`}
+          />
+        </div>
+      )}
+
       {/* Spend and generation counts for the selected window. All-time also
           shows the last 30 days so a quiet month is not mistaken for zero. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -413,30 +455,21 @@ export function UsagePanel() {
             count: r.count,
           }))}
         />
-        {/* Renders and transcription in one combined list — transcription is
-            self-hosted Whisper, so its row carries a count but no spend. */}
+        {/* Server already folds transcription's whisper-1 row into byModel
+            (see the BY_MODEL_SQL union in the usage route), real cost included. */}
         <BreakdownTable
           title="By model"
-          rows={[
-            ...data.byModel.map((r) => ({
-              label: friendlyModelName(r.model_endpoint),
-              cost: r.cost,
-              count: r.count,
-            })),
-            ...(data.transcription && data.transcription.count > 0
-              ? [
-                  {
-                    label: "Whisper — transcription (free)",
-                    cost: 0,
-                    count: data.transcription.count,
-                  },
-                ]
-              : []),
-          ]}
+          rows={data.byModel.map((r) => ({
+            label: friendlyModelName(r.model_endpoint),
+            cost: r.cost,
+            count: r.count,
+          }))}
         />
         <BreakdownTable
           title="By user"
+          onRowClick={(id) => setUserDrillId(id)}
           rows={data.byUser.map((r) => ({
+            id: r.user_id ?? "unassigned",
             label: r.label ?? "—",
             cost: r.cost,
             count: r.count,
@@ -451,6 +484,12 @@ export function UsagePanel() {
           }))}
         />
       </div>
+
+      <UserAuditDialog
+        id={userDrillId}
+        open={userDrillId != null}
+        onOpenChange={(o) => !o && setUserDrillId(null)}
+      />
 
       {/* Generation feedback — the thing we actually change the pipeline on */}
       <section>
@@ -788,9 +827,12 @@ function StatCard({
 function BreakdownTable({
   title,
   rows,
+  onRowClick,
 }: {
   title: string;
-  rows: { label: string; cost: number; count: number }[];
+  rows: { label: string; cost: number; count: number; id?: string }[];
+  /** When set, rows with an `id` open the per-person drill-down on click. */
+  onRowClick?: (id: string) => void;
 }) {
   const max = Math.max(...rows.map((r) => r.cost), 0.0001);
   return (
@@ -802,26 +844,192 @@ function BreakdownTable({
         </p>
       ) : (
         <div className="space-y-2 rounded-2xl bg-card p-4 ring-1 ring-border">
-          {rows.map((r) => (
-            <div key={r.label}>
-              <div className="mb-1 flex items-center justify-between gap-3 text-xs">
-                <span className="min-w-0 truncate text-foreground/90">
-                  {r.label}
-                </span>
-                <span className="shrink-0 font-mono text-muted-foreground">
-                  {usd(r.cost)} · {r.count}
-                </span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-gold/80"
-                  style={{ width: `${Math.max(2, (r.cost / max) * 100)}%` }}
-                />
-              </div>
-            </div>
-          ))}
+          {rows.map((r) => {
+            const clickable = onRowClick && r.id;
+            const bar = (
+              <>
+                <div className="mb-1 flex items-center justify-between gap-3 text-xs">
+                  <span className="flex min-w-0 items-center gap-1 truncate text-foreground/90">
+                    <span className="min-w-0 truncate">{r.label}</span>
+                    {clickable && (
+                      <ChevronRight className="size-3 shrink-0 text-muted-foreground/60" />
+                    )}
+                  </span>
+                  <span className="shrink-0 font-mono text-muted-foreground">
+                    {usd(r.cost)} · {r.count}
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-gold/80"
+                    style={{ width: `${Math.max(2, (r.cost / max) * 100)}%` }}
+                  />
+                </div>
+              </>
+            );
+            return clickable ? (
+              <button
+                key={r.label}
+                type="button"
+                onClick={() => onRowClick!(r.id!)}
+                title={`See ${r.label}'s spend by model and project`}
+                className="-mx-1 block w-full rounded-lg px-1 py-0.5 text-left transition hover:bg-white/5"
+              >
+                {bar}
+              </button>
+            ) : (
+              <div key={r.label}>{bar}</div>
+            );
+          })}
         </div>
       )}
     </section>
+  );
+}
+
+type UserAuditItem = {
+  id: string;
+  kind: "generation" | "transcript";
+  type: string;
+  model_endpoint: string;
+  cost: number;
+  created_at: string;
+  title: string;
+  thumb: string | null;
+  project_name: string;
+};
+
+type UserAuditData = {
+  /** The id this data was fetched for — lets a re-open with a new id show a
+      spinner instead of the previous person's numbers while it loads. */
+  forId: string;
+  label: string;
+  byModel: { label: string; cost: number; count: number }[];
+  byProject: { label: string; cost: number; count: number }[];
+  recent: UserAuditItem[];
+};
+
+/**
+ * One person's spend, broken down enough to act on: what model, on what
+ * project, and the individual renders worth pointing at. The "By user" table
+ * only has a total — this is the audit trail behind it, for the actual
+ * "you're spending a lot on X for Y, was that necessary?" conversation.
+ */
+function UserAuditDialog({
+  id,
+  open,
+  onOpenChange,
+}: {
+  id: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [data, setData] = useState<UserAuditData | null>(null);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/usage/user?id=${encodeURIComponent(id)}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "Failed to load that person's usage");
+        if (!cancelled) setData({ ...json, forId: id } as UserAuditData);
+      } catch (err) {
+        if (!cancelled) {
+          toast.error(
+            err instanceof Error ? err.message : "Failed to load that person's usage"
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const loading = id != null && data?.forId !== id;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[min(42rem,calc(100vw-2rem))] max-w-none border-white/10 bg-[#161616] text-foreground ring-white/10">
+        <DialogHeader>
+          <DialogTitle>{data?.label ?? "Loading…"}</DialogTitle>
+        </DialogHeader>
+
+        {loading ? (
+          <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+            <Loader2 className="size-4 animate-spin" />
+            Loading…
+          </div>
+        ) : data ? (
+          <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-1">
+            <div className="grid gap-6 sm:grid-cols-2">
+              <BreakdownTable
+                title="By model"
+                rows={data.byModel.map((r) => ({
+                  label: friendlyModelName(r.label),
+                  cost: r.cost,
+                  count: r.count,
+                }))}
+              />
+              <BreakdownTable
+                title="By project"
+                rows={data.byProject.map((r) => ({
+                  label: r.label,
+                  cost: r.cost,
+                  count: r.count,
+                }))}
+              />
+            </div>
+
+            <section>
+              <h3 className="mb-3 text-sm font-medium">
+                Priciest renders — what to point at
+              </h3>
+              {data.recent.length === 0 ? (
+                <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
+                  No data yet
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {data.recent.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center gap-3 rounded-xl bg-card px-3 py-2 ring-1 ring-border"
+                    >
+                      {item.thumb ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={item.thumb}
+                          alt=""
+                          className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+                        />
+                      ) : (
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 text-[10px] text-muted-foreground ring-1 ring-white/10">
+                          {item.kind === "transcript" ? "AUDIO" : item.type.toUpperCase()}
+                        </span>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs text-foreground/90">
+                          {item.title || "Untitled"}
+                        </p>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {friendlyModelName(item.model_endpoint)} ·{" "}
+                          {item.project_name} · {dubaiTime(item.created_at)}
+                        </p>
+                      </div>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                        {usd(item.cost)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
   );
 }

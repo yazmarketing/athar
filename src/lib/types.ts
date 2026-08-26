@@ -441,6 +441,8 @@ export type TranscriptRecord = {
   project_id: string | null;
   created_by: string | null;
   render_ms: number | null;
+  /** OpenAI whisper-1 spend, estimated from the audio it actually processed. */
+  cost: number;
   archived_at: string | null;
   created_at: string;
   updated_at: string;

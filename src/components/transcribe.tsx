@@ -437,6 +437,14 @@ export function Transcribe({
       {/* Engine */}
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
+          // The vendor/model string (e.g. "Whisper · whisper-1 · OpenAI") is
+          // in the tooltip, not the label — nobody transcribing a client
+          // interview needs to know which model runs it.
+          title={
+            engine?.ok
+              ? [engine.label, engine.detail].filter(Boolean).join(" · ")
+              : undefined
+          }
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
             engine?.ok
@@ -446,14 +454,14 @@ export function Transcribe({
         >
           <CircleDot className="size-3" />
           {engine?.ok
-            ? [engine.label, engine.detail].filter(Boolean).join(" · ")
+            ? "Transcription ready"
             : engine?.configured === false
-              ? "Engine not configured"
-              : "Engine offline"}
+              ? "Transcription not set up — ask an admin"
+              : "Transcription offline"}
         </span>
         {engine?.ok && !engine.capabilities?.diarization && (
           <span className="text-muted-foreground">
-            Speaker labels unavailable on this engine
+            One transcript per file — not split out by speaker
           </span>
         )}
         {engine && !engine.ok && engine.error && (
@@ -711,8 +719,8 @@ export function Transcribe({
         </div>
       ) : transcripts.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
-          Nothing transcribed yet. Drop an interview in and it will be readable in
-          a few minutes.
+          Nothing transcribed yet. Drop a video or audio file in and it will
+          be readable in a few minutes.
         </p>
       ) : (
         <div className="space-y-2">

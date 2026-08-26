@@ -19,6 +19,19 @@ const OPENAI_BASE = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 /** OpenAI's own hard limit on an audio upload. */
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
+/**
+ * whisper-1's published per-minute rate, in USD. This is not self-hosted —
+ * every chunk here is a billed OpenAI API call. Like every other cost in
+ * this app (see `usage-panel.tsx`), it's an internal estimate for cost
+ * visibility, not a bill: OpenAI could reprice it without this changing.
+ */
+export const WHISPER_COST_PER_MINUTE = 0.006;
+
+/** What transcribing this many seconds of audio is estimated to cost. */
+export function whisperCost(durationS: number): number {
+  return (Math.max(0, durationS) / 60) * WHISPER_COST_PER_MINUTE;
+}
+
 export function whisperApiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
