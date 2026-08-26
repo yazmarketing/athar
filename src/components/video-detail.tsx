@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowRightToLine,
   Clapperboard,
@@ -122,7 +122,7 @@ export function VideoDetail({
     ? payload.source_image_urls
     : payload.source_image_url
       ? [payload.source_image_url]
-      : [];
+      : (g.reference_urls ?? []).filter(Boolean);
   const sourceGenerationId = payload.source_generation_id ?? null;
   const sourceVideoUrl = payload.source_video_url ?? null;
   const sourceVideoGenerationId = payload.source_video_generation_id ?? null;
@@ -130,7 +130,48 @@ export function VideoDetail({
     g.duration_s != null ? Number(g.duration_s) : (payload.duration_s ?? null);
 
   const [shareOpen, setShareOpen] = useState(false);
+  const [assetPreviews, setAssetPreviews] = useState<Record<string, string>>(
+    {}
+  );
   const shareText = g.final_prompt.slice(0, 180);
+
+  // Library cards store registered assets as asset://<id>, not a photo URL.
+  // Resolve those ids to the BytePlus preview so the Prompt area can show
+  // the still that was actually attached.
+  useEffect(() => {
+    const ids = sourceImageUrls
+      .filter((url) => url.startsWith("asset://"))
+      .map((url) => url.slice("asset://".length))
+      .filter(Boolean);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/assets");
+        const json = (await res.json()) as {
+          assets?: { id?: string; url?: string | null }[];
+        };
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const a of json.assets ?? []) {
+          if (a.id && a.url) next[a.id] = a.url;
+        }
+        setAssetPreviews(next);
+      } catch {
+        /* keep the text placeholder */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceImageUrls.join("|")]);
+
+  const previewFor = (url: string) => {
+    if (url.startsWith("asset://")) {
+      return assetPreviews[url.slice("asset://".length)] ?? null;
+    }
+    return url;
+  };
 
   // Reset per-generation state during render (React "previous render" pattern)
   const [prevKey, setPrevKey] = useState<string | null>(null);
@@ -337,63 +378,56 @@ export function VideoDetail({
                   Copy
                 </button>
               </div>
-              <div className="max-h-36 overflow-y-auto rounded-xl bg-white/4 p-3 text-sm leading-relaxed text-foreground/90 ring-1 ring-white/6">
-                {g.final_prompt}
+              <div className="rounded-xl bg-white/4 p-3 ring-1 ring-white/6">
+                {sourceImageUrls.length > 0 && (
+                  <div className="mb-2.5 flex flex-wrap gap-2">
+                    {sourceImageUrls.map((url, i) => {
+                      const preview = previewFor(url);
+                      const clickable =
+                        i === 0 && sourceGenerationId && onOpenSource;
+                      return (
+                        <button
+                          key={`${url}-${i}`}
+                          type="button"
+                          title={
+                            clickable
+                              ? "Open source image"
+                              : url.startsWith("asset://")
+                                ? "Verified asset"
+                                : undefined
+                          }
+                          onClick={() => {
+                            if (clickable) onOpenSource(sourceGenerationId);
+                          }}
+                          className={cn(
+                            "block overflow-hidden rounded-lg ring-1 ring-white/10",
+                            clickable
+                              ? "transition hover:ring-gold/50"
+                              : "cursor-default"
+                          )}
+                        >
+                          {preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={preview}
+                              alt={`Source image ${i + 1}`}
+                              className="size-16 object-cover"
+                            />
+                          ) : (
+                            <span className="flex size-16 items-center justify-center px-1 text-center text-[10px] leading-tight text-muted-foreground">
+                              Asset
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="max-h-36 overflow-y-auto text-sm leading-relaxed text-foreground/90">
+                  {g.final_prompt}
+                </div>
               </div>
             </section>
-
-            {sourceImageUrls.length > 0 && (
-              <section className="mt-5">
-                <h3 className="mb-2 text-sm font-medium">
-                  {sourceImageUrls.length === 1
-                    ? "Source image"
-                    : "Source images"}
-                </h3>
-                <div className="flex flex-wrap gap-2">
-                  {sourceImageUrls.map((url, i) => {
-                    const clickable =
-                      i === 0 && sourceGenerationId && onOpenSource;
-                    return (
-                      <button
-                        key={`${url}-${i}`}
-                        type="button"
-                        title={clickable ? "Open source image" : undefined}
-                        onClick={() => {
-                          if (clickable) onOpenSource(sourceGenerationId);
-                        }}
-                        className={cn(
-                          "block overflow-hidden rounded-xl ring-1 ring-white/10",
-                          clickable
-                            ? "transition hover:ring-gold/50"
-                            : "cursor-default"
-                        )}
-                      >
-                        {url.startsWith("asset://") ? (
-                          <span
-                            title={url}
-                            className="flex h-24 w-28 items-center justify-center px-2 text-center text-[11px] text-muted-foreground"
-                          >
-                            Verified asset
-                          </span>
-                        ) : (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={url}
-                            alt={`Source image ${i + 1}`}
-                            className="h-24 w-auto object-cover"
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <p className="mt-1.5 text-[11px] text-muted-foreground">
-                  {sourceImageUrls.length === 1
-                    ? "This clip was animated from a still (image → video)"
-                    : "These references were blended into the clip"}
-                </p>
-              </section>
-            )}
 
             {sourceVideoUrl && (
               <section className="mt-5">

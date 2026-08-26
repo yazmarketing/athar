@@ -1580,6 +1580,38 @@ export function Studio() {
     []
   );
 
+  const hydrateGeneration = async (id: string, kind: "video" | "image") => {
+    try {
+      const res = await fetch(`/api/generations/${id}`);
+      const json = await res.json();
+      if (!res.ok || !json.generation) return;
+      const full = json.generation as GenerationRecord;
+      // List cards omit input_payload for speed. Merge it back without
+      // wiping creator / rating fields that only the list query joins.
+      const merge = (t: GenerationRecord) => ({
+        ...t,
+        ...full,
+        creator_name: t.creator_name ?? full.creator_name,
+        creator_email: t.creator_email ?? full.creator_email,
+        my_rating: t.my_rating,
+        my_reasons: t.my_reasons,
+        my_note: t.my_note,
+      });
+      if (kind === "video") {
+        setVideoDetailTarget((t) => (t?.id === id ? merge(t) : t));
+      } else {
+        setDetailTarget((t) => (t?.id === id ? merge(t) : t));
+      }
+      setGenerations((prev) =>
+        prev
+          ? prev.map((row) => (row.id === id ? merge(row) : row))
+          : prev
+      );
+    } catch {
+      /* keep the slim library copy */
+    }
+  };
+
   const openDetail = (g: GenerationRecord) => {
     if (!g.output_url) {
       toast.message("No output yet");
@@ -1588,10 +1620,12 @@ export function Studio() {
     if (isVideo(g)) {
       setDetailTarget(null);
       setVideoDetailTarget(g);
+      void hydrateGeneration(g.id, "video");
       return;
     }
     setVideoDetailTarget(null);
     setDetailTarget(g);
+    void hydrateGeneration(g.id, "image");
   };
 
   const openAssistant = (g?: GenerationRecord | null) => {
@@ -2054,6 +2088,14 @@ export function Studio() {
     }
   }, []);
 
+  const attachedPreview = (url: string) => {
+    if (!url.startsWith("asset://")) return url;
+    return (
+      libraryAssets?.find((a) => a.id === url.slice("asset://".length))?.url ??
+      null
+    );
+  };
+
   // The registered-asset list loads lazily — typing @ in the video prompt
   // is the moment it becomes visible, so fetch it then.
   useEffect(() => {
@@ -2162,6 +2204,25 @@ export function Studio() {
   // Higgsfield-style Reuse: load this clip's prompt, settings, and attached
   // media into Create so the user can edit, then Generate themselves.
   const reuseGeneration = (g: GenerationRecord) => {
+    void (async () => {
+      let full = g;
+      const slim =
+        !g.input_payload ||
+        Object.keys(g.input_payload as object).length === 0;
+      if (slim) {
+        try {
+          const res = await fetch(`/api/generations/${g.id}`);
+          const json = await res.json();
+          if (res.ok && json.generation) full = json.generation;
+        } catch {
+          /* use the library card copy */
+        }
+      }
+      applyReuse(full);
+    })();
+  };
+
+  const applyReuse = (g: GenerationRecord) => {
     const inputs = promptInputsOf(g);
     const payload = g.input_payload as {
       source_generation_id?: string;
@@ -2207,13 +2268,19 @@ export function Studio() {
         ? payload.source_image_urls
         : payload.source_image_url
           ? [payload.source_image_url]
-          : [];
+          : (g.reference_urls ?? []);
       setVideoSources(
         imageUrls.map((url, i) => ({
           url,
           generationId: i === 0 ? (payload.source_generation_id ?? null) : null,
         }))
       );
+      if (
+        imageUrls.some((url) => url.startsWith("asset://")) &&
+        libraryAssets === null
+      ) {
+        void loadAssets();
+      }
       setVideoEditSource(
         payload.source_video_url
           ? {
@@ -3032,8 +3099,7 @@ export function Studio() {
                     return;
                   }
                 }
-                if (isVideo(g)) setVideoDetailTarget(g);
-                else setDetailTarget(g);
+                openDetail(g);
               })();
             }}
           />
@@ -3723,11 +3789,7 @@ export function Studio() {
                                       (r) => r.id === job.generation_id
                                     );
                                     if (g) {
-                                      if (isImageJob(job)) {
-                                        setDetailTarget(g);
-                                      } else {
-                                        setVideoDetailTarget(g);
-                                      }
+                                      openDetail(g);
                                     } else {
                                       setView("library");
                                     }
@@ -4398,22 +4460,24 @@ export function Studio() {
               {mode === "t2v" && videoSources.length > 0 && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <div className="flex max-w-[60%] flex-wrap items-center gap-1.5">
-                    {videoSources.map((s, i) => (
+                    {videoSources.map((s, i) => {
+                      const preview = attachedPreview(s.url);
+                      return (
                       <div key={`${s.url}-${i}`} className="relative">
-                        {s.url.startsWith("asset://") ? (
+                        {preview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={preview}
+                            alt={`Attached image ${i + 1}`}
+                            className="size-11 rounded-lg object-cover ring-1 ring-white/10"
+                          />
+                        ) : (
                           <span
                             title={s.url}
                             className="flex size-11 items-center justify-center rounded-lg bg-white/5 ring-1 ring-gold/30"
                           >
                             <ShieldCheck className="size-4 text-gold" />
                           </span>
-                        ) : (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={s.url}
-                            alt={`Attached image ${i + 1}`}
-                            className="size-11 rounded-lg object-cover ring-1 ring-white/10"
-                          />
                         )}
                         <span className="pointer-events-none absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[9px] leading-4 text-white">
                           {i + 1}
@@ -4431,7 +4495,8 @@ export function Studio() {
                           <X className="size-2.5" />
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">
