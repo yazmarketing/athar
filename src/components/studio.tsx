@@ -1144,7 +1144,11 @@ export function Studio() {
         /** Override the dock's attached images (e.g. Reproduce lineage) */
         sourceImages?: { url: string; generationId: string | null }[];
         /** Override the dock's attached source video; null = force none */
-        sourceVideo?: { url: string; generationId: string | null } | null;
+        sourceVideo?: {
+          url: string;
+          generationId: string | null;
+          durationS?: number | null;
+        } | null;
         /** Stay on Home/Library instead of jumping to Create */
         stayOnView?: boolean;
         /** Explicit image-model override — a Google model id or "seedream". */
