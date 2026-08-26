@@ -2,6 +2,7 @@ import "server-only";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
 import { parsePlannerJson } from "@/lib/shot-plan";
+import { parseTranslationLines } from "@/lib/transcript-translate";
 import { formatClock, speakerLabel } from "@/lib/subtitles";
 import type {
   TranscriptInsights,
@@ -263,52 +264,83 @@ export async function answerQuestion(
  *
  * Batched and index-keyed rather than one call per line: subtitle timing is
  * already fixed, so the only job is to return exactly as many lines as went
- * in, in the same order.
+ * in, in the same order. Missing lines get a second pass instead of being
+ * left blank — that was dropping a couple of words/lines on a typical file.
  */
 export async function translateSegments(
   segments: TranscriptSegmentRecord[],
   targetLanguage: string,
-  batchSize = 40
+  batchSize = 20
 ): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   const usable = segments.filter((s) => s.text.trim());
 
+  const translateBatch = async (batch: TranscriptSegmentRecord[]) => {
+    const numbered = batch
+      .map((s, n) => `${n + 1}. ${s.text.trim()}`)
+      .join("\n");
+    const messages: {
+      role: "system" | "user";
+      content: string;
+    }[] = [
+      {
+        role: "system",
+        content: [
+          `Translate each numbered line into ${targetLanguage}.`,
+          "These are subtitles. Translate every word — names, numbers, and",
+          "filler included. Do not drop, summarise, merge, or split lines.",
+          `Return ONLY JSON: {"lines":[{"n":1,"text":"…"}]} with exactly ${batch.length}`,
+          "entries, numbering from 1, in the same order.",
+        ].join(" "),
+      },
+      { role: "user", content: numbered },
+    ];
+    const raw = await chat({
+      messages,
+      temperature: 0.1,
+      maxTokens: 4000,
+    });
+    return parseTranslationLines(raw, batch.length);
+  };
+
+  const apply = (
+    batch: TranscriptSegmentRecord[],
+    lines: (string | null)[]
+  ) => {
+    batch.forEach((segment, i) => {
+      if (lines[i]) out[segment.id] = lines[i]!;
+    });
+  };
+
   for (let i = 0; i < usable.length; i += batchSize) {
     const batch = usable.slice(i, i + batchSize);
-    const numbered = batch.map((s, n) => `${n + 1}. ${s.text.trim()}`).join("\n");
-    const raw = await chat({
-      messages: [
-        {
-          role: "system",
-          content: [
-            `Translate each numbered line into ${targetLanguage}.`,
-            "These are subtitles: keep each line roughly the same length as the",
-            "original, keep the tone, and do not merge or split lines.",
-            'Return ONLY JSON: {"lines":[{"n":1,"text":"…"}]} with one entry per',
-            "input line, same numbering.",
-          ].join(" "),
-        },
-        { role: "user", content: numbered },
-      ],
-      temperature: 0.2,
-      maxTokens: 2400,
-    });
-
+    let lines: (string | null)[] = Array(batch.length).fill(null);
     try {
-      const parsed = parsePlannerJson(raw) as { lines?: unknown };
-      const lines = Array.isArray(parsed.lines) ? parsed.lines : [];
-      for (const line of lines) {
-        const l = line as Record<string, unknown>;
-        const index = Number(l.n) - 1;
-        const text = asString(l.text);
-        if (batch[index] && text) out[batch[index].id] = text;
-      }
+      lines = await translateBatch(batch);
     } catch {
-      // Skip the batch rather than fail the whole file — a gap in the
-      // translation is recoverable, a lost hour of work is not.
+      /* retry below */
+    }
+    if (lines.some((line) => !line)) {
+      try {
+        const retry = await translateBatch(batch);
+        lines = lines.map((line, n) => line || retry[n]);
+      } catch {
+        /* keep whatever the first pass filled */
+      }
+    }
+    apply(batch, lines);
+  }
+
+  const missing = usable.filter((s) => !out[s.id]);
+  for (let i = 0; i < missing.length; i += 5) {
+    const batch = missing.slice(i, i + 5);
+    try {
+      apply(batch, await translateBatch(batch));
+    } catch {
       continue;
     }
   }
+
   return out;
 }
 
