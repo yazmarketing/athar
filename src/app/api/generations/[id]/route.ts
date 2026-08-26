@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth-session";
 import { requireCreator } from "@/lib/authz";
 import { logAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
-import { ensureFavoriteColumn } from "@/lib/generations-store";
+import { ensureFavoriteColumn, getGeneration } from "@/lib/generations-store";
 import { projectExists } from "@/lib/projects";
 
 
@@ -14,6 +14,27 @@ const UUID_RE =
 
 function isUuid(id: string) {
   return UUID_RE.test(id);
+}
+
+export async function GET(_req: NextRequest, { params }: Params) {
+  try {
+    const sessionUser = await getSessionUser();
+    if (!sessionUser?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const { id } = await params;
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+    const generation = await getGeneration(id);
+    if (!generation) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    return NextResponse.json({ generation });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Lookup failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {

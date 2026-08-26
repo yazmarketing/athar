@@ -40,9 +40,11 @@ export async function GET(req: NextRequest) {
     if (clientId) {
       values.push(clientId);
       // Generations have no client column — they inherit it from their
-      // project, so unfiled work is correctly excluded from a client view.
+      // project. Unfiled rows (no project) used to vanish whenever a
+      // client was selected, which is why a finished video could notify
+      // and still leave the Library empty.
       where.push(
-        `g.project_id in (select id from projects where client_id = $${values.length})`
+        `(g.project_id in (select id from projects where client_id = $${values.length}) or g.project_id is null)`
       );
     }
     if (mineOnly) {
