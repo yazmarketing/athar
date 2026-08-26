@@ -302,6 +302,48 @@ export const TEMPO_PRESETS: DirectorPreset[] = [
   },
 ];
 
+/**
+ * Montage pacing — Higgsfield's "Montage Pacing" as prompt language. The
+ * model decides the actual cuts; these fragments push it toward a rhythm.
+ * Distinct from TEMPO (motion speed inside a shot): pacing is about editing.
+ */
+export const PACING_PRESETS: DirectorPreset[] = [
+  RAW,
+  {
+    id: "single_shot",
+    label: "Single shot",
+    description: "One continuous take. No cuts.",
+    fragment:
+      "one continuous unbroken take, no cuts, the camera and subject move inside a single shot",
+    negative: "jump cuts, montage, shot changes",
+  },
+  {
+    id: "calm",
+    label: "Calm",
+    description: "A few long takes, gentle cuts.",
+    fragment:
+      "edited scene with a few long held takes, gentle unhurried cuts, breathing room between beats",
+  },
+  {
+    id: "dynamic",
+    label: "Dynamic",
+    description: "Purposeful cuts, varied angles.",
+    fragment:
+      "edited montage with purposeful cuts every few seconds, varied shot sizes and angles, confident editing rhythm",
+  },
+  {
+    id: "chaotic",
+    label: "Chaotic",
+    description: "Rapid cuts, restless energy.",
+    fragment:
+      "fast-cut montage, rapid cuts every one to two seconds, restless high-energy rhythm, many angles in quick succession",
+    negative: "static locked frame, single continuous take, slow pacing",
+  },
+];
+
+/** Pacing ids that ask for an edited, multi-shot result. */
+export const MONTAGE_PACING_IDS = ["calm", "dynamic", "chaotic"];
+
 export const DEFAULT_DIRECTOR_ID = "raw";
 
 /** Seedance follows these bans more reliably than 4K / 60fps prompt tokens. */
@@ -310,6 +352,13 @@ export const SEEDANCE_VIDEO_NEGATIVES =
 
 export const DIRECTOR_CONSTRAINT =
   "single coherent cinematic shot, keep character identity and wardrobe consistent, at most two camera movements, no jump cuts";
+
+/**
+ * Swapped in for DIRECTOR_CONSTRAINT when a montage pacing is active — the
+ * default constraint bans exactly the cuts the pacing asks for.
+ */
+export const MONTAGE_CONSTRAINT =
+  "edited multi-shot scene, keep character identity, wardrobe and location consistent across every cut";
 
 function resolvePreset(
   list: DirectorPreset[],
@@ -339,6 +388,9 @@ export function resolveEra(id?: string | null) {
 export function resolveTempo(id?: string | null) {
   return resolvePreset(TEMPO_PRESETS, id);
 }
+export function resolvePacing(id?: string | null) {
+  return resolvePreset(PACING_PRESETS, id);
+}
 
 export type DirectorInputs = {
   genreId?: string | null;
@@ -348,6 +400,7 @@ export type DirectorInputs = {
   emotionId?: string | null;
   eraId?: string | null;
   tempoId?: string | null;
+  pacingId?: string | null;
 };
 
 export function compileDirector(inputs: DirectorInputs): {
@@ -356,6 +409,7 @@ export function compileDirector(inputs: DirectorInputs): {
   activeCount: number;
   summary: string;
 } {
+  const pacing = resolvePacing(inputs.pacingId);
   const picks = [
     resolveShot(inputs.shotId),
     resolveLightLook(inputs.lightLookId),
@@ -364,10 +418,14 @@ export function compileDirector(inputs: DirectorInputs): {
     resolveEmotion(inputs.emotionId),
     resolveEra(inputs.eraId),
     resolveTempo(inputs.tempoId),
+    pacing,
   ];
   const active = picks.filter((p) => p.id !== "raw" && p.fragment);
   const fragments = active.map((p) => p.fragment);
-  if (active.length > 0) fragments.push(DIRECTOR_CONSTRAINT);
+  const wantsMontage = MONTAGE_PACING_IDS.includes(pacing.id);
+  if (active.length > 0) {
+    fragments.push(wantsMontage ? MONTAGE_CONSTRAINT : DIRECTOR_CONSTRAINT);
+  }
   const negatives = active
     .map((p) => p.negative)
     .filter((n): n is string => Boolean(n));

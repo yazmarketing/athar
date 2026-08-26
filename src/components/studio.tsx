@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
+  Aperture,
   ArrowUpToLine,
   AudioLines,
   BarChart3,
@@ -53,6 +54,12 @@ import {
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { uploadImageFile } from "@/lib/upload-image";
 import { isAudioFile, uploadAudioFile } from "@/lib/upload-audio";
+import {
+  ChipPopover,
+  EmotionWheel,
+  PacingCards,
+  PresetList,
+} from "@/components/cinema-studio/controls";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -104,6 +111,18 @@ import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
+import {
+  DEFAULT_DIRECTOR_ID,
+  EMOTION_PRESETS,
+  ERA_PRESETS,
+  GENRE_PRESETS,
+  GRADE_PRESETS,
+  LIGHT_LOOK_PRESETS,
+  MONTAGE_PACING_IDS,
+  PACING_PRESETS,
+  SHOT_PRESETS,
+  TEMPO_PRESETS,
+} from "@/config/director";
 import {
   isImageJob,
   type AspectRatio,
@@ -167,6 +186,46 @@ const MAX_AUDIO_CLIPS = 10;
 
 /** Mention tokens the prompt box tints — split() keeps them via the capture. */
 const PROMPT_TOKEN_RE = /(@(?:image|video|audio)\d+\b)/gi;
+
+/**
+ * Overlay and textarea must share this exactly. The Textarea primitive
+ * ships `md:text-sm`, which is 14px — one pixel off the overlay's 15px
+ * is enough for the caret to sit on the second-last letter.
+ */
+const PROMPT_FIELD_TYPE =
+  "px-3 py-2.5 font-sans text-[15px] leading-6 break-words whitespace-pre-wrap md:text-[15px]";
+
+
+/** Cinema Studio director picks (video dock). Camera movement stays in `camera`. */
+type CinemaControls = {
+  genreId: string;
+  eraId: string;
+  shotId: string;
+  gradeId: string;
+  lightLookId: string;
+  emotionId: string;
+  tempoId: string;
+  pacingId: string;
+};
+
+const CINEMA_DEFAULTS: CinemaControls = {
+  genreId: DEFAULT_DIRECTOR_ID,
+  eraId: DEFAULT_DIRECTOR_ID,
+  shotId: DEFAULT_DIRECTOR_ID,
+  gradeId: DEFAULT_DIRECTOR_ID,
+  lightLookId: DEFAULT_DIRECTOR_ID,
+  emotionId: DEFAULT_DIRECTOR_ID,
+  tempoId: DEFAULT_DIRECTOR_ID,
+  pacingId: DEFAULT_DIRECTOR_ID,
+};
+
+function presetLabel(
+  presets: { id: string; label: string }[],
+  id: string
+): string {
+  const p = presets.find((x) => x.id === id);
+  return !p || p.id === "raw" ? "Auto" : p.label;
+}
 const NOTIFICATIONS_STORAGE_KEY = "yaz-motion-notifications";
 
 /**
@@ -315,6 +374,7 @@ export function Studio() {
     url: string;
     generationId: string | null;
     intent: "edit" | "extend" | "vary";
+    durationS?: number | null;
   } | null>(null);
   const [uploadingVideoSource, setUploadingVideoSource] = useState(false);
   // Lip-sync reference audio (Seedance 2.5) — url + Whisper transcript
@@ -352,6 +412,9 @@ export function Studio() {
   /** Favourites are marked on cards; this is how you actually get to them. */
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  /** Cinema Studio: the director chips row in the video dock. */
+  const [cinemaOn, setCinemaOn] = useState(false);
+  const [cinema, setCinema] = useState<CinemaControls>(CINEMA_DEFAULTS);
   const [editorOpen, setEditorOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [referenceUrls, setReferenceUrls] = useState<string[]>([]);
@@ -1122,6 +1185,7 @@ export function Studio() {
               activeMode === "t2i" ? (opts.resolution ?? resolution) : undefined,
             durationS:
               activeMode === "t2v" ? (opts.durationS ?? durationS) : undefined,
+            sourceDurationS: activeVideoEditSource?.durationS ?? undefined,
             videoResolution:
               activeMode === "t2v" ? videoResolution : undefined,
             seed: opts.seed,
@@ -1558,6 +1622,7 @@ export function Studio() {
         url: g.output_url,
         generationId: g.id,
         intent: "vary",
+        durationS: g.duration_s ?? null,
       });
       toast.message(
         "Video Generator ready"
@@ -1734,6 +1799,23 @@ export function Studio() {
     }
   };
 
+  /** How many Cinema Studio picks are set — the badge on the toggle chip. */
+  const activeCinemaCount = useMemo(
+    () =>
+      Object.values(cinema).filter((id) => id !== DEFAULT_DIRECTOR_ID).length +
+      (camera !== DEFAULT_CAMERA_ID ? 1 : 0),
+    [cinema, camera]
+  );
+
+  /** A montage needs room to cut — raise short durations when one is picked. */
+  const setCinemaPacing = (pacingId: string) => {
+    setCinema((c) => ({ ...c, pacingId }));
+    if (MONTAGE_PACING_IDS.includes(pacingId) && durationS < 15) {
+      setDurationS(15);
+      toast.message("Duration raised to 15s for a multi-cut scene");
+    }
+  };
+
   const buildPromptInputs = (): PromptInputs => ({
     subject,
     action,
@@ -1744,6 +1826,7 @@ export function Studio() {
     styleTokens: activeClientStyle?.positive,
     styleNegative: activeClientStyle?.negative || undefined,
     cameraId: mode === "t2v" ? camera : undefined,
+    ...(mode === "t2v" && cinemaOn ? cinema : {}),
     // Positional, matching the badges on the thumbnails, so the server can
     // turn "@image2" into "reference image 2 (Fatima)".
     referenceLabels: mentionTargets.map((t) => t.label),
@@ -2860,16 +2943,40 @@ export function Studio() {
             }
             onClearAll={() => setNotifications([])}
             onItemClick={(n) => {
-              if (!n.generationId) return;
-              const g = (generations ?? []).find(
-                (r) => r.id === n.generationId
-              );
-              if (!g) {
-                setView("library");
-                return;
-              }
-              if (isVideo(g)) setVideoDetailTarget(g);
-              else setDetailTarget(g);
+              void (async () => {
+                if (!n.generationId) {
+                  toast.error(
+                    "This notification has no library item — it may be from the other database."
+                  );
+                  return;
+                }
+                let g = (generations ?? []).find(
+                  (r) => r.id === n.generationId
+                );
+                if (!g) {
+                  try {
+                    const res = await fetch(
+                      `/api/generations/${n.generationId}`
+                    );
+                    const json = await readJson<{
+                      generation?: GenerationRecord;
+                      error?: string;
+                    }>(res);
+                    if (!res.ok || !json.generation) {
+                      toast.error(
+                        "This render isn't in the local library. It was probably saved to the live database."
+                      );
+                      return;
+                    }
+                    g = json.generation;
+                  } catch {
+                    toast.error("Could not open that render");
+                    return;
+                  }
+                }
+                if (isVideo(g)) setVideoDetailTarget(g);
+                else setDetailTarget(g);
+              })();
             }}
           />
           </span>
@@ -3007,6 +3114,7 @@ export function Studio() {
                 url: g.output_url,
                 generationId: g.id,
                 intent,
+                durationS: g.duration_s ?? null,
               });
               toast.message(
                 intent === "extend"
@@ -3826,11 +3934,28 @@ export function Studio() {
                           <p className="athar-headline">
                             {activeProject
                               ? `Nothing in ${activeProject.name} yet`
-                              : "Nothing here yet"}
+                              : activeClientId
+                                ? "Nothing tagged to this client yet"
+                                : "Nothing here yet"}
                           </p>
                           <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                            Generate an image or video and it lands here.
+                            {activeProject
+                              ? "New work you generate is tagged to this project."
+                              : "Generate an image or video and it lands here."}
                           </p>
+                          {(activeClientId || ownerFilter === "mine") && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onActiveClientChange(null);
+                                setActiveProjectId(null);
+                                setOwnerFilter("all");
+                              }}
+                              className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                            >
+                              Show everything
+                            </button>
+                          )}
                         </>
                       ) : (
                         <>
@@ -4229,10 +4354,10 @@ export function Studio() {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {videoEditSource.intent === "extend"
-                        ? "Continue @video1"
+                        ? "Continue @video1 — output stays the source length"
                         : videoEditSource.intent === "vary"
-                          ? "Same scene, new take"
-                          : "Change @video1"}
+                          ? "Same scene, new take — same length"
+                          : "Change @video1 — same length as the source"}
                     </p>
                   </div>
                   <button
@@ -4398,6 +4523,159 @@ export function Studio() {
                 </div>
               )}
 
+            {/* Cinema Studio — the director chips row (Higgsfield-style).
+                Wraps instead of scrolling so the upward popovers aren't
+                clipped by an overflow container. */}
+            {!generating && mode === "t2v" && cinemaOn && (
+              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
+                <ChipPopover
+                  label="Film setup"
+                  value={
+                    cinema.genreId !== "raw" || cinema.eraId !== "raw"
+                      ? [
+                          presetLabel(GENRE_PRESETS, cinema.genreId),
+                          presetLabel(ERA_PRESETS, cinema.eraId),
+                        ]
+                          .filter((v) => v !== "Auto")
+                          .join(" · ")
+                      : "Auto"
+                  }
+                  active={cinema.genreId !== "raw" || cinema.eraId !== "raw"}
+                >
+                  <PresetList
+                    title="Genre"
+                    presets={GENRE_PRESETS}
+                    value={cinema.genreId}
+                    onChange={(genreId) =>
+                      setCinema((c) => ({ ...c, genreId }))
+                    }
+                  />
+                  <PresetList
+                    title="Era"
+                    presets={ERA_PRESETS}
+                    value={cinema.eraId}
+                    onChange={(eraId) => setCinema((c) => ({ ...c, eraId }))}
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Camera"
+                  value={
+                    camera !== "raw" || cinema.shotId !== "raw"
+                      ? [
+                          presetLabel(CAMERA_PRESETS, camera),
+                          presetLabel(SHOT_PRESETS, cinema.shotId),
+                        ]
+                          .filter((v) => v !== "Auto")
+                          .join(" · ")
+                      : "Auto"
+                  }
+                  active={camera !== "raw" || cinema.shotId !== "raw"}
+                >
+                  <PresetList
+                    title="Movement"
+                    presets={CAMERA_PRESETS}
+                    value={camera}
+                    onChange={setCamera}
+                  />
+                  <PresetList
+                    title="Framing"
+                    presets={SHOT_PRESETS}
+                    value={cinema.shotId}
+                    onChange={(shotId) => setCinema((c) => ({ ...c, shotId }))}
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Color palette"
+                  value={presetLabel(GRADE_PRESETS, cinema.gradeId)}
+                  active={cinema.gradeId !== "raw"}
+                  width="w-72"
+                >
+                  <PresetList
+                    presets={GRADE_PRESETS}
+                    value={cinema.gradeId}
+                    onChange={(gradeId) => setCinema((c) => ({ ...c, gradeId }))}
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Lighting"
+                  value={presetLabel(LIGHT_LOOK_PRESETS, cinema.lightLookId)}
+                  active={cinema.lightLookId !== "raw"}
+                  width="w-72"
+                >
+                  <PresetList
+                    presets={LIGHT_LOOK_PRESETS}
+                    value={cinema.lightLookId}
+                    onChange={(lightLookId) =>
+                      setCinema((c) => ({ ...c, lightLookId }))
+                    }
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Emotion"
+                  value={presetLabel(EMOTION_PRESETS, cinema.emotionId)}
+                  active={cinema.emotionId !== "raw"}
+                  width="w-80"
+                >
+                  <p className="px-2 pt-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Emotion wheel
+                  </p>
+                  <EmotionWheel
+                    presets={EMOTION_PRESETS}
+                    value={cinema.emotionId}
+                    onChange={(emotionId) =>
+                      setCinema((c) => ({ ...c, emotionId }))
+                    }
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Pacing"
+                  value={presetLabel(PACING_PRESETS, cinema.pacingId)}
+                  active={cinema.pacingId !== "raw"}
+                  width="w-80"
+                >
+                  <p className="px-2 pt-1 pb-1.5 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                    Montage pacing
+                  </p>
+                  <PacingCards
+                    presets={PACING_PRESETS}
+                    value={cinema.pacingId}
+                    onChange={setCinemaPacing}
+                  />
+                </ChipPopover>
+
+                <ChipPopover
+                  label="Tempo"
+                  value={presetLabel(TEMPO_PRESETS, cinema.tempoId)}
+                  active={cinema.tempoId !== "raw"}
+                  width="w-72"
+                >
+                  <PresetList
+                    presets={TEMPO_PRESETS}
+                    value={cinema.tempoId}
+                    onChange={(tempoId) => setCinema((c) => ({ ...c, tempoId }))}
+                  />
+                </ChipPopover>
+
+                {(activeCinemaCount > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCinema(CINEMA_DEFAULTS);
+                      setCamera(DEFAULT_CAMERA_ID);
+                    }}
+                    className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] text-muted-foreground transition hover:text-foreground"
+                  >
+                    <X className="size-3" /> Reset
+                  </button>
+                )}
+              </div>
+            )}
+
             {generating ? (
               <div className="flex items-center gap-3 px-1 py-3">
                 <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
@@ -4426,7 +4704,10 @@ export function Studio() {
               <div
                 ref={promptHighlightRef}
                 aria-hidden
-                className="pointer-events-none absolute inset-0 overflow-hidden px-3 py-2.5 text-[15px] leading-6 break-words whitespace-pre-wrap text-foreground"
+                className={cn(
+                  "pointer-events-none absolute inset-0 overflow-hidden text-foreground",
+                  PROMPT_FIELD_TYPE
+                )}
               >
                 {promptSegments.map((seg, i) =>
                   i % 2 === 1 ? (
@@ -4512,7 +4793,10 @@ export function Studio() {
                   if (el) el.scrollTop = e.currentTarget.scrollTop;
                 }}
                 rows={6}
-                className="field-sizing-fixed relative h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent px-3 py-2.5 text-[15px] leading-6 text-transparent caret-foreground shadow-none focus-visible:ring-0"
+                className={cn(
+                  "field-sizing-fixed relative block h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent text-white shadow-none caret-white [-webkit-text-fill-color:transparent] focus-visible:ring-0",
+                  PROMPT_FIELD_TYPE
+                )}
               />
 
             {/* Inside this wrapper so overflow-y-auto on the dock cannot
@@ -4919,6 +5203,33 @@ export function Studio() {
               )}
 
               {mode === "t2v" && (
+                <button
+                  type="button"
+                  onClick={() => setCinemaOn((o) => !o)}
+                  aria-pressed={cinemaOn}
+                  title="Cinema Studio — direct genre, camera, colour, light, emotion and pacing"
+                  className={cn(
+                    "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
+                    cinemaOn
+                      ? "border-gold bg-gold/15 text-foreground"
+                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <Aperture
+                    className={cn("size-3.5", cinemaOn && "text-gold")}
+                  />
+                  Cinema Studio
+                  {cinemaOn && activeCinemaCount > 0 && (
+                    <span className="rounded-full bg-gold/20 px-1.5 text-[10px] text-gold">
+                      {activeCinemaCount}
+                    </span>
+                  )}
+                </button>
+              )}
+
+              {/* The plain camera pick lives inside the Cinema chips when the
+                  studio is on — two controls writing one value reads as a bug. */}
+              {mode === "t2v" && !cinemaOn && (
                 <Select value={camera} onValueChange={setCamera}>
                   <SelectTrigger
                     title="Camera move applied to the shot"
@@ -4981,7 +5292,16 @@ export function Studio() {
                   </Select>
                 )}
 
-                {mode === "t2v" ? (
+                {mode === "t2v" && videoEditSource ? (
+                  <span
+                    title="Seedance keeps the source clip's length when you edit a video"
+                    className="inline-flex h-8 items-center rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
+                  >
+                    {videoEditSource.durationS
+                      ? `${Math.round(Number(videoEditSource.durationS))}s source`
+                      : "Same as source"}
+                  </span>
+                ) : mode === "t2v" ? (
                     <Select
                       value={String(durationS)}
                       onValueChange={(v) => setDurationS(Number(v))}
@@ -5064,7 +5384,9 @@ export function Studio() {
               title={
                 mode === "t2i"
                   ? `Estimate for ${numOutputs} image${numOutputs === 1 ? "" : "s"} at these settings`
-                  : `Estimate for a ${durationS}s clip at these settings`
+                  : videoEditSource
+                    ? "Estimate for a clip the same length as the source"
+                    : `Estimate for a ${durationS}s clip at these settings`
               }
               className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
             >

@@ -37,6 +37,8 @@ export type PromptInputs = {
   emotionId?: string;
   eraId?: string;
   tempoId?: string;
+  /** Montage pacing (Cinema Studio) — cut rhythm as prompt language. */
+  pacingId?: string;
   /**
    * Names for the attached references, positionally. Lets `@image2` in the
    * prompt expand to "reference image 2 (Fatima)" instead of a bare number.
@@ -83,6 +85,8 @@ export type GenerateRequest = {
    * edit/extend). The prompt addresses it as @video1.
    */
   sourceVideoUrl?: string | null;
+  /** Length of the attached source clip. Seedance output follows this. */
+  sourceDurationS?: number | null;
   /** Lineage: the generation that produced the attached source video */
   sourceVideoGenerationId?: string | null;
   /**
@@ -198,6 +202,8 @@ export type ProjectRecord = {
   name: string;
   client: string | null;
   client_id: string | null;
+  /** Subfolders: the parent project, or null for a top-level project. */
+  parent_id?: string | null;
   created_by: string | null;
   archived_at: string | null;
   created_at: string;

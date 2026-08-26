@@ -170,6 +170,28 @@ describe("buildPrompt", () => {
     expect(negativePrompt).not.toContain("face distortion");
     expect(negativePrompt).not.toContain("frame skipping");
   });
+
+  it("montage pacing flows through to the final prompt with the montage constraint", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "a chase through the souq",
+      cameraId: "raw",
+      pacingId: "chaotic",
+    });
+    expect(finalPrompt).toContain("fast-cut montage");
+    expect(finalPrompt).toContain("consistent across every cut");
+    expect(finalPrompt).not.toContain("no jump cuts");
+  });
+
+  it("single-shot pacing keeps the classic constraint", () => {
+    const { finalPrompt, negativePrompt } = buildPrompt({
+      subject: "a slow walk along the corniche",
+      cameraId: "raw",
+      pacingId: "single_shot",
+    });
+    expect(finalPrompt).toContain("one continuous unbroken take");
+    expect(finalPrompt).toContain("no jump cuts");
+    expect(negativePrompt).toContain("jump cuts");
+  });
 });
 
 describe("buildPrompt lip-sync dialogue", () => {

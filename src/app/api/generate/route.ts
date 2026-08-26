@@ -337,10 +337,17 @@ export async function POST(req: NextRequest) {
       : sourceImageUrls.length
         ? resolveModel("i2v", editTier)
         : primary;
-    const videoDuration = Math.min(
-      Math.max(durationS, 4),
-      videoModel.maxDuration || 30
-    );
+    // Reference-video tasks send duration -1 to Seedance, so the picker
+    // value is ignored. Record the source length instead of a fake 15s.
+    const sourceDuration = Number(body.sourceDurationS);
+    const videoDuration = sourceVideoUrl
+      ? Number.isFinite(sourceDuration) && sourceDuration > 0
+        ? sourceDuration
+        : null
+      : Math.min(
+          Math.max(durationS, 4),
+          videoModel.maxDuration || 30
+        );
     try {
       const job = await createJob({
         kind,
