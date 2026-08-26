@@ -6,12 +6,20 @@ import {
   CircleDot,
   FileAudio,
   Film,
+  Link2,
   Loader2,
   Search,
   Trash2,
   Upload,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -94,10 +102,12 @@ export function Transcribe({
   /** What the box under the drop zone is doing right now. */
   const [job, setJob] = useState<{
     name: string;
-    stage: "reading" | "uploading" | "transcribing";
+    stage: "fetching" | "reading" | "uploading" | "transcribing";
     percent: number;
   } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
 
@@ -331,6 +341,60 @@ export function Transcribe({
     }
   };
 
+  /**
+   * Import from a link: the server fetches the URL (Dropbox and Google Drive
+   * share links included) and streams the file here, where it joins the
+   * normal flow — audio extracted in the browser, then transcribed.
+   */
+  const importFromLink = async () => {
+    const raw = importUrl.trim();
+    if (!raw) return;
+    // Close the dialog right away — progress shows in the drop zone behind it.
+    setImportOpen(false);
+    const shortName = raw.replace(/^https?:\/\//, "").slice(0, 60);
+    setJob({ name: shortName, stage: "fetching", percent: 0 });
+    try {
+      const res = await fetch("/api/transcripts/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: raw }),
+      });
+      if (!res.ok || !res.body) {
+        const json = await readJson<{ error?: string }>(res);
+        throw new Error(json.error ?? "Could not fetch that link");
+      }
+
+      const name = decodeURIComponent(
+        res.headers.get("x-filename") ?? "imported-media"
+      );
+      const type = res.headers.get("content-type") ?? "application/octet-stream";
+      const total = Number(res.headers.get("content-length")) || 0;
+
+      const reader = res.body.getReader();
+      const parts: BlobPart[] = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        received += value.byteLength;
+        if (total > 0) {
+          const percent = Math.round((received / total) * 100);
+          setJob((j) => (j ? { ...j, name, percent } : j));
+        }
+      }
+
+      const file = new File(parts, name, { type });
+      setImportUrl("");
+      await handleFiles([file]);
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Could not import that link"
+      );
+      setJob(null);
+    }
+  };
+
   // --- search --------------------------------------------------------------
 
   const runSearch = async () => {
@@ -418,11 +482,13 @@ export function Transcribe({
           <div className="space-y-2">
             <div className="flex items-baseline gap-2 text-sm">
               <span>
-                {job.stage === "reading"
-                  ? "Reading the audio"
-                  : job.stage === "uploading"
-                    ? "Uploading"
-                    : "Transcribing"}
+                {job.stage === "fetching"
+                  ? "Downloading from the link"
+                  : job.stage === "reading"
+                    ? "Reading the audio"
+                    : job.stage === "uploading"
+                      ? "Uploading"
+                      : "Transcribing"}
               </span>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
                 {job.name}
@@ -438,9 +504,11 @@ export function Transcribe({
               />
             </div>
             <p className="text-[11px] text-muted-foreground">
-              {job.stage === "reading"
-                ? "The audio is pulled out here, so only a few MB ever leaves this machine."
-                : "Keep this tab open until it finishes."}
+              {job.stage === "fetching"
+                ? "Fetching the file from the link — the audio still gets extracted here."
+                : job.stage === "reading"
+                  ? "The audio is pulled out here, so only a few MB ever leaves this machine."
+                  : "Keep this tab open until it finishes."}
             </p>
           </div>
         ) : (
@@ -459,6 +527,13 @@ export function Transcribe({
               />
               <Button onClick={() => fileInputRef.current?.click()} className="gap-2">
                 <Upload className="size-4" /> Choose audio or video
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setImportOpen((v) => !v)}
+                className="gap-2"
+              >
+                <Link2 className="size-4" /> Import from link
               </Button>
             </div>
             <p className="mt-3 text-center text-xs text-muted-foreground">
@@ -548,6 +623,43 @@ export function Transcribe({
         </div>
 
       </div>
+
+      {/* Import from link */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="gap-6 p-8 sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="size-4" /> Import from Link
+            </DialogTitle>
+            <DialogDescription>
+              Import audio or video from YouTube, TikTok, Instagram, Facebook,
+              X, Vimeo, a public Dropbox or Google Drive share link, or a
+              direct link to any media file. The link must be publicly
+              accessible — private posts cannot be imported.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <label className="text-xs text-muted-foreground">Media link</label>
+            {/* No autoFocus: it lights the heavy focus ring the moment the
+                dialog opens, which reads as a rendering glitch. */}
+            <Input
+              value={importUrl}
+              onChange={(e) => setImportUrl(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void importFromLink()}
+              placeholder="https://www.youtube.com/watch?v=…"
+              className="h-11 focus-visible:ring-1"
+            />
+          </div>
+          {/* Not `disabled` on purpose: an empty field just does nothing, so
+              the button can stay fully white instead of dimming to gray. */}
+          <Button
+            className="h-11 w-full bg-white text-black hover:bg-white/90"
+            onClick={() => void importFromLink()}
+          >
+            Import
+          </Button>
+        </DialogContent>
+      </Dialog>
 
       {/* Search every transcript */}
       <div className="flex gap-2">
