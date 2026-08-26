@@ -192,3 +192,29 @@ export async function upsertUser(
 
   return user;
 }
+
+/**
+ * Session JWTs can outlive a user row (DB reset) or carry a provider id that
+ * was never our uuid. FKs like `clients.created_by` then 500 with a
+ * constraint error. Resolve against the current `users` table and cache
+ * the mapping for the life of this process.
+ */
+const resolvedIds = new Map<string, string>();
+
+export async function resolveDbUserId(sessionUser: {
+  id?: string | null;
+  email?: string | null;
+  name?: string | null;
+}): Promise<string | null> {
+  const email = sessionUser.email?.trim().toLowerCase();
+  if (!email) return null;
+  const cached = resolvedIds.get(email);
+  if (cached) return cached;
+  try {
+    const user = await upsertUser(email, sessionUser.name);
+    resolvedIds.set(email, user.id);
+    return user.id;
+  } catch {
+    return null;
+  }
+}

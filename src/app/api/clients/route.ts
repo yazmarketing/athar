@@ -32,7 +32,10 @@ export async function POST(req: NextRequest) {
     const client = await createClient(name, sessionUser.id);
     return NextResponse.json({ client });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Create failed";
+    const raw = err instanceof Error ? err.message : "Create failed";
+    const message = /foreign key constraint/i.test(raw)
+      ? "Could not save the client against this account. Sign out and back in, then retry."
+      : raw;
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
