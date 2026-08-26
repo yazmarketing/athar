@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Heart,
   Loader2,
+  RefreshCw,
   Share2,
   X,
 } from "lucide-react";
@@ -35,6 +36,8 @@ type Props = {
   generation: GenerationRecord;
   onClose: () => void;
   onUsePrompt?: (g: GenerationRecord) => void;
+  /** Load prompt, settings, and attached media into Create without generating. */
+  onReuse?: (g: GenerationRecord) => void;
   /** Keeps the gallery's copy of the record in step with a rating. */
   onRated?: (rating: 1 | -1 | null, reasons: string[], note: string) => void;
   onOpenSource?: (generationId: string) => void;
@@ -74,6 +77,7 @@ export function VideoDetail({
   generation: g,
   onClose,
   onUsePrompt,
+  onReuse,
   onRated,
   onOpenSource,
   onEditVideo,
@@ -512,6 +516,16 @@ export function VideoDetail({
                 <Share2 className="size-4" />
                 Share
               </Button>
+              {onReuse && (
+                <Button
+                  variant="outline"
+                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                  onClick={() => onReuse(g)}
+                >
+                  <RefreshCw className="size-4" />
+                  Reuse
+                </Button>
+              )}
               <Button
                 className="h-11 w-full justify-between rounded-xl bg-white text-black hover:bg-white/90"
                 onClick={() => {

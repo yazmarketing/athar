@@ -180,6 +180,7 @@ export async function finalizeVideoJob(
         source_audio_urls: input.sourceAudioUrls?.length
           ? input.sourceAudioUrls
           : undefined,
+        video_resolution: input.videoResolution ?? undefined,
       },
       finalPrompt: job.final_prompt,
       negativePrompt: job.negative_prompt,

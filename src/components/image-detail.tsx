@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Heart,
   Loader2,
+  RefreshCw,
   Share2,
   Shuffle,
   SquarePen,
@@ -71,6 +72,8 @@ type Props = {
   onClose: () => void;
   onEdit: (g: GenerationRecord) => void;
   onUsePrompt?: (g: GenerationRecord) => void;
+  /** Load prompt, settings, and attached media into Create without generating. */
+  onReuse?: (g: GenerationRecord) => void;
   /** Keeps the gallery's copy of the record in step with a rating. */
   onRated?: (rating: 1 | -1 | null, reasons: string[], note: string) => void;
   onCreateVideo?: (g: GenerationRecord) => void;
@@ -159,6 +162,7 @@ export function ImageDetail({
   onClose,
   onEdit,
   onUsePrompt,
+  onReuse,
   onRated,
   onCreateVideo,
   onVary,
@@ -575,6 +579,16 @@ export function ImageDetail({
                 <SquarePen className="size-4" />
                 Use prompt
               </Button>
+              {onReuse && (
+                <Button
+                  variant="outline"
+                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                  onClick={() => onReuse(g)}
+                >
+                  <RefreshCw className="size-4" />
+                  Reuse
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"

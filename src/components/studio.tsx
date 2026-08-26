@@ -99,6 +99,7 @@ import {
   maxReferenceImages,
   imageModelChoice,
   imageModelCost,
+  imageModelIdFromEndpoint,
   imageModelRequest,
   DEFAULT_IMAGE_MODEL_ID,
   type Capability,
@@ -338,15 +339,12 @@ export function Studio() {
     "480p" | "720p" | "1080p"
   >("720p");
   const [generating, setGenerating] = useState(false);
-  const [reproducingId, setReproducingId] = useState<string | null>(null);
   /**
    * What the last generate produced, kept on the Create view until the next
    * run replaces it. Results used to vanish into the Library the moment the
    * detail modal was closed.
    */
   const [lastRun, setLastRun] = useState<GenerationRecord[]>([]);
-  const [reproduceTarget, setReproduceTarget] =
-    useState<GenerationRecord | null>(null);
   const [generations, setGenerations] = useState<GenerationRecord[] | null>(
     null
   );
@@ -2161,51 +2159,118 @@ export function Studio() {
     return stored ?? { subject: g.final_prompt };
   };
 
-  // Re-runs a generation with its exact settings (a paid regeneration) — gated
-  // behind a confirmation so a curious click doesn't spend on a new render.
-  const runReproduce = (g: GenerationRecord) => {
-    let sourceImages:
-      | { url: string; generationId: string | null }[]
-      | undefined;
-    let sourceVideo:
-      | { url: string; generationId: string | null }
-      | null
-      | undefined;
-    if (isVideo(g)) {
-      const payload = g.input_payload as {
-        source_generation_id?: string;
-        source_image_url?: string;
-        source_image_urls?: string[];
-        source_video_url?: string;
-        source_video_generation_id?: string;
-      };
+  // Higgsfield-style Reuse: load this clip's prompt, settings, and attached
+  // media into Create so the user can edit, then Generate themselves.
+  const reuseGeneration = (g: GenerationRecord) => {
+    const inputs = promptInputsOf(g);
+    const payload = g.input_payload as {
+      source_generation_id?: string;
+      source_image_url?: string;
+      source_image_urls?: string[];
+      source_video_url?: string;
+      source_video_generation_id?: string;
+      source_audio_urls?: string[];
+      video_resolution?: string;
+    };
+    const video = isVideo(g);
+
+    setDetailTarget(null);
+    setVideoDetailTarget(null);
+    setVaryTarget(null);
+    setEditTarget(null);
+
+    openTool(video ? "t2v" : "t2i", {
+      subject: inputs.subject || g.final_prompt,
+      action: inputs.action,
+      lighting: inputs.lighting,
+      brandTokens: inputs.brandTokens,
+      negativeAdditions: inputs.negativeAdditions,
+      styleId: inputs.styleId,
+      cameraId: inputs.cameraId,
+    });
+
+    const aspect = (["16:9", "9:16", "1:1", "4:5", "21:9"] as const).includes(
+      g.aspect as AspectRatio
+    )
+      ? (g.aspect as AspectRatio)
+      : null;
+    if (aspect) setAspect(aspect);
+
+    if (video) {
+      setTier(g.tier);
+      if (g.duration_s != null) setDurationS(Number(g.duration_s));
+      const vr = payload.video_resolution ?? g.resolution;
+      if (vr === "480p" || vr === "720p" || vr === "1080p") {
+        setVideoResolution(vr);
+      }
       const imageUrls = payload.source_image_urls?.length
         ? payload.source_image_urls
         : payload.source_image_url
           ? [payload.source_image_url]
           : [];
-      sourceImages = imageUrls.map((url, i) => ({
-        url,
-        generationId: i === 0 ? (payload.source_generation_id ?? null) : null,
-      }));
-      sourceVideo = payload.source_video_url
-        ? {
-            url: payload.source_video_url,
-            generationId: payload.source_video_generation_id ?? null,
-          }
-        : null;
+      setVideoSources(
+        imageUrls.map((url, i) => ({
+          url,
+          generationId: i === 0 ? (payload.source_generation_id ?? null) : null,
+        }))
+      );
+      setVideoEditSource(
+        payload.source_video_url
+          ? {
+              url: payload.source_video_url,
+              generationId: payload.source_video_generation_id ?? null,
+              intent: "edit",
+              durationS: g.duration_s ?? null,
+            }
+          : null
+      );
+      const audioUrls = payload.source_audio_urls ?? [];
+      const transcripts = inputs.audioTranscripts ?? [];
+      setAudioSources(
+        audioUrls.map((url, i) => ({
+          url,
+          name: `audio ${i + 1}`,
+          transcript: transcripts[i] ?? null,
+        }))
+      );
+      const nextCinema: CinemaControls = {
+        genreId: inputs.genreId ?? DEFAULT_DIRECTOR_ID,
+        eraId: inputs.eraId ?? DEFAULT_DIRECTOR_ID,
+        shotId: inputs.shotId ?? DEFAULT_DIRECTOR_ID,
+        gradeId: inputs.gradeId ?? DEFAULT_DIRECTOR_ID,
+        lightLookId: inputs.lightLookId ?? DEFAULT_DIRECTOR_ID,
+        emotionId: inputs.emotionId ?? DEFAULT_DIRECTOR_ID,
+        tempoId: inputs.tempoId ?? DEFAULT_DIRECTOR_ID,
+        pacingId: inputs.pacingId ?? DEFAULT_DIRECTOR_ID,
+      };
+      setCinema(nextCinema);
+      setCinemaOn(
+        Object.values(nextCinema).some((id) => id !== DEFAULT_DIRECTOR_ID)
+      );
+    } else {
+      setVideoSources([]);
+      setVideoEditSource(null);
+      setAudioSources([]);
+      const modelId = imageModelIdFromEndpoint(g.model_endpoint, g.tier);
+      const choice = imageModelChoice(modelId);
+      if (choice) applyImageModel(modelId, choice);
+      if (g.resolution === "1K" || g.resolution === "2K" || g.resolution === "4K") {
+        setResolution(g.resolution);
+      }
+      const refs =
+        g.reference_urls?.length > 0
+          ? g.reference_urls
+          : payload.source_image_urls?.length
+            ? payload.source_image_urls
+            : payload.source_image_url
+              ? [payload.source_image_url]
+              : [];
+      setReferenceUrls(refs);
     }
-    setReproducingId(g.id);
-    toast.message("Reproducing…");
-    void submit(promptInputsOf(g), {
-      seed: g.seed ?? undefined,
-      tier: g.tier,
-      mode: (isVideo(g) ? "t2v" : "t2i") as StudioMode,
-      durationS: g.duration_s ?? undefined,
-      sourceImages,
-      sourceVideo,
-      stayOnView: true,
-    }).finally(() => setReproducingId(null));
+
+    if (g.brand_kit_id) setActiveBrandKitId(g.brand_kit_id);
+
+    toast.message("Loaded into Create — edit anything, then Generate");
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -2468,13 +2533,6 @@ export function Studio() {
         )}
       </div>
 
-      {reproducingId === g.id && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70">
-          <Loader2 className="size-6 animate-spin text-gold" />
-          <p className="mt-2 text-xs text-white">Reproducing…</p>
-        </div>
-      )}
-
       {selectMode && !isVideo(g) && g.output_url && (
         <span
           className={cn(
@@ -2539,14 +2597,10 @@ export function Studio() {
             variant="secondary"
             className="h-8 flex-1 gap-1.5 bg-white/15 text-xs text-white hover:bg-white/25"
             disabled={generating}
-            onClick={() => setReproduceTarget(g)}
+            onClick={() => reuseGeneration(g)}
           >
-            {reproducingId === g.id ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3" />
-            )}
-            Reproduce
+            <RefreshCw className="size-3" />
+            Reuse
           </Button>
         </div>
       </div>
@@ -2995,6 +3049,7 @@ export function Studio() {
             onClose={() => setDetailTarget(null)}
             onEdit={openEdit}
             onVary={openVary}
+            onReuse={reuseGeneration}
             onUpscale={(g) => setUpscaleTargets([fromGeneration(g)])}
             onSaveReference={(g) => {
               if (g.output_url) openSaveReference(g.output_url);
@@ -3092,6 +3147,7 @@ export function Studio() {
             }
             generation={videoDetailTarget}
             onClose={() => setVideoDetailTarget(null)}
+            onReuse={reuseGeneration}
             onUsePrompt={(g) => {
               const inputs = promptInputsOf(g);
               setVideoDetailTarget(null);
@@ -4182,42 +4238,6 @@ export function Studio() {
                   <Trash2 className="size-4" />
                 )}
                 Delete {selectedIds.length}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Reproduce confirmation — global, fires from cards on any view */}
-        <Dialog
-          open={reproduceTarget != null}
-          onOpenChange={(o) => {
-            if (!o) setReproduceTarget(null);
-          }}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Reproduce this generation?</DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              This runs a{" "}
-              <span className="text-foreground">new paid render</span> with the
-              exact same settings and seed. It doesn&apos;t edit the original —
-              it creates another one.
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setReproduceTarget(null)}>
-                Cancel
-              </Button>
-              <Button
-                className="bg-gold text-primary-foreground hover:bg-gold/90"
-                onClick={() => {
-                  const g = reproduceTarget;
-                  setReproduceTarget(null);
-                  if (g) runReproduce(g);
-                }}
-              >
-                <RefreshCw className="size-4" />
-                Reproduce
               </Button>
             </div>
           </DialogContent>
