@@ -21,11 +21,13 @@ import { cn } from "@/lib/utils";
 import { friendlyModelName } from "@/config/models";
 import {
   barHeight,
+  dubaiToday,
   formatMetric,
   shortDate,
   summariseDays,
   type DailyMetric,
   type DayRow,
+  type UsageRangeKind,
 } from "@/lib/usage";
 
 type UsageRow = { label?: string; mode?: string; model_endpoint?: string; cost: number; count: number };
@@ -40,6 +42,12 @@ type AuditRow = {
 };
 
 type UsageData = {
+  range?: {
+    kind: UsageRangeKind;
+    from: string | null;
+    to: string | null;
+    today: string;
+  };
   totals: {
     total_cost: number;
     total_count: number;
@@ -115,6 +123,9 @@ function dubaiTime(iso: string): string {
 export function UsagePanel() {
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [rangeKind, setRangeKind] = useState<UsageRangeKind>("all");
+  const [month, setMonth] = useState(() => dubaiToday().slice(0, 7));
+  const [date, setDate] = useState(() => dubaiToday());
   const [auditFrom, setAuditFrom] = useState("");
   const [auditTo, setAuditTo] = useState("");
   const [exporting, setExporting] = useState(false);
@@ -228,10 +239,17 @@ export function UsagePanel() {
     return true;
   };
 
+  const usageQuery = () => {
+    const params = new URLSearchParams({ range: rangeKind });
+    if (rangeKind === "month") params.set("month", month);
+    if (rangeKind === "day") params.set("date", date);
+    return `/api/usage?${params.toString()}`;
+  };
+
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/usage");
+      const res = await fetch(usageQuery());
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load usage");
       setData(json as UsageData);
@@ -246,7 +264,7 @@ export function UsagePanel() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/usage");
+        const res = await fetch(usageQuery());
         const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? "Failed to load usage");
         if (!cancelled) setData(json as UsageData);
@@ -261,7 +279,7 @@ export function UsagePanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [rangeKind, month, date]);
 
   if (!data) {
     return (
@@ -274,29 +292,72 @@ export function UsagePanel() {
 
   return (
     <div className="space-y-8 pb-10">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
           Internal cost visibility — no billing. Numbers are provider estimates
           saved per generation.
         </p>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-xs text-muted-foreground ring-1 ring-border transition hover:text-foreground disabled:opacity-50"
-        >
-          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex rounded-full bg-card p-0.5 ring-1 ring-border">
+            {(
+              [
+                ["all", "All time"],
+                ["month", "Month"],
+                ["day", "Day"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setRangeKind(id)}
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs transition",
+                  rangeKind === id
+                    ? "bg-gold text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {rangeKind === "month" && (
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="h-8 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground"
+            />
+          )}
+          {rangeKind === "day" && (
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-8 rounded-lg border border-border bg-card px-2.5 text-xs text-foreground"
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => void load()}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1.5 text-xs text-muted-foreground ring-1 ring-border transition hover:text-foreground disabled:opacity-50"
+          >
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      {/* Stat cards. The generation counts include transcripts so the box is
-          the studio's whole output, but spend stays renders-only (transcription
-          is self-hosted and free) — the hint line explains the split. */}
+      {/* Spend and generation counts for the selected window. All-time also
+          shows the last 30 days so a quiet month is not mistaken for zero. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="Total spend" value={usd(data.totals.total_cost)} />
         <StatCard
-          label="Total generations"
+          label={rangeKind === "all" ? "Total spend" : "Spend"}
+          value={usd(data.totals.total_cost)}
+        />
+        <StatCard
+          label={rangeKind === "all" ? "Total generations" : "Generations"}
           value={String(
             data.totals.total_count + (data.transcription?.count ?? 0)
           )}
@@ -306,35 +367,42 @@ export function UsagePanel() {
               : undefined
           }
         />
-        <StatCard label="Spend — last 30 days" value={usd(data.totals.cost_30d)} />
-        <StatCard
-          label="Generations — last 30 days"
-          value={String(
-            data.totals.count_30d + (data.transcription?.count_30d ?? 0)
-          )}
-          hint={
-            data.transcription?.count_30d
-              ? `${data.totals.count_30d} renders + ${data.transcription.count_30d} transcripts`
-              : undefined
-          }
-        />
+        {rangeKind === "all" && (
+          <>
+            <StatCard
+              label="Spend — last 30 days"
+              value={usd(data.totals.cost_30d)}
+            />
+            <StatCard
+              label="Generations — last 30 days"
+              value={String(
+                data.totals.count_30d + (data.transcription?.count_30d ?? 0)
+              )}
+              hint={
+                data.transcription?.count_30d
+                  ? `${data.totals.count_30d} renders + ${data.transcription.count_30d} transcripts`
+                  : undefined
+              }
+            />
+          </>
+        )}
       </div>
 
-      {/* One box per model — what each model has cost in total. */}
-      {data.byModel.length > 0 && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {data.byModel.map((m) => (
-            <StatCard
-              key={m.model_endpoint ?? "unknown"}
-              label={friendlyModelName(m.model_endpoint)}
-              value={usd(m.cost)}
-              hint={`${m.count} generation${m.count === 1 ? "" : "s"}`}
-            />
-          ))}
-        </div>
-      )}
-
-      <DailyActivity days={data.byDay} />
+      <DailyActivity
+        days={data.byDay}
+        title={
+          rangeKind === "month"
+            ? new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", {
+                month: "long",
+                year: "numeric",
+                timeZone: "UTC",
+              })
+            : rangeKind === "day"
+              ? shortDate(date)
+              : "Last 30 days"
+        }
+        endLabel={rangeKind === "all" ? "Today" : undefined}
+      />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <BreakdownTable
@@ -562,7 +630,15 @@ export function UsagePanel() {
  * looking at — a day can be busy and cheap, or quiet and expensive, and the
  * toggle is what tells those apart.
  */
-function DailyActivity({ days }: { days: DayRow[] }) {
+function DailyActivity({
+  days,
+  title = "Last 30 days",
+  endLabel = "Today",
+}: {
+  days: DayRow[];
+  title?: string;
+  endLabel?: string;
+}) {
   const [metric, setMetric] = useState<DailyMetric>("cost");
   const [hovered, setHovered] = useState<number | null>(null);
 
@@ -583,7 +659,7 @@ function DailyActivity({ days }: { days: DayRow[] }) {
     <section>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium">Last 30 days</h3>
+          <h3 className="text-sm font-medium">{title}</h3>
           <p className="text-xs text-muted-foreground">
             {activeDays === 0
               ? "Nothing yet in this window — bars appear as work lands"
@@ -680,7 +756,7 @@ function DailyActivity({ days }: { days: DayRow[] }) {
         <div className="mt-2 flex justify-between text-[10px] text-muted-foreground/70">
           <span>{shortDate(days[0]?.day ?? "")}</span>
           <span>{shortDate(days[Math.floor(days.length / 2)]?.day ?? "")}</span>
-          <span>Today</span>
+          <span>{endLabel}</span>
         </div>
       </div>
     </section>

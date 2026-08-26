@@ -1,20 +1,43 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
 import { listAudit } from "@/lib/audit";
 import { db } from "@/lib/db";
+import { dubaiToday, parseUsageRange } from "@/lib/usage";
 
 /**
  * Internal usage & cost aggregates (spec Phase 9). Read-only — uses the
  * cost saved on every generation. No billing.
+ *
+ * Optional filters: range=all|month|day, month=YYYY-MM, date=YYYY-MM-DD.
+ * Dates are Dubai calendar days, same as the rest of this panel.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const sessionUser = await getSessionUser();
     if (!sessionUser?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const url = req.nextUrl;
+    const today = dubaiToday();
+    const range = parseUsageRange({
+      range: url.searchParams.get("range"),
+      month: url.searchParams.get("month"),
+      date: url.searchParams.get("date"),
+      today,
+    });
+    const from = range.from;
+    const to = range.to;
     const pool = db();
+
+    /**
+     * Half-open Dubai-date window. $1/$2 are YYYY-MM-DD or null (all-time).
+     * Used on every aggregate so the cards, breakdowns, and chart agree.
+     */
+    const IN_RANGE = `
+      ($1::date is null or (created_at at time zone 'Asia/Dubai')::date >= $1::date)
+      and ($2::date is null or (created_at at time zone 'Asia/Dubai')::date < $2::date)
+    `;
 
     const [totals, byMode, byModel, audit] = await Promise.all([
       pool.query(
@@ -23,46 +46,53 @@ export async function GET() {
            count(*)::int as total_count,
            coalesce(sum(cost) filter (where created_at > now() - interval '30 days'), 0)::float as cost_30d,
            count(*) filter (where created_at > now() - interval '30 days')::int as count_30d
-         from generations`
+         from generations
+         where ${IN_RANGE}`,
+        [from, to]
       ),
       pool.query(
         `select mode, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
-         from generations group by mode order by cost desc`
+         from generations
+         where ${IN_RANGE}
+         group by mode order by cost desc`,
+        [from, to]
       ),
       pool.query(
         `select model_endpoint, coalesce(sum(cost), 0)::float as cost, count(*)::int as count
-         from generations group by model_endpoint order by cost desc limit 12`
+         from generations
+         where ${IN_RANGE}
+         group by model_endpoint order by cost desc limit 12`,
+        [from, to]
       ),
       listAudit(50),
     ]);
 
     /**
-     * Daily activity — one row per day for the last 30 days, whether or not
+     * Daily activity — one row per day in the chart window, whether or not
      * anything happened on it.
      *
-     * Two things were wrong with grouping straight off `generations`. Days
-     * with no work were simply absent, so ten scattered days rendered as ten
-     * adjacent bars and the shape of a month was invisible. And the day
-     * boundary was UTC, which put anything made after 4am Dubai time — most
-     * of the working day — on the wrong date for a studio that reads every
-     * other timestamp in this panel in GST.
-     *
-     * Transcripts join in here too: it is one usage timeline, not two.
+     * All-time still charts the last 30 days (a full history is unreadable).
+     * Month and day chart exactly that window, in Dubai dates.
      */
+    const chartFrom =
+      range.kind === "all"
+        ? dubaiTodayOffset(today, -29)
+        : (from as string);
+    const chartToInclusive =
+      range.kind === "all"
+        ? today
+        : dubaiTodayOffset(to as string, -1);
+
     const DAILY_SQL = (withTranscripts: boolean) => `
       with days as (
-        select generate_series(
-          (now() at time zone 'Asia/Dubai')::date - interval '29 days',
-          (now() at time zone 'Asia/Dubai')::date,
-          interval '1 day'
-        )::date as day
+        select generate_series($3::date, $4::date, interval '1 day')::date as day
       ),
       gen as (
         select (created_at at time zone 'Asia/Dubai')::date as day,
                coalesce(sum(cost), 0)::float as cost,
                count(*)::int as count
         from generations
-        where created_at > now() - interval '32 days'
+        where ${IN_RANGE}
         group by 1
       )${
         withTranscripts
@@ -72,7 +102,7 @@ export async function GET() {
                count(*)::int as count,
                coalesce(sum(duration_s), 0)::float as seconds
         from transcripts
-        where status = 'ready' and created_at > now() - interval '32 days'
+        where status = 'ready' and ${IN_RANGE}
         group by 1
       )`
           : ""
@@ -90,13 +120,13 @@ export async function GET() {
 
     let byDay: unknown[] = [];
     try {
-      byDay = (await pool.query(DAILY_SQL(true))).rows;
+      byDay = (await pool.query(DAILY_SQL(true), [from, to, chartFrom, chartToInclusive]))
+        .rows;
     } catch {
-      // No transcripts table yet — the generations half still stands alone.
-      byDay = (await pool.query(DAILY_SQL(false))).rows;
+      byDay = (await pool.query(DAILY_SQL(false), [from, to, chartFrom, chartToInclusive]))
+        .rows;
     }
 
-    // users/projects tables auto-create on first use — tolerate their absence
     let byUser: unknown[] = [];
     try {
       const res = await pool.query(
@@ -104,7 +134,10 @@ export async function GET() {
                 coalesce(sum(g.cost), 0)::float as cost, count(*)::int as count
          from generations g
          left join users u on u.id = g.user_id
-         group by 1 order by cost desc limit 12`
+         where ($1::date is null or (g.created_at at time zone 'Asia/Dubai')::date >= $1::date)
+           and ($2::date is null or (g.created_at at time zone 'Asia/Dubai')::date < $2::date)
+         group by 1 order by cost desc limit 12`,
+        [from, to]
       );
       byUser = res.rows;
     } catch {
@@ -118,16 +151,16 @@ export async function GET() {
                 coalesce(sum(g.cost), 0)::float as cost, count(*)::int as count
          from generations g
          left join projects p on p.id = g.project_id
-         group by 1 order by cost desc limit 12`
+         where ($1::date is null or (g.created_at at time zone 'Asia/Dubai')::date >= $1::date)
+           and ($2::date is null or (g.created_at at time zone 'Asia/Dubai')::date < $2::date)
+         group by 1 order by cost desc limit 12`,
+        [from, to]
       );
       byProject = res.rows;
     } catch {
       /* projects table missing */
     }
 
-    // Transcription is self-hosted, so the number that matters is machine
-    // time and hours of audio, not spend. Absent on a database that has never
-    // run a transcript.
     let transcription: Record<string, number> | null = null;
     try {
       const res = await pool.query(
@@ -136,7 +169,9 @@ export async function GET() {
                 coalesce(sum(render_ms), 0)::float as compute_ms,
                 count(*) filter (where created_at > now() - interval '30 days')::int as count_30d,
                 coalesce(sum(duration_s) filter (where created_at > now() - interval '30 days'), 0)::float as audio_seconds_30d
-         from transcripts where status = 'ready'`
+         from transcripts
+         where status = 'ready' and ${IN_RANGE}`,
+        [from, to]
       );
       transcription = res.rows[0] ?? null;
     } catch {
@@ -144,6 +179,7 @@ export async function GET() {
     }
 
     return NextResponse.json({
+      range: { ...range, today },
       totals: totals.rows[0],
       byMode: byMode.rows,
       byModel: byModel.rows,
@@ -157,4 +193,11 @@ export async function GET() {
     const message = err instanceof Error ? err.message : "Query failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/** Shift a YYYY-MM-DD by `days` without a timezone surprise. */
+function dubaiTodayOffset(day: string, days: number): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }

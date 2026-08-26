@@ -3,6 +3,7 @@ import {
   barHeight,
   formatMetric,
   metricValue,
+  parseUsageRange,
   shortDate,
   summariseDays,
   type DayRow,
@@ -103,5 +104,52 @@ describe("shortDate", () => {
 
   it("returns nothing for a missing day rather than 'Invalid Date'", () => {
     expect(shortDate("")).toBe("");
+  });
+});
+
+describe("parseUsageRange", () => {
+  const today = "2026-08-26";
+
+  it("all-time has no bounds", () => {
+    expect(parseUsageRange({ range: "all", today })).toEqual({
+      kind: "all",
+      from: null,
+      to: null,
+    });
+  });
+
+  it("a day is that Dubai date, exclusive the next morning", () => {
+    expect(
+      parseUsageRange({ range: "day", date: "2026-08-15", today })
+    ).toEqual({
+      kind: "day",
+      from: "2026-08-15",
+      to: "2026-08-16",
+    });
+  });
+
+  it("a month runs from the 1st to the 1st of the next", () => {
+    expect(
+      parseUsageRange({ range: "month", month: "2026-08", today })
+    ).toEqual({
+      kind: "month",
+      from: "2026-08-01",
+      to: "2026-09-01",
+    });
+  });
+
+  it("December rolls the year", () => {
+    expect(
+      parseUsageRange({ range: "month", month: "2026-12", today })
+    ).toEqual({
+      kind: "month",
+      from: "2026-12-01",
+      to: "2027-01-01",
+    });
+  });
+
+  it("falls back to today when the pickers are empty", () => {
+    expect(parseUsageRange({ range: "day", today }).from).toBe("2026-08-26");
+    expect(parseUsageRange({ range: "month", today }).from).toBe("2026-08-01");
   });
 });

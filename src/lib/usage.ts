@@ -80,3 +80,58 @@ export function shortDate(day: string): string {
     timeZone: "UTC",
   });
 }
+
+export type UsageRangeKind = "all" | "month" | "day";
+
+export type UsageRange = {
+  kind: UsageRangeKind;
+  /** Inclusive YYYY-MM-DD in Dubai time. Null means all-time. */
+  from: string | null;
+  /** Exclusive YYYY-MM-DD. */
+  to: string | null;
+};
+
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_MONTH = /^\d{4}-\d{2}$/;
+
+function nextDay(day: string): string {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function nextMonthStart(yearMonth: string): string {
+  const [year, month] = yearMonth.split("-").map(Number);
+  const d = new Date(Date.UTC(year, month, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01`;
+}
+
+/** Calendar date in Asia/Dubai as YYYY-MM-DD. */
+export function dubaiToday(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dubai" }).format(
+    now
+  );
+}
+
+/**
+ * Turn the usage page's All time / Month / Day control into a half-open
+ * date window the SQL can filter on.
+ */
+export function parseUsageRange(input: {
+  range?: string | null;
+  month?: string | null;
+  date?: string | null;
+  today: string;
+}): UsageRange {
+  const kind: UsageRangeKind =
+    input.range === "month" || input.range === "day" ? input.range : "all";
+  if (kind === "all") return { kind, from: null, to: null };
+  if (kind === "day") {
+    const date = ISO_DAY.test(input.date ?? "") ? input.date! : input.today;
+    return { kind, from: date, to: nextDay(date) };
+  }
+  const month = ISO_MONTH.test(input.month ?? "")
+    ? input.month!
+    : input.today.slice(0, 7);
+  return { kind, from: `${month}-01`, to: nextMonthStart(month) };
+}
