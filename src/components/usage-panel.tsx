@@ -160,7 +160,12 @@ function dubaiTime(iso: string): string {
 }
 
 /** Internal spend dashboard (spec Phase 9) — cost saved per generation. */
-export function UsagePanel() {
+export function UsagePanel({
+  onOpenItem,
+}: {
+  /** Opens a generation/transcript/voice-over elsewhere in the app. */
+  onOpenItem?: (item: { kind: "generation" | "transcript" | "tts"; id: string }) => void;
+} = {}) {
   const [data, setData] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(false);
   const [rangeKind, setRangeKind] = useState<UsageRangeKind>("all");
@@ -486,6 +491,7 @@ export function UsagePanel() {
         id={userDrillId}
         open={userDrillId != null}
         onOpenChange={(o) => !o && setUserDrillId(null)}
+        onOpenItem={onOpenItem}
       />
 
       {/* Generation feedback — the thing we actually change the pipeline on */}
@@ -886,7 +892,7 @@ function BreakdownTable({
 
 type UserAuditItem = {
   id: string;
-  kind: "generation" | "transcript";
+  kind: "generation" | "transcript" | "tts";
   type: string;
   model_endpoint: string;
   cost: number;
@@ -904,6 +910,8 @@ type UserAuditData = {
   byModel: { label: string; cost: number; count: number }[];
   byProject: { label: string; cost: number; count: number }[];
   recent: UserAuditItem[];
+  /** Every generation/transcript/voice-over this person has made, newest first. */
+  all: UserAuditItem[];
 };
 
 /**
@@ -916,10 +924,12 @@ function UserAuditDialog({
   id,
   open,
   onOpenChange,
+  onOpenItem,
 }: {
   id: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenItem?: (item: { kind: "generation" | "transcript" | "tts"; id: string }) => void;
 }) {
   const [data, setData] = useState<UserAuditData | null>(null);
 
@@ -1001,35 +1011,25 @@ function UserAuditDialog({
               ) : (
                 <div className="space-y-1.5">
                   {data.recent.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-3 rounded-xl bg-card px-3 py-2 ring-1 ring-border"
-                    >
-                      {item.thumb ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={item.thumb}
-                          alt=""
-                          className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
-                        />
-                      ) : (
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 text-[10px] text-muted-foreground ring-1 ring-white/10">
-                          {item.kind === "transcript" ? "AUDIO" : item.type.toUpperCase()}
-                        </span>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs text-foreground/90">
-                          {item.title || "Untitled"}
-                        </p>
-                        <p className="truncate text-[11px] text-muted-foreground">
-                          {friendlyModelName(item.model_endpoint)} ·{" "}
-                          {item.project_name} · {dubaiTime(item.created_at)}
-                        </p>
-                      </div>
-                      <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                        {usd(item.cost)}
-                      </span>
-                    </div>
+                    <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h3 className="mb-3 text-sm font-medium">
+                All generations — {data.all.length}
+                {data.all.length >= 300 ? "+" : ""}
+              </h3>
+              {data.all.length === 0 ? (
+                <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
+                  No data yet
+                </p>
+              ) : (
+                <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                  {data.all.map((item) => (
+                    <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
                   ))}
                 </div>
               )}
@@ -1038,5 +1038,61 @@ function UserAuditDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** One row in either the "Priciest renders" or "All generations" list. */
+function UserAuditItemRow({
+  item,
+  onOpenItem,
+}: {
+  item: UserAuditItem;
+  onOpenItem?: (item: { kind: "generation" | "transcript" | "tts"; id: string }) => void;
+}) {
+  const badge =
+    item.kind === "transcript" ? "AUDIO" : item.kind === "tts" ? "VOICE" : item.type.toUpperCase();
+  const clickable = Boolean(onOpenItem);
+
+  const content = (
+    <>
+      {item.thumb ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={item.thumb}
+          alt=""
+          className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+        />
+      ) : (
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 text-[10px] text-muted-foreground ring-1 ring-white/10">
+          {badge}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs text-foreground/90">{item.title || "Untitled"}</p>
+        <p className="truncate text-[11px] text-muted-foreground">
+          {friendlyModelName(item.model_endpoint)} · {item.project_name} ·{" "}
+          {dubaiTime(item.created_at)}
+        </p>
+      </div>
+      <span className="shrink-0 font-mono text-xs text-muted-foreground">{usd(item.cost)}</span>
+    </>
+  );
+
+  if (clickable) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpenItem!({ kind: item.kind, id: item.id })}
+        title="Open"
+        className="flex w-full items-center gap-3 rounded-xl bg-card px-3 py-2 text-left ring-1 ring-border transition hover:bg-white/5"
+      >
+        {content}
+      </button>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 rounded-xl bg-card px-3 py-2 ring-1 ring-border">
+      {content}
+    </div>
   );
 }

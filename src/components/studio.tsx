@@ -1746,6 +1746,63 @@ export function Studio() {
     void hydrateGeneration(g.id, "image");
   };
 
+  /**
+   * Opens any of the three "things Athar made" by id — shared between the
+   * notifications bell and the per-user usage drill-down so there's one
+   * place that knows how to fetch and open each kind, not three.
+   */
+  const openLibraryItem = async (
+    kind: "generation" | "transcript" | "tts",
+    id: string
+  ) => {
+    if (kind === "transcript") {
+      setLibraryOpenTranscriptId(id);
+      setView("transcribe");
+      return;
+    }
+
+    if (kind === "tts") {
+      try {
+        const res = await fetch(`/api/tts/${id}`);
+        const json = await readJson<{
+          generation?: TtsGenerationRecord;
+          error?: string;
+        }>(res);
+        if (!res.ok || !json.generation) {
+          toast.error("That voice-over could not be found.");
+          return;
+        }
+        setVoiceDetailTarget(json.generation);
+        setVoiceDetailVersions([json.generation]);
+      } catch {
+        toast.error("Could not open that voice-over");
+      }
+      return;
+    }
+
+    let g = (generations ?? []).find((r) => r.id === id);
+    if (!g) {
+      try {
+        const res = await fetch(`/api/generations/${id}`);
+        const json = await readJson<{
+          generation?: GenerationRecord;
+          error?: string;
+        }>(res);
+        if (!res.ok || !json.generation) {
+          toast.error(
+            "This render isn't in the local library. It was probably saved to the live database."
+          );
+          return;
+        }
+        g = json.generation;
+      } catch {
+        toast.error("Could not open that render");
+        return;
+      }
+    }
+    openDetail(g);
+  };
+
   const openAssistant = (g?: GenerationRecord | null) => {
     setDetailTarget(null);
     setVaryTarget(null);
@@ -3280,65 +3337,16 @@ export function Studio() {
             }
             onClearAll={() => setNotifications([])}
             onItemClick={(n) => {
-              void (async () => {
-                if (!n.generationId) {
-                  toast.error(
-                    "This notification has no library item — it may be from the other database."
-                  );
-                  return;
-                }
-
-                if (n.kind === "transcript") {
-                  setLibraryOpenTranscriptId(n.generationId);
-                  setView("transcribe");
-                  return;
-                }
-
-                if (n.kind === "voice") {
-                  try {
-                    const res = await fetch(`/api/tts/${n.generationId}`);
-                    const json = await readJson<{
-                      generation?: TtsGenerationRecord;
-                      error?: string;
-                    }>(res);
-                    if (!res.ok || !json.generation) {
-                      toast.error("That voice-over could not be found.");
-                      return;
-                    }
-                    setVoiceDetailTarget(json.generation);
-                    setVoiceDetailVersions([json.generation]);
-                  } catch {
-                    toast.error("Could not open that voice-over");
-                  }
-                  return;
-                }
-
-                let g = (generations ?? []).find(
-                  (r) => r.id === n.generationId
+              if (!n.generationId) {
+                toast.error(
+                  "This notification has no library item — it may be from the other database."
                 );
-                if (!g) {
-                  try {
-                    const res = await fetch(
-                      `/api/generations/${n.generationId}`
-                    );
-                    const json = await readJson<{
-                      generation?: GenerationRecord;
-                      error?: string;
-                    }>(res);
-                    if (!res.ok || !json.generation) {
-                      toast.error(
-                        "This render isn't in the local library. It was probably saved to the live database."
-                      );
-                      return;
-                    }
-                    g = json.generation;
-                  } catch {
-                    toast.error("Could not open that render");
-                    return;
-                  }
-                }
-                openDetail(g);
-              })();
+                return;
+              }
+              void openLibraryItem(
+                n.kind === "transcript" ? "transcript" : n.kind === "voice" ? "tts" : "generation",
+                n.generationId
+              );
             }}
           />
           </span>
@@ -3928,7 +3936,9 @@ export function Studio() {
               </div>
       </header>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 sm:px-8">
-              <UsagePanel />
+              <UsagePanel
+                onOpenItem={(item) => void openLibraryItem(item.kind, item.id)}
+              />
             </div>
           </>
         )}
