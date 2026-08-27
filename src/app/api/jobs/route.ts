@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     }
 
     const limit = Number(req.nextUrl.searchParams.get("limit") ?? 10);
-    const jobs = await listRecentJobs(Number.isFinite(limit) ? limit : 10);
+    const jobs = await listRecentJobs(sessionUser.id, Number.isFinite(limit) ? limit : 10);
     return NextResponse.json({ jobs });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Query failed";

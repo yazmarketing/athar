@@ -113,14 +113,23 @@ export async function getJob(id: string): Promise<GenerationJobRecord | null> {
   return rows[0] ?? null;
 }
 
-/** Latest jobs first. Used to restore in-flight renders after a refresh. */
-export async function listRecentJobs(limit = 10): Promise<GenerationJobRecord[]> {
+/**
+ * Latest jobs first. Used to restore in-flight renders after a refresh, and
+ * to drive the notifications bell — always scoped to one person's own jobs.
+ * Without the filter, everyone signed in polled and got notified about
+ * everyone else's renders too.
+ */
+export async function listRecentJobs(
+  userId: string,
+  limit = 10
+): Promise<GenerationJobRecord[]> {
   await ensureJobsTable();
   const { rows } = await db().query<GenerationJobRecord>(
     `select * from generation_jobs
+     where user_id = $1
      order by created_at desc
-     limit $1`,
-    [Math.min(limit, 50)]
+     limit $2`,
+    [userId, Math.min(limit, 50)]
   );
   return rows;
 }
