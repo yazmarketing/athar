@@ -949,9 +949,19 @@ function UserAuditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(42rem,calc(100vw-2rem))] max-w-none border-white/10 bg-[#161616] text-foreground ring-white/10">
+      <DialogContent
+        className={cn(
+          // The base dialog's `sm:max-w-sm` is a responsive variant — a bare
+          // `max-w-none` doesn't win against it at sm+ (twMerge tracks each
+          // breakpoint separately), so this was silently pinned to 24rem
+          // regardless of the width set here, forcing the whole dialog to
+          // scroll horizontally instead of laying out normally.
+          "w-[min(42rem,calc(100vw-2rem))] sm:max-w-[min(42rem,calc(100vw-2rem))]",
+          "border-white/10 bg-[#161616] text-foreground ring-white/10"
+        )}
+      >
         <DialogHeader>
-          <DialogTitle>{data?.label ?? "Loading…"}</DialogTitle>
+          <DialogTitle className="truncate pr-8">{data?.label ?? "Loading…"}</DialogTitle>
         </DialogHeader>
 
         {loading ? (
