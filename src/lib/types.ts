@@ -95,6 +95,16 @@ export type GenerateRequest = {
    * '…' take @audio1 as a reference"). Up to 10, 30 seconds combined.
    */
   sourceAudioUrls?: string[] | null;
+  /**
+   * Video only: reference clip(s) used purely for their subject, motion or
+   * style — not an edit/extend source, so duration and ratio stay whatever
+   * the request asks for. Distinct from `sourceVideoUrl`: that field is the
+   * ONE clip being edited or extended (locked duration/ratio); this is up to
+   * 10 clips (30s combined) informing a fresh generation. The prompt
+   * addresses them as @video1, @video2, … Mutually exclusive with
+   * `sourceVideoUrl` in the studio UI.
+   */
+  referenceVideoUrls?: string[] | null;
   /** Video output resolution — 480p renders ~2x faster (fast preview) */
   videoResolution?: "480p" | "720p" | "1080p";
 };

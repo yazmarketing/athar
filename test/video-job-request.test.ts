@@ -42,6 +42,12 @@ describe("videoRequestForJob", () => {
     expect(videoRequestForJob(job({ aspect: "21:9" })).ratio).toBe("16:9");
   });
 
+  it("carries the negative prompt through for the payload builder to fold in", () => {
+    const req = videoRequestForJob(job({ negative_prompt: "blurry, subtitles" }));
+    expect(req.negativePrompt).toBe("blurry, subtitles");
+    expect(videoRequestForJob(job()).negativePrompt).toBeUndefined();
+  });
+
   it("clamps 1080p down on a tier whose model can't render it", () => {
     const draft = videoRequestForJob(
       job({ tier: "draft", input: { videoResolution: "1080p" } })
@@ -87,6 +93,31 @@ describe("videoRequestForJob", () => {
     );
     expect(req.videoUrls).toEqual(["https://cdn/a.mp4"]);
     expect(req.imageUrls).toBeUndefined();
+  });
+
+  it("passes subject/motion/style reference clips separately from the edit source", () => {
+    const req = videoRequestForJob(
+      job({
+        input: {
+          referenceVideoUrls: ["https://cdn/motion.mp4", "https://cdn/style.mp4"],
+        },
+      })
+    );
+    expect(req.referenceVideoUrls).toEqual([
+      "https://cdn/motion.mp4",
+      "https://cdn/style.mp4",
+    ]);
+    expect(req.videoUrls).toBeUndefined();
+  });
+
+  it("clamps reference videos to the Seedance limit of 10", () => {
+    const urls = Array.from({ length: 12 }, (_, i) => `https://cdn/v${i}.mp4`);
+    const req = videoRequestForJob(job({ input: { referenceVideoUrls: urls } }));
+    expect(req.referenceVideoUrls).toHaveLength(10);
+  });
+
+  it("omits referenceVideoUrls when nothing is attached", () => {
+    expect(videoRequestForJob(job()).referenceVideoUrls).toBeUndefined();
   });
 
   it("passes attached lip-sync audio through as audio urls", () => {

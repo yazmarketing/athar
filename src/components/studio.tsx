@@ -12,8 +12,11 @@ import {
   CheckSquare,
   ChevronDown,
   Clapperboard,
+  Clock,
+  Cpu,
   Film,
   FolderKanban,
+  Gem,
   Heart,
   HelpCircle,
   Home,
@@ -55,12 +58,15 @@ import {
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { uploadImageFile } from "@/lib/upload-image";
 import { isAudioFile, uploadAudioFile } from "@/lib/upload-audio";
+import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
   ChipPopover,
   EmotionWheel,
   PacingCards,
   PresetList,
 } from "@/components/cinema-studio/controls";
+import { AspectIcon } from "@/components/aspect-icon";
+import { Slider } from "@/components/ui/slider";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { PromptEditor } from "@/components/prompt-editor";
@@ -183,12 +189,18 @@ const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
   { value: "4K", label: "4K" },
 ];
 
-const VIDEO_DURATIONS = [5, 8, 10, 15, 20, 30];
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
 const MAX_VIDEO_IMAGES = 9;
 
 /** Seedance 2.5 lip-sync: up to 10 reference audio clips, 30s combined. */
 const MAX_AUDIO_CLIPS = 10;
+
+/**
+ * Seedance 2.5 subject/motion/style reference clips: up to 10, 30s combined.
+ * Distinct from the single `videoEditSource` (v2v edit/extend) — these feed
+ * a fresh generation and never lock its duration or aspect ratio.
+ */
+const MAX_REFERENCE_VIDEOS = 10;
 
 /** Mention tokens the prompt box tints — split() keeps them via the capture. */
 const PROMPT_TOKEN_RE = /(@(?:image|video|audio)\d+\b)/gi;
@@ -346,6 +358,14 @@ export function Studio() {
   >("720p");
   const [generating, setGenerating] = useState(false);
   /**
+   * Collapses the prompt editor to a slim summary row once Generate is
+   * clicked, for the life of the render — not just the ~1s request that
+   * queues it (that's what `generating` alone covers). Reset in `openTool`,
+   * so every fresh-session entry point (Vary, Edit, Extend, Reuse, a mode
+   * switch) still opens with the editor visible.
+   */
+  const [composerCollapsed, setComposerCollapsed] = useState(false);
+  /**
    * What the last generate produced, kept on the Create view until the next
    * run replaces it. Results used to vanish into the Library the moment the
    * detail modal was closed.
@@ -381,6 +401,13 @@ export function Studio() {
     durationS?: number | null;
   } | null>(null);
   const [uploadingVideoSource, setUploadingVideoSource] = useState(false);
+  // Subject/motion/style reference clips (Seedance 2.5) — a fresh
+  // generation, not an edit source; mutually exclusive with videoEditSource.
+  const [videoRefSources, setVideoRefSources] = useState<
+    { url: string; generationId: string | null }[]
+  >([]);
+  const [uploadingVideoRef, setUploadingVideoRef] = useState(false);
+  const videoRefFileInput = useRef<HTMLInputElement>(null);
   // Lip-sync reference audio (Seedance 2.5) — url + Whisper transcript
   const [audioSources, setAudioSources] = useState<
     { url: string; name: string; transcript: string | null }[]
@@ -781,6 +808,7 @@ export function Studio() {
       )
     );
     setEditorOpen(false);
+    setComposerCollapsed(false);
     setView("create");
   };
 
@@ -1039,14 +1067,6 @@ export function Studio() {
       ),
     [videoJobs]
   );
-  const activeImageJobs = useMemo(
-    () => activeVideoJobs.filter(isImageJob),
-    [activeVideoJobs]
-  );
-  const activeClipJobs = useMemo(
-    () => activeVideoJobs.filter((j) => !isImageJob(j)),
-    [activeVideoJobs]
-  );
 
   // Restore in-flight / recently failed video renders after a refresh
   useEffect(() => {
@@ -1274,6 +1294,7 @@ export function Studio() {
       } = {}
     ) => {
       setGenerating(true);
+      setComposerCollapsed(true);
       setLastRun([]);
       const activeMode = opts.mode ?? mode;
       const activeVideoSources = opts.sourceImages ?? videoSources;
@@ -1330,6 +1351,10 @@ export function Studio() {
               activeMode === "t2v"
                 ? (activeVideoEditSource?.generationId ?? null)
                 : null,
+            referenceVideoUrls:
+              activeMode === "t2v" && videoRefSources.length > 0
+                ? videoRefSources.map((s) => s.url)
+                : undefined,
             sourceAudioUrls:
               activeMode === "t2v" && audioSources.length > 0
                 ? audioSources.map((a) => a.url)
@@ -1494,6 +1519,7 @@ export function Studio() {
       activeBrandKitId,
       videoSources,
       videoEditSource,
+      videoRefSources,
       audioSources,
       loadGallery,
       pushNotification,
@@ -1825,6 +1851,7 @@ export function Studio() {
       setDetailTarget(null);
       setVideoDetailTarget(null);
       setVideoSources([]);
+      setVideoRefSources([]);
       openTool("t2v", {
         subject:
           "Create a variation of @video1 — keep the same subject, scene, camera moves, pacing and lighting, but render a naturally different take with fresh details.",
@@ -2227,6 +2254,43 @@ export function Studio() {
     }
   };
 
+  const onReferenceVideoFiles = async (files: FileList | File[] | null) => {
+    if (!files) return;
+    if (videoEditSource) {
+      toast.error("Remove the attached edit source first — reference clips are for a fresh generation");
+      return;
+    }
+    const list = Array.from(files).filter(isVideoFile);
+    if (!list.length) {
+      toast.error("Only MP4 or MOV video");
+      return;
+    }
+    const remaining = MAX_REFERENCE_VIDEOS - videoRefSources.length;
+    if (remaining <= 0) {
+      toast.error(`Up to ${MAX_REFERENCE_VIDEOS} reference videos`);
+      return;
+    }
+    const batch = list.slice(0, remaining);
+    setUploadingVideoRef(true);
+    try {
+      const urls = await Promise.all(batch.map((f) => uploadVideoFile(f)));
+      const added = urls.map((url) => ({ url, generationId: null }));
+      setVideoRefSources((prev) =>
+        [...prev, ...added].slice(0, MAX_REFERENCE_VIDEOS)
+      );
+      toast.success(
+        added.length === 1
+          ? "Reference video attached — describe how to use it, e.g. “follow the camera movement in @video1”"
+          : `${added.length} reference videos attached`
+      );
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingVideoRef(false);
+      if (videoRefFileInput.current) videoRefFileInput.current.value = "";
+    }
+  };
+
   // Attach a verified asset from the BytePlus portrait library
   // (asset://… refs pass moderation where raw people photos are blocked)
   const attachAsset = (rawId: string) => {
@@ -2364,7 +2428,11 @@ export function Studio() {
     dragDepth.current = 0;
     setDragOver(false);
     if (mode === "t2v") {
-      void onVideoSourceFiles(e.dataTransfer.files);
+      const files = Array.from(e.dataTransfer.files);
+      const videoFiles = files.filter(isVideoFile);
+      const otherFiles = files.filter((f) => !isVideoFile(f));
+      if (videoFiles.length) void onReferenceVideoFiles(videoFiles);
+      if (otherFiles.length) void onVideoSourceFiles(otherFiles);
     } else {
       void onReferenceFiles(e.dataTransfer.files);
     }
@@ -2405,6 +2473,7 @@ export function Studio() {
       source_image_urls?: string[];
       source_video_url?: string;
       source_video_generation_id?: string;
+      reference_video_urls?: string[];
       source_audio_urls?: string[];
       video_resolution?: string;
     };
@@ -2466,6 +2535,12 @@ export function Studio() {
             }
           : null
       );
+      setVideoRefSources(
+        (payload.reference_video_urls ?? []).map((url) => ({
+          url,
+          generationId: null,
+        }))
+      );
       const audioUrls = payload.source_audio_urls ?? [];
       const transcripts = inputs.audioTranscripts ?? [];
       setAudioSources(
@@ -2492,6 +2567,7 @@ export function Studio() {
     } else {
       setVideoSources([]);
       setVideoEditSource(null);
+      setVideoRefSources([]);
       setAudioSources([]);
       const modelId = imageModelIdFromEndpoint(g.model_endpoint, g.tier);
       const choice = imageModelChoice(modelId);
@@ -3478,6 +3554,7 @@ export function Studio() {
               }
               setVideoDetailTarget(null);
               setVideoSources([]);
+              setVideoRefSources([]);
               // Start with an empty prompt — the placeholder guides the
               // @video1 edit/extend phrasing. Prefilling the original prompt
               // caused accidental full-scene re-renders.
@@ -3493,6 +3570,38 @@ export function Studio() {
                   ? "Video Generator ready — describe how the scene continues from @video1."
                   : "Video Generator ready — describe the change to @video1."
               );
+            }}
+            onAddReferenceVideo={(g) => {
+              if (!g.output_url) {
+                toast.message("No video");
+                return;
+              }
+              if (videoEditSource) {
+                toast.error("Remove the attached edit source first");
+                return;
+              }
+              if (videoRefSources.some((s) => s.url === g.output_url)) {
+                toast.error("Already attached");
+                return;
+              }
+              if (videoRefSources.length >= MAX_REFERENCE_VIDEOS) {
+                toast.error(`Up to ${MAX_REFERENCE_VIDEOS} reference videos`);
+                return;
+              }
+              setVideoDetailTarget(null);
+              // Additive: keep the prompt the person is already writing —
+              // only jump into a fresh Create session when not already there.
+              if (mode !== "t2v" || view !== "create") {
+                openTool("t2v", null);
+              }
+              const url = g.output_url;
+              setVideoRefSources((prev) => {
+                const next = [...prev, { url, generationId: g.id }];
+                toast.message(
+                  `Video Generator ready — reference it as @video${next.length}`
+                );
+                return next;
+              });
             }}
             onOpenSourceVideo={(generationId) => {
               const source = (generations ?? []).find(
@@ -3996,6 +4105,11 @@ export function Studio() {
                       {videoJobs.map((job) => {
                         const active =
                           job.status === "running" || job.status === "queued";
+                        // The most recent active render gets a bit more
+                        // presence — it's the one thing actually happening
+                        // right now, so it shouldn't read as just another
+                        // log line.
+                        const hero = active && job.id === activeVideoJobs[0]?.id;
                         const referenceTs = job.completed_at
                           ? new Date(job.completed_at).getTime()
                           : jobsClock || new Date(job.updated_at).getTime();
@@ -4009,10 +4123,22 @@ export function Studio() {
                         return (
                           <div
                             key={job.id}
-                            className="flex items-center gap-3 rounded-xl bg-card px-4 py-3 ring-1 ring-border"
+                            className={cn(
+                              "relative flex items-center gap-3 overflow-hidden rounded-xl bg-card px-4 py-3 ring-1 ring-border",
+                              hero && "py-4 ring-gold/25"
+                            )}
                           >
+                            {hero && (
+                              <div className="pointer-events-none absolute inset-0 animate-pulse bg-gold/[0.04]" />
+                            )}
                             {active ? (
-                              <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
+                              hero ? (
+                                <span className="relative flex size-10 shrink-0 items-center justify-center rounded-xl bg-gold-soft ring-1 ring-gold/25">
+                                  <Loader2 className="size-5 animate-spin text-gold" />
+                                </span>
+                              ) : (
+                                <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
+                              )
                             ) : job.status === "completed" ? (
                               isImageJob(job) ? (
                                 <ImageIcon className="size-4 shrink-0 text-gold" />
@@ -4022,8 +4148,13 @@ export function Studio() {
                             ) : (
                               <X className="size-4 shrink-0 text-muted-foreground" />
                             )}
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-sm">
+                            <div className="relative min-w-0 flex-1">
+                              <p
+                                className={cn(
+                                  "truncate text-sm",
+                                  hero && "font-medium"
+                                )}
+                              >
                                 {job.final_prompt}
                               </p>
                               <p className="mt-0.5 text-xs text-muted-foreground">
@@ -4130,35 +4261,6 @@ export function Studio() {
                                 : "video"
                           }
                           aspect={aspect}
-                        />
-                      ))}
-                    </div>
-                  ) : mode === "t2i" && activeImageJobs.length > 0 ? (
-                    <div
-                      className={cn(
-                        "mx-auto grid w-full gap-4 pt-2",
-                        activeImageJobs.length > 1
-                          ? "max-w-4xl grid-cols-1 sm:grid-cols-2"
-                          : "max-w-2xl grid-cols-1"
-                      )}
-                    >
-                      {activeImageJobs.map((job) => (
-                        <GenerationPlaceholderCard
-                          key={job.id}
-                          kind="image"
-                          aspect={job.aspect || "16:9"}
-                          startedAtMs={new Date(job.created_at).getTime()}
-                        />
-                      ))}
-                    </div>
-                  ) : mode === "t2v" && activeClipJobs.length > 0 ? (
-                    <div className="mx-auto grid w-full max-w-2xl grid-cols-1 gap-4 pt-2">
-                      {activeClipJobs.map((job) => (
-                        <GenerationPlaceholderCard
-                          key={job.id}
-                          kind={job.kind === "v2v" ? "edit" : "video"}
-                          aspect={job.aspect || "16:9"}
-                          startedAtMs={new Date(job.created_at).getTime()}
                         />
                       ))}
                     </div>
@@ -4759,7 +4861,44 @@ export function Studio() {
         {/* Floating prompt dock — create views only */}
         {showDock && (
           <>
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center px-4 pb-4 sm:pb-6">
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center justify-center gap-2 px-4 pb-4 sm:pb-6">
+            {/* Higgsfield-style Image/Video switch — its own floating panel
+                beside the dock, not nested inside it. Same destination as
+                the sidebar's Image Generator / Video Generator entries,
+                just reachable without leaving the composer. */}
+            <div className="dock-glass pointer-events-auto flex shrink-0 flex-col gap-1.5 rounded-2xl p-1.5">
+              <button
+                type="button"
+                onClick={() => mode !== "t2i" && openTool("t2i")}
+                aria-pressed={mode === "t2i"}
+                title="Image Generator"
+                className={cn(
+                  "flex w-14 flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-medium transition sm:w-16",
+                  mode === "t2i"
+                    ? "bg-white text-black"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                )}
+              >
+                <ImageIcon className="size-4" />
+                Image
+              </button>
+              <button
+                type="button"
+                onClick={() => mode !== "t2v" && openTool("t2v")}
+                aria-pressed={mode === "t2v"}
+                title="Video Generator"
+                className={cn(
+                  "flex w-14 flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-medium transition sm:w-16",
+                  mode === "t2v"
+                    ? "bg-white text-black"
+                    : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                )}
+              >
+                <Clapperboard className="size-4" />
+                Video
+              </button>
+            </div>
+
             <div
               ref={dockRef}
               data-tour="dock"
@@ -4782,12 +4921,12 @@ export function Studio() {
                     <Paperclip className="size-6 text-gold" />
                     <p className="text-sm font-medium text-foreground">
                       {mode === "t2v"
-                        ? "Drop image(s) for the video"
+                        ? "Drop image(s) or reference video(s)"
                         : "Drop reference image"}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {mode === "t2v"
-                        ? `JPEG, PNG, or WebP · up to ${MAX_VIDEO_IMAGES} · 1 = first frame, 2+ = references`
+                        ? `JPEG/PNG/WebP · up to ${MAX_VIDEO_IMAGES}, 1 = first frame · or MP4/MOV · up to ${MAX_REFERENCE_VIDEOS} reference clips`
                         : `JPEG, PNG, or WebP · up to ${maxRefs}`}
                     </p>
                   </div>
@@ -4827,7 +4966,18 @@ export function Studio() {
                 />
               )}
 
-              {mode === "t2v" && videoEditSource && (
+              {mode === "t2v" && (
+                <input
+                  ref={videoRefFileInput}
+                  type="file"
+                  accept="video/mp4,video/quicktime,.mp4,.mov"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => void onReferenceVideoFiles(e.target.files)}
+                />
+              )}
+
+              {!composerCollapsed && mode === "t2v" && videoEditSource && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <video
                     src={`${videoEditSource.url}#t=0.1`}
@@ -4863,7 +5013,7 @@ export function Studio() {
                 </div>
               )}
 
-              {mode === "t2v" && videoSources.length > 0 && (
+              {!composerCollapsed && mode === "t2v" && videoSources.length > 0 && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <div className="flex max-w-[60%] flex-wrap items-center gap-1.5">
                     {videoSources.map((s, i) => {
@@ -4931,7 +5081,7 @@ export function Studio() {
                 </div>
               )}
 
-              {mode === "t2v" && audioSources.length > 0 && (
+              {!composerCollapsed && mode === "t2v" && audioSources.length > 0 && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
                     {audioSources.map((a, i) => (
@@ -4966,6 +5116,38 @@ export function Studio() {
                   </div>
                   <p className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">
                     Lip-sync — the character speaks these lines
+                  </p>
+                </div>
+              )}
+
+              {!composerCollapsed && mode === "t2v" && videoRefSources.length > 0 && (
+                <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                    {videoRefSources.map((s, i) => (
+                      <span
+                        key={`${s.url}-${i}`}
+                        title={s.url}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-white/5 py-1 pr-1.5 pl-2.5 text-xs text-foreground ring-1 ring-gold/30"
+                      >
+                        <Film className="size-3 shrink-0 text-gold" />
+                        <span className="truncate">@video{i + 1}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove reference video ${i + 1}`}
+                          onClick={() =>
+                            setVideoRefSources((prev) =>
+                              prev.filter((_, idx) => idx !== i)
+                            )
+                          }
+                          className="flex size-4 shrink-0 items-center justify-center rounded-full bg-foreground text-background transition hover:scale-110"
+                        >
+                          <X className="size-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  <p className="hidden shrink-0 text-[11px] text-muted-foreground sm:block">
+                    Reference clips — describe each clip&apos;s role in the prompt
                   </p>
                 </div>
               )}
@@ -5021,7 +5203,7 @@ export function Studio() {
             {/* Cinema Studio — the director chips row (Higgsfield-style).
                 Wraps instead of scrolling so the upward popovers aren't
                 clipped by an overflow container. */}
-            {!generating && mode === "t2v" && cinemaOn && (
+            {!generating && !composerCollapsed && mode === "t2v" && cinemaOn && (
               <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
                 <ChipPopover
                   label="Film setup"
@@ -5171,24 +5353,48 @@ export function Studio() {
               </div>
             )}
 
-            {generating ? (
+            {generating || composerCollapsed ? (
               <div className="flex items-center gap-3 px-1 py-3">
-                <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
+                {generating ? (
+                  <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
+                ) : (
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-gold-soft ring-1 ring-gold/25">
+                    {mode === "t2v" ? (
+                      <Clapperboard className="size-4 text-gold" />
+                    ) : (
+                      <ImageIcon className="size-4 text-gold" />
+                    )}
+                  </span>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-foreground">
                     {subject ||
                       (mode === "t2v" ? "Starting render…" : "Generating…")}
                   </p>
                   <p className="text-[11px] text-muted-foreground">
-                    {smartStage
-                      ? smartStage
-                      : mode === "t2v"
-                        ? "Starting render — it keeps going even if you leave"
-                        : `Generating ${numOutputs} image${
-                            numOutputs > 1 ? "s" : ""
-                          }… preview appears above`}
+                    {generating
+                      ? (smartStage
+                          ? smartStage
+                          : mode === "t2v"
+                            ? "Starting render — it keeps going even if you leave"
+                            : `Generating ${numOutputs} image${
+                                numOutputs > 1 ? "s" : ""
+                              }… preview appears above`)
+                      : "Rendering above — edit to describe another"}
                   </p>
                 </div>
+                {!generating && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 shrink-0 gap-1.5 text-xs"
+                    onClick={() => setComposerCollapsed(false)}
+                  >
+                    <SquarePen className="size-3" />
+                    Edit
+                  </Button>
+                )}
               </div>
             ) : (
               <div className="relative">
@@ -5368,7 +5574,7 @@ export function Studio() {
               </div>
             )}
 
-              {!generating && (
+              {!generating && !composerCollapsed && (
               <div className="mt-1 flex items-center justify-between gap-2 px-1">
                 <button
                   type="button"
@@ -5402,7 +5608,7 @@ export function Studio() {
           </div>
               )}
 
-              {!generating && detailsOpen && (
+              {!generating && !composerCollapsed && detailsOpen && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <Input
                     placeholder="Action"
@@ -5548,6 +5754,33 @@ export function Studio() {
                     </button>
                   )}
 
+                  {mode === "t2v" && !videoEditSource && (
+                    <button
+                      type="button"
+                      disabled={
+                        uploadingVideoRef ||
+                        videoRefSources.length >= MAX_REFERENCE_VIDEOS
+                      }
+                      onClick={() => videoRefFileInput.current?.click()}
+                      aria-label="Attach reference video"
+                      title="Subject, motion or style reference — not an edit source"
+                      className={cn(
+                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50",
+                        videoRefSources.length > 0 &&
+                          "border-gold/30 text-foreground"
+                      )}
+                    >
+                      {uploadingVideoRef ? (
+                        <Loader2 className="size-3.5 animate-spin" />
+                      ) : (
+                        <Film className="size-3.5" />
+                      )}
+                      {videoRefSources.length === 0
+                        ? "Ref video"
+                        : `${videoRefSources.length} ref video`}
+                    </button>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => setRefLibOpen(true)}
@@ -5555,7 +5788,7 @@ export function Studio() {
                     className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground"
                   >
                     <Boxes className="size-3.5" />
-                    Library
+                    References
                   </button>
 
                   {mode === "t2v" && (
@@ -5574,7 +5807,7 @@ export function Studio() {
                       )}
                     >
                       <ShieldCheck className="size-3.5" />
-                      Asset ID
+                      Verified faces
                     </button>
                   )}
 
@@ -5593,6 +5826,7 @@ export function Studio() {
                         onValueChange={(v) => setTier(v as Tier)}
                       >
                         <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
+                          <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
                           <SelectValue>{selectedModelLabel}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
@@ -5749,21 +5983,48 @@ export function Studio() {
               )}
 
               <span data-tour="output" className="inline-flex">
-              <Select
+              <ChipPopover
+                label="Ratio"
                 value={aspect}
-                onValueChange={(v) => setAspect(v as AspectRatio)}
+                active={false}
+                icon={<AspectIcon ratio={aspect} />}
+                width="w-72"
               >
-                  <SelectTrigger className="h-8 w-auto min-w-[5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ASPECTS.map((a) => (
-                    <SelectItem key={a} value={a}>
-                      {a}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <p className="px-2 pt-1 pb-1.5 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                  Aspect ratio
+                </p>
+                <div className="grid grid-cols-3 gap-1.5 p-1">
+                  {ASPECTS.map((a) => {
+                    const selected = a === aspect;
+                    return (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => setAspect(a)}
+                        className={cn(
+                          "flex flex-col items-center gap-1.5 rounded-lg border py-2.5 transition",
+                          selected
+                            ? "border-gold/50 bg-gold/10"
+                            : "border-white/10 bg-white/5 hover:border-white/25"
+                        )}
+                      >
+                        <AspectIcon
+                          ratio={a}
+                          className={selected ? "text-gold" : "text-foreground"}
+                        />
+                        <span
+                          className={cn(
+                            "text-[11px]",
+                            selected ? "text-gold" : "text-muted-foreground"
+                          )}
+                        >
+                          {a}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </ChipPopover>
 
                 {mode === "t2i" && (
                   <Select
@@ -5771,6 +6032,7 @@ export function Studio() {
                     onValueChange={(v) => setResolution(v as ImageResolution)}
                   >
                     <SelectTrigger className="h-8 w-auto min-w-[4rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
+                      <Gem className="size-3.5 shrink-0 text-muted-foreground" />
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -5790,30 +6052,41 @@ export function Studio() {
                 {mode === "t2v" && videoEditSource ? (
                   <span
                     title="Seedance keeps the source clip's length when you edit a video"
-                    className="inline-flex h-8 items-center rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
                   >
+                    <Clock className="size-3.5 shrink-0" />
                     {videoEditSource.durationS
                       ? `${Math.round(Number(videoEditSource.durationS))}s source`
                       : "Same as source"}
                   </span>
                 ) : mode === "t2v" ? (
-                    <Select
-                      value={String(durationS)}
-                      onValueChange={(v) => setDurationS(Number(v))}
+                    <ChipPopover
+                      label="Duration"
+                      value={`${durationS}s`}
+                      icon={<Clock className="size-3.5" />}
+                      active={false}
+                      width="w-72"
                     >
-                      <SelectTrigger className="h-8 w-auto min-w-[4.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VIDEO_DURATIONS.filter(
-                          (d) => d <= (model.maxDuration || 30)
-                        ).map((d) => (
-                          <SelectItem key={d} value={String(d)}>
-                            {d}s
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      <div className="px-2 pt-1 pb-2">
+                        <p className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                          Choose duration
+                        </p>
+                        <p className="mt-2 mb-3 text-center text-2xl font-semibold text-foreground">
+                          {durationS}s
+                        </p>
+                        <Slider
+                          min={4}
+                          max={model.maxDuration || 30}
+                          step={1}
+                          value={[durationS]}
+                          onValueChange={([v]) => setDurationS(v)}
+                        />
+                        <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>4s</span>
+                          <span>{model.maxDuration || 30}s</span>
+                        </div>
+                      </div>
+                    </ChipPopover>
                   ) : null}
 
                 {mode === "t2v" ? (
@@ -5824,6 +6097,7 @@ export function Studio() {
                       }
                     >
                       <SelectTrigger className="h-8 w-auto min-w-[5.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
+                        <Gem className="size-3.5 shrink-0 text-muted-foreground" />
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>

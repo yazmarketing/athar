@@ -1,5 +1,6 @@
 "use client";
 
+import { Cpu } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -53,6 +54,7 @@ export function ImageModelSelect({
       }}
     >
       <SelectTrigger className={cn("text-xs", className)}>
+        <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
         <SelectValue>{selected?.label ?? "Model"}</SelectValue>
       </SelectTrigger>
       <SelectContent>

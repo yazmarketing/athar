@@ -5,6 +5,8 @@ import {
   AUDIO_UPLOAD_TYPES,
   IMAGE_UPLOAD_MAX_BYTES,
   IMAGE_UPLOAD_TYPES,
+  VIDEO_UPLOAD_MAX_BYTES,
+  VIDEO_UPLOAD_TYPES,
 } from "@/lib/image-upload-limits";
 
 const AUDIO_EXTS: [string, string][] = [
@@ -25,6 +27,12 @@ function extFor(contentType: string, filename: string): string {
     }
     return AUDIO_EXTS.find(([hint]) => contentType.includes(hint))?.[1] ?? "mp3";
   }
+  if (contentType === "video/quicktime" || filename.toLowerCase().endsWith(".mov")) {
+    return "mov";
+  }
+  if (VIDEO_UPLOAD_TYPES.has(contentType)) {
+    return "mp4";
+  }
   if (contentType.includes("png") || filename.toLowerCase().endsWith(".png")) {
     return "png";
   }
@@ -35,9 +43,10 @@ function extFor(contentType: string, filename: string): string {
 }
 
 /**
- * Presigned PUT for reference images and lip-sync reference audio. A 29MB
- * PNG must not travel through `/api/upload` — that path buffers the file
- * in memory on a 1 GiB instance.
+ * Presigned PUT for reference images, lip-sync reference audio, and
+ * Seedance reference video clips. A 29MB PNG (or any video) must not travel
+ * through `/api/upload` — that path buffers the file in memory on a 1 GiB
+ * instance.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -51,14 +60,16 @@ export async function POST(req: NextRequest) {
     };
     const contentType = body.contentType?.trim() ?? "";
     const filename = body.filename?.trim() ?? "";
+    const isVideo = VIDEO_UPLOAD_TYPES.has(contentType);
     if (
       !IMAGE_UPLOAD_TYPES.has(contentType) &&
-      !AUDIO_UPLOAD_TYPES.has(contentType)
+      !AUDIO_UPLOAD_TYPES.has(contentType) &&
+      !isVideo
     ) {
       return NextResponse.json(
         {
           error:
-            "Only JPEG, PNG, or WebP images — or MP3, WAV, M4A, AAC, or OGG audio",
+            "Only JPEG, PNG, or WebP images — MP3, WAV, M4A, AAC, or OGG audio — or MP4/MOV video",
         },
         { status: 400 }
       );
@@ -67,9 +78,10 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(bytes) || bytes <= 0) {
       return NextResponse.json({ error: "File size is required" }, { status: 400 });
     }
-    if (bytes > IMAGE_UPLOAD_MAX_BYTES) {
+    const maxBytes = isVideo ? VIDEO_UPLOAD_MAX_BYTES : IMAGE_UPLOAD_MAX_BYTES;
+    if (bytes > maxBytes) {
       return NextResponse.json(
-        { error: "File must be 32MB or smaller" },
+        { error: `File must be ${Math.round(maxBytes / (1024 * 1024))}MB or smaller` },
         { status: 413 }
       );
     }

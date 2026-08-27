@@ -1,6 +1,6 @@
 import "server-only";
 import { arkCreateVideoTask, type ArkVideoRequest } from "@/lib/byteplus-server";
-import { resolveModel, type Tier } from "@/config/models";
+import { resolveModel, seedanceRealCost, type Tier } from "@/config/models";
 import {
   ensureGenerationModes,
   insertGeneration,
@@ -39,6 +39,8 @@ type VideoJobInput = {
   sourceImageUrl?: string | null; // legacy single-image jobs
   sourceImageUrls?: string[] | null;
   sourceVideoUrl?: string | null;
+  /** Subject/motion/style reference clips — see ArkVideoRequest.referenceVideoUrls */
+  referenceVideoUrls?: string[] | null;
   sourceAudioUrls?: string[] | null;
   videoResolution?: string | null;
   prompt?: PromptInputs;
@@ -69,6 +71,12 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   const model = resolveModel(job.kind, job.tier as Tier);
   const imageUrls = videoJobSourceImages(input);
   const sourceVideoUrl = input.sourceVideoUrl?.trim() || null;
+  // Seedance 2.5 accepts up to 10 reference video clips (30s combined) —
+  // same ceiling as reference audio.
+  const referenceVideoUrls = (input.referenceVideoUrls ?? [])
+    .map((u) => u.trim())
+    .filter(Boolean)
+    .slice(0, 10);
   // Seedance 2.5 accepts up to 10 reference audio clips (30s combined).
   const audioUrls = (input.sourceAudioUrls ?? [])
     .map((u) => u.trim())
@@ -94,12 +102,16 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   return {
     model: model.slug,
     prompt: job.final_prompt,
+    negativePrompt: job.negative_prompt || undefined,
     ratio: ASPECT_TO_VIDEO_RATIO[job.aspect] ?? "16:9",
     resolution,
     duration,
     generateAudio: model.supportsAudio,
     imageUrls: imageUrls.length ? imageUrls : undefined,
     videoUrls: sourceVideoUrl ? [sourceVideoUrl] : undefined,
+    referenceVideoUrls: referenceVideoUrls.length
+      ? referenceVideoUrls
+      : undefined,
     audioUrls: audioUrls.length ? audioUrls : undefined,
   };
 }
@@ -136,7 +148,8 @@ export async function submitVideoJob(jobId: string): Promise<void> {
  */
 export async function finalizeVideoJob(
   job: GenerationJobRecord,
-  providerUrl: string
+  providerUrl: string,
+  usage?: { completion_tokens?: number; total_tokens?: number } | null
 ): Promise<void> {
   try {
     const outputUrl = await persistOutputToSpaces(
@@ -148,12 +161,26 @@ export async function finalizeVideoJob(
 
     const model = resolveModel(job.kind, job.tier as Tier);
     const durationS = job.duration_s != null ? Number(job.duration_s) : null;
-    const cost =
-      model.unit === "second" && durationS != null
-        ? model.costPerUnit * durationS
-        : model.costPerUnit;
-
     const input = videoJobInput(job);
+    // The real, token-billed cost ModelArk charged for this task, when we
+    // have the usage to compute it — falls back to the flat per-second
+    // placeholder only for models this registry doesn't have confirmed
+    // rates for.
+    const hasVideoInput =
+      Boolean(input.sourceVideoUrl?.trim()) ||
+      Boolean(input.referenceVideoUrls?.some((u) => u.trim()));
+    const realCost = seedanceRealCost(
+      model.slug,
+      input.videoResolution,
+      usage?.total_tokens ?? usage?.completion_tokens ?? null,
+      hasVideoInput
+    );
+    const cost =
+      realCost ??
+      (model.unit === "second" && durationS != null
+        ? model.costPerUnit * durationS
+        : model.costPerUnit);
+
     const sourceImages = videoJobSourceImages(input);
     if (job.kind === "v2v") {
       // Older databases restrict generations.mode — relax before insert
@@ -176,6 +203,10 @@ export async function finalizeVideoJob(
         // Lineage back to the clip this edit/extend started from (v2v)
         source_video_url: input.sourceVideoUrl ?? undefined,
         source_video_generation_id: input.sourceVideoGenerationId ?? undefined,
+        // The clip(s) referenced for subject/motion/style — not an edit source
+        reference_video_urls: input.referenceVideoUrls?.length
+          ? input.referenceVideoUrls
+          : undefined,
         // The audio clip(s) the render lip-synced to
         source_audio_urls: input.sourceAudioUrls?.length
           ? input.sourceAudioUrls

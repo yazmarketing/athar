@@ -107,7 +107,7 @@ async function advance(job: GenerationJobRecord) {
     }
     const claimed = await claimJobForFinalize(job.id, FINALIZE_RETRY_MS);
     // No claim means another poll is already storing this clip.
-    if (claimed) after(() => finalizeVideoJob(claimed, providerUrl));
+    if (claimed) after(() => finalizeVideoJob(claimed, providerUrl, task.usage));
     return { job: claimed ?? job, generation: null };
   }
 

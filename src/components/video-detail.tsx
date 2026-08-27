@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  Film,
   Heart,
   Loader2,
   RefreshCw,
@@ -43,6 +44,12 @@ type Props = {
   onOpenSource?: (generationId: string) => void;
   /** Attach this clip as a Seedance reference video (v2v edit/extend) */
   onEditVideo?: (g: GenerationRecord, intent: "edit" | "extend") => void;
+  /**
+   * Attach this clip as a subject/motion/style reference for a fresh
+   * generation — not an edit source, so duration/ratio stay free. Additive:
+   * can be called more than once to build up a multi-reference set.
+   */
+  onAddReferenceVideo?: (g: GenerationRecord) => void;
   /** Open the video generation this clip was edited/extended from */
   onOpenSourceVideo?: (generationId: string) => void;
   projects?: ProjectRecord[];
@@ -81,6 +88,7 @@ export function VideoDetail({
   onRated,
   onOpenSource,
   onEditVideo,
+  onAddReferenceVideo,
   onOpenSourceVideo,
   projects = [],
   clients = [],
@@ -540,6 +548,17 @@ export function VideoDetail({
                     <span className="text-foreground/40">→</span>
                   </Button>
                 </div>
+              )}
+              {onAddReferenceVideo && videoUrl && (
+                <Button
+                  variant="outline"
+                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                  onClick={() => onAddReferenceVideo(g)}
+                  title="Subject, motion or style reference for a fresh generation — not an edit source"
+                >
+                  <Film className="size-4" />
+                  Add as reference
+                </Button>
               )}
               <Button
                 variant="outline"

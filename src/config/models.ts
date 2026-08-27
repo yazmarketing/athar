@@ -119,7 +119,9 @@ const I2V: CapabilityConfig = {
       supportsAudio: false,
       notes: "Seedance 2.0 Mini — cheap iterations",
     },
-    // VERIFY — Seedance 2.5 (BytePlus catalog Aug 2026)
+    // Confirmed GA per the BytePlus Seedance 2.5 practice guide (Aug 2026):
+    // Playground + API both live since Aug 7, 480p/720p/1080p, 4–30s.
+    // costPerUnit stays an estimate — see the pricing note on T2V below.
     standard: {
       provider: "byteplus",
       slug: "dreamina-seedance-2-5-260628",
@@ -129,9 +131,9 @@ const I2V: CapabilityConfig = {
       maxDuration: 30,
       supportsReference: true,
       supportsAudio: true,
-      notes: "Seedance 2.5 — 4–30s, 480p/720p API",
+      notes: "Seedance 2.5 — 4–30s, 480p/720p/1080p API",
     },
-    // VERIFY — Seedance 2.5 hero path
+    // Confirmed GA — see the standard-tier note above.
     hero: {
       provider: "byteplus",
       slug: "dreamina-seedance-2-5-260628",
@@ -165,18 +167,23 @@ const T2V: CapabilityConfig = {
       supportsAudio: false,
       notes: "Seedance 2.0 Mini — cheap iterations",
     },
-    // VERIFY — Seedance 2.5 (BytePlus catalog Aug 2026)
+    // Confirmed GA per the BytePlus Seedance 2.5 practice guide (Aug 2026):
+    // Playground + API both live since Aug 7, 480p/720p/1080p, 4–30s.
     standard: {
       provider: "byteplus",
       slug: "dreamina-seedance-2-5-260628",
+      // Token-billed by the input's video/no-video split and resolution
+      // ($10.70–$11.70/M tokens without a video input, $6.40–$7.00/M with
+      // one per the practice guide) — costPerUnit is a flat per-second
+      // estimate pending a token-per-second conversion from ModelArk billing.
       costPerUnit: 0.1,
       unit: "second",
       maxDuration: 30,
       supportsReference: false,
       supportsAudio: true,
-      notes: "Seedance 2.5 — 4–30s, 480p/720p API",
+      notes: "Seedance 2.5 — 4–30s, 480p/720p/1080p API",
     },
-    // VERIFY — Seedance 2.5 hero path
+    // Confirmed GA — see the standard-tier note above.
     hero: {
       provider: "byteplus",
       slug: "dreamina-seedance-2-5-260628",
@@ -238,6 +245,84 @@ const V2V: CapabilityConfig = {
   },
   fallbacks: [],
 };
+
+// ---------------------------------------------------------------------------
+// Seedance real cost — token-billed, confirmed against BytePlus's own docs
+// ---------------------------------------------------------------------------
+
+/**
+ * `costPerUnit` above is a flat per-second placeholder for the pre-submit
+ * estimate shown before a render starts. The real bill is token-based:
+ * every completed Ark video task returns `usage.total_tokens` (see
+ * ArkVideoTask in byteplus-server.ts), and BytePlus's own docs say that
+ * number — not any formula — is the ground truth ("the actual token
+ * consumption is subject to the usage.completion_tokens parameter").
+ *
+ * Rates below (USD per million tokens) are confirmed against
+ * https://docs.byteplus.com/en/docs/ModelArk/1544106, checked 2026-08-27,
+ * for the two Seedance model slugs this registry actually uses. BytePlus
+ * runs live time-boxed discounts on some rows; `promo` gates those by an
+ * ISO expiry so this table self-reverts to list price once a promo lapses
+ * instead of silently overcharging (or undercharging) afterward — re-check
+ * the pricing page if a new promo appears, since gated entries here.
+ */
+type SeedanceRate = { withoutVideo: number; withVideo: number };
+type SeedanceRateRow = SeedanceRate & { promo?: SeedanceRate & { until: string } };
+
+const SEEDANCE_TOKEN_RATES: Record<
+  string,
+  Partial<Record<"480p" | "720p" | "1080p", SeedanceRateRow>>
+> = {
+  "dreamina-seedance-2-5-260628": {
+    "480p": { withoutVideo: 10.7, withVideo: 6.4 },
+    "720p": { withoutVideo: 10.7, withVideo: 6.4 },
+    "1080p": {
+      withoutVideo: 11.7,
+      withVideo: 7.0,
+      // 1080p only: 28% off list, 2026-08-14 14:00 UTC+8 → 2026-09-17 14:00 UTC+8
+      promo: {
+        withoutVideo: 11.7 * 0.72,
+        withVideo: 7.0 * 0.72,
+        until: "2026-09-17T06:00:00.000Z",
+      },
+    },
+  },
+  "dreamina-seedance-2-0-mini-260615": {
+    // 480p/720p only: 60% off list, 2026-08-07 14:00 UTC+8 → 2026-09-07 14:00 UTC+8
+    "480p": {
+      withoutVideo: 3.5,
+      withVideo: 2.1,
+      promo: { withoutVideo: 3.5 * 0.4, withVideo: 2.1 * 0.4, until: "2026-09-07T06:00:00.000Z" },
+    },
+    "720p": {
+      withoutVideo: 3.5,
+      withVideo: 2.1,
+      promo: { withoutVideo: 3.5 * 0.4, withVideo: 2.1 * 0.4, until: "2026-09-07T06:00:00.000Z" },
+    },
+  },
+};
+
+/**
+ * The real per-video cost from the token count ModelArk actually billed,
+ * not the pre-submit per-second estimate. Returns null when the model or
+ * resolution isn't in the table (e.g. a provider we don't have confirmed
+ * rates for) or usage is missing, so the caller can fall back to the flat
+ * estimate rather than silently reporting zero.
+ */
+export function seedanceRealCost(
+  modelSlug: string,
+  resolution: string | null | undefined,
+  totalTokens: number | null | undefined,
+  hasVideoInput: boolean
+): number | null {
+  if (!totalTokens || totalTokens <= 0) return null;
+  const res = (resolution ?? "720p") as "480p" | "720p" | "1080p";
+  const row = SEEDANCE_TOKEN_RATES[modelSlug]?.[res];
+  if (!row) return null;
+  const active = row.promo && Date.now() < Date.parse(row.promo.until) ? row.promo : row;
+  const perMillion = hasVideoInput ? active.withVideo : active.withoutVideo;
+  return (totalTokens / 1_000_000) * perMillion;
+}
 
 // ---------------------------------------------------------------------------
 // Image Upscaler — Seedream i2i re-render at a higher resolution level

@@ -33,3 +33,16 @@ export const AUDIO_UPLOAD_TYPES = new Set([
   "audio/aac",
   "audio/ogg",
 ]);
+
+/**
+ * Reference clips for Seedance subject/motion/style referencing. BytePlus
+ * accepts up to 200MB per clip; 100MB is a generous ceiling for a reference
+ * (as opposed to a feature-film source) while keeping presigned uploads
+ * quick. Always direct-to-Spaces — never the 8MB app-server fallback.
+ */
+export const VIDEO_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+
+export const VIDEO_UPLOAD_TYPES = new Set([
+  "video/mp4",
+  "video/quicktime",
+]);

@@ -31,6 +31,16 @@ export function audioMentionToken(index: number): string {
 }
 
 /**
+ * The token for the nth attached reference video — either the one edit/
+ * extend source (always `@video1`, since it's the only clip) or the nth of
+ * up to 10 reference clips used for subject/motion/style. Like `@audioN`,
+ * never expanded — Seedance parses `@videoN` natively.
+ */
+export function videoMentionToken(index: number): string {
+  return `@video${index + 1}`;
+}
+
+/**
  * Which attachments a prompt refers to, as 0-based indices, in first-use
  * order and without duplicates. Out-of-range mentions are dropped — a token
  * left behind after its attachment was removed should not address whatever

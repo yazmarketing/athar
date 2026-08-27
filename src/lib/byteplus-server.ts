@@ -113,6 +113,14 @@ export async function arkGenerateImage(
 export type ArkVideoRequest = {
   model: string;
   prompt: string;
+  /**
+   * Optional negative prompt. Seedance's task API has no dedicated field for
+   * this — there is only the single `content[].text`. BytePlus's own
+   * production prompt templates (their "Director Agent" examples, Aug 2026)
+   * put it inline as a labelled "Negative prompt: …" section appended to the
+   * same text, so that's the wire format `buildArkVideoPayload` uses.
+   */
+  negativePrompt?: string;
   /** Aspect ratio string, e.g. "16:9" */
   ratio: string;
   /**
@@ -131,11 +139,22 @@ export type ArkVideoRequest = {
    */
   imageUrls?: string[];
   /**
-   * Optional reference video URL(s) — Seedance 2.x edit/extend. The prompt
-   * addresses them as @video1, @video2, … When present, attached images are
+   * The ONE existing clip being edited or extended (Seedance 2.x edit/
+   * extend). Its presence is what locks output duration/ratio to the source
+   * clip — BytePlus's task-category split treats this as a fundamentally
+   * different operation from `referenceVideoUrls` below, which generates a
+   * NEW clip and never locks anything. When present, attached images are
    * always sent as reference images (never as first frame).
    */
   videoUrls?: string[];
+  /**
+   * Reference clip(s) for subject, motion or style — not a source being
+   * edited/extended, so duration/ratio stay whatever the request asks for.
+   * Up to 10 clips, 30s combined (BytePlus limit). Numbered @video1, @video2
+   * the same way `videoUrls` is — the two are mutually exclusive in
+   * practice, so the numbering never actually overlaps.
+   */
+  referenceVideoUrls?: string[];
   /**
    * Optional reference audio URL(s) — Seedance 2.5 lip-sync / audio-driven
    * generation. The prompt addresses them as @audio1, @audio2, … (per
@@ -157,6 +176,14 @@ export type ArkVideoTask = {
   content?: { video_url?: string };
   error?: { message?: string };
   message?: string;
+  /**
+   * Real token usage for a completed task. Seedance is token-billed, not
+   * per-second — this is the actual number ModelArk charged for, and the
+   * only ground truth for cost (see the pricing note above `resolveModel`
+   * in config/models.ts). `completion_tokens` and `total_tokens` are equal
+   * in every response we've seen; both are read defensively.
+   */
+  usage?: { completion_tokens?: number; total_tokens?: number };
 };
 
 /**
@@ -222,21 +249,34 @@ async function arkRequest<T>(
 export function buildArkVideoPayload(
   req: ArkVideoRequest
 ): Record<string, unknown> {
-  const content: Record<string, unknown>[] = [
-    { type: "text", text: req.prompt },
-  ];
   const images = req.imageUrls ?? [];
-  const videos = req.videoUrls ?? [];
+  const videos = req.videoUrls ?? []; // edit/extend source — locks duration/ratio
+  const refVideos = req.referenceVideoUrls ?? []; // subject/motion/style refs — doesn't lock
+  const allVideos = [...videos, ...refVideos];
   const audios = req.audioUrls ?? [];
   // Verified asset-library refs (asset://…) are only valid as reference
   // images, so a single plain image is the only true first-frame case.
   // A reference video or audio also forces images into reference mode —
   // frame anchors and reference media are mutually exclusive at the API.
   const firstFrameMode =
-    videos.length === 0 &&
+    allVideos.length === 0 &&
     audios.length === 0 &&
     images.length === 1 &&
     !images[0].startsWith("asset://");
+
+  const negative = req.negativePrompt?.trim();
+  const parts = [req.prompt];
+  // BytePlus's Seedance prompt guide calls this out as its own numbered
+  // technique for i2v specifically: without it, the model treats the first
+  // frame as loose inspiration and drifts the subject over the clip.
+  if (firstFrameMode) {
+    parts.push(
+      "The video must stay completely consistent with the reference image's main subject — do not modify its core appearance or setting."
+    );
+  }
+  if (negative) parts.push(`Negative prompt: ${negative}`);
+  const text = parts.join("\n");
+  const content: Record<string, unknown>[] = [{ type: "text", text }];
   if (firstFrameMode) {
     content.push({
       type: "image_url",
@@ -252,7 +292,7 @@ export function buildArkVideoPayload(
       });
     }
   }
-  for (const url of videos) {
+  for (const url of allVideos) {
     content.push({
       type: "video_url",
       video_url: { url },
@@ -277,6 +317,14 @@ export function buildArkVideoPayload(
     // exists when the output carries audio, so it overrides the flag.
     generate_audio: audios.length > 0 ? true : (req.generateAudio ?? true),
   };
+  // BytePlus's Seedance 2.5 practice guide recommends mov for editing/
+  // extension specifically — it preserves colour, brightness and
+  // audio-visual continuity across the cut better than mp4. Our own storage
+  // pipeline re-encodes to browser-safe H.264/MP4 regardless (video-compat.ts),
+  // so this only affects Seedance's own generation quality, not what we serve.
+  if (videos.length > 0) {
+    payload.output_format = "mov";
+  }
   // First-frame generation must not set ratio — the output follows the
   // first-frame image's aspect ratio (ModelArk rejects the param otherwise).
   // Same rule for a reference video: output follows the source clip.

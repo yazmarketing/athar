@@ -65,7 +65,19 @@ export async function POST(req: NextRequest) {
       '  "negativeAdditions" (optional string of things to avoid).',
       "No markdown commentary outside the JSON.",
       mode === "t2v"
-        ? "Bias toward camera motion, pacing, and cinematic shot language."
+        ? [
+            "Bias toward camera motion, pacing, and cinematic shot language.",
+            "Structure the subject as: who/what + location + what happens + genre/style + camera movement.",
+            "For a multi-beat shot, segment the action with second-based timestamps",
+            '("0-3s: … 3-7s: …") at 1-second granularity — never sub-second, and never',
+            "describe a high-frequency repeated action inside one interval.",
+            "Seedance's video API has no negative-prompt parameter — the only negative",
+            "control that reaches it is plain language in the prompt for subtitles/captions",
+            'or audio ("no additional subtitles", "no BGM, only ambient sound"). Never put',
+            "quality bans (blur, distortion, extra limbs) in negativeAdditions for video —",
+            "they are silently ignored, so leave negativeAdditions empty unless the request",
+            "is genuinely about subtitles or the audio track.",
+          ].join(" ")
         : "Bias toward composition, materials, wardrobe, and photographic detail.",
     ].join(" ");
 
