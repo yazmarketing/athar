@@ -37,6 +37,8 @@ type GenerateBody = {
   streaming?: boolean;
   wordTimestamps?: boolean;
   segments?: TtsSegment[];
+  /** Set when this generation's text came from the VO Director pipeline. */
+  directorAnalysisId?: string | null;
 };
 
 const AUDIO_FORMAT = { channels: 1, bitsPerSample: 16 };
@@ -116,6 +118,7 @@ export async function POST(req: NextRequest) {
               clientId: body.clientId ?? null,
               projectId: body.projectId ?? null,
               groupId: body.groupId ?? null,
+              directorAnalysisId: body.directorAnalysisId ?? null,
               createdBy,
             }).catch((err) => console.error("tts: streamed persist failed", err));
             return;
@@ -170,6 +173,7 @@ export async function POST(req: NextRequest) {
       clientId: body.clientId ?? null,
       projectId: body.projectId ?? null,
       groupId: body.groupId ?? null,
+      directorAnalysisId: body.directorAnalysisId ?? null,
       createdBy,
     });
 
@@ -304,6 +308,7 @@ async function persistStreamed(opts: {
   clientId: string | null;
   projectId: string | null;
   groupId: string | null;
+  directorAnalysisId: string | null;
   createdBy: string | null;
 }) {
   const wav = buildWav({ ...AUDIO_FORMAT, sampleRate: opts.sampleRate, data: opts.pcm });
@@ -332,6 +337,7 @@ async function persistStreamed(opts: {
     clientId: opts.clientId,
     projectId: opts.projectId,
     groupId: opts.groupId,
+    directorAnalysisId: opts.directorAnalysisId,
     createdBy: opts.createdBy,
   });
 }

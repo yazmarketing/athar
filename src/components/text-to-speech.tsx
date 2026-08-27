@@ -35,6 +35,9 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { VoiceLibraryDialog } from "@/components/voice-library-dialog";
 import { Waveform } from "@/components/waveform";
 import { ProgressBar } from "@/components/generation-progress";
+import { ModeToggle, VoDirectorBar, type VoDirectorMode } from "@/components/vo-director/vo-director-bar";
+import { DirectorSegmentList } from "@/components/vo-director/director-segments";
+import { TtsScriptDiffDialog, type DiffRow } from "@/components/vo-director/tts-script-diff-dialog";
 import {
   DEFAULT_SAMPLE_RATE,
   DEFAULT_SPEED,
@@ -43,11 +46,14 @@ import {
   MIN_SPEED,
   TTS_PRESETS,
 } from "@/config/tts";
+import { DELIVERY_TAGS, DEFAULT_REGISTER_STRENGTH } from "@/config/tts-director";
 import { MAX_TTS_CHARACTERS, totalCharCount } from "@/lib/tts-segments";
 import { cn, postJson, readJson } from "@/lib/utils";
 import type {
   ClientRecord,
   MunsitVoice,
+  TtsDirectorAnalysis,
+  TtsDirectorSegment,
   TtsFavoriteVoice,
   TtsGenerationRecord,
   TtsSegment,
@@ -60,6 +66,8 @@ type Props = {
   isAdmin?: boolean;
   /** Loaded once on mount/change — e.g. "Continue editing" from Library. */
   initialGeneration?: TtsGenerationRecord | null;
+  /** Surfaces a generation's outcome in the app-wide notifications bell. */
+  onNotify?: (n: { status: "success" | "error"; title: string; body?: string; id?: string | null }) => void;
 };
 
 /** Select can't hold an empty value, so "no client" needs a sentinel. */
@@ -98,6 +106,7 @@ export function TextToSpeech({
   defaultProjectId,
   isAdmin,
   initialGeneration,
+  onNotify,
 }: Props) {
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const [voices, setVoices] = useState<MunsitVoice[] | null>(null);
@@ -130,6 +139,18 @@ export function TextToSpeech({
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [diacritizing, setDiacritizing] = useState<string | null>(null);
   const [favorites, setFavorites] = useState<TtsFavoriteVoice[]>([]);
+
+  // --- VO Director ---------------------------------------------------
+  const [mode, setMode] = useState<VoDirectorMode>("plain");
+  const [delivery, setDelivery] = useState<string[]>([]);
+  const [dialect, setDialect] = useState<"emirati" | "fusha">("emirati");
+  const [registerStrength, setRegisterStrength] = useState(DEFAULT_REGISTER_STRENGTH);
+  const [optimizing, setOptimizing] = useState(false);
+  const [directorAnalysisId, setDirectorAnalysisId] = useState<string | null>(null);
+  const [quickSegments, setQuickSegments] = useState<TtsDirectorSegment[]>([]);
+  const [directorSegments, setDirectorSegments] = useState<TtsDirectorSegment[]>([]);
+  const [generatingMaster, setGeneratingMaster] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   const loadVoices = useCallback(async () => {
     setVoicesLoading(true);
@@ -318,7 +339,7 @@ export function TextToSpeech({
     }
   };
 
-  const generate = async () => {
+  const generate = async (overrides?: { segments?: TtsSegment[]; directorAnalysisId?: string | null }) => {
     if (blockingReason) {
       toast.error(blockingReason);
       return;
@@ -334,6 +355,10 @@ export function TextToSpeech({
     const groupId = currentGroupId ?? crypto.randomUUID();
     if (!currentGroupId) setCurrentGroupId(groupId);
 
+    const effectiveSegments = overrides?.segments ?? segments;
+    const effectiveStreaming =
+      canStream && !overrides?.segments && effectiveSegments.length === segments.length;
+
     try {
       const body = {
         title: title.trim() || speechBlocks[0]?.text.slice(0, 60),
@@ -343,9 +368,10 @@ export function TextToSpeech({
         stability,
         speed,
         sampleRate: DEFAULT_SAMPLE_RATE,
-        streaming: canStream,
+        streaming: effectiveStreaming,
         wordTimestamps,
-        segments,
+        segments: effectiveSegments,
+        directorAnalysisId: overrides?.directorAnalysisId ?? null,
       };
       const res = await fetch("/api/tts/generate", {
         method: "POST",
@@ -353,7 +379,7 @@ export function TextToSpeech({
         body: JSON.stringify(body),
       });
 
-      if (canStream && res.ok && res.headers.get("Content-Type")?.includes("audio/raw")) {
+      if (effectiveStreaming && res.ok && res.headers.get("Content-Type")?.includes("audio/raw")) {
         // Raw PCM16 pass-through — decode via Web Audio and hand the player a
         // WAV blob URL, same object either path ends up rendering.
         const pcm = await res.arrayBuffer();
@@ -361,6 +387,7 @@ export function TextToSpeech({
         const url = URL.createObjectURL(wavBlob);
         setResultAudioUrl(url);
         toast.success("Generated");
+        onNotify?.({ status: "success", title: "Voice-over ready", body: title || undefined });
         void loadVersions(groupId);
         return;
       }
@@ -369,13 +396,192 @@ export function TextToSpeech({
       if (!res.ok || !json.generation) throw new Error(json.error ?? "Generation failed");
       setResult(json.generation);
       toast.success("Generated");
+      onNotify?.({
+        status: "success",
+        title: "Voice-over ready",
+        body: json.generation.title,
+        id: json.generation.id,
+      });
       void loadVersions(groupId);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Generation failed");
+      const message = err instanceof Error ? err.message : "Generation failed";
+      toast.error(message);
+      onNotify?.({ status: "error", title: "Voice-over failed", body: message });
     } finally {
       setGenerating(false);
     }
   };
+
+  /** Delivery tags fold into the campaign context as a plain-English note. */
+  const campaignContext = useMemo(() => {
+    const labels = delivery
+      .map((id) => DELIVERY_TAGS.find((t) => t.id === id)?.label)
+      .filter(Boolean);
+    return labels.length ? { notes: `Desired delivery: ${labels.join(", ")}` } : {};
+  }, [delivery]);
+
+  const scriptText = () => speechBlocks.map((b) => b.text.trim()).filter(Boolean).join("\n");
+
+  /** Quick Optimize — one merged LLM pass, then straight into generation. */
+  const generateWithQuickOptimize = async () => {
+    if (blockingReason) {
+      toast.error(blockingReason);
+      return;
+    }
+    setOptimizing(true);
+    try {
+      const res = await fetch("/api/tts/director/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: scriptText(),
+          campaignContext,
+          mode: "quick",
+          registerStrength,
+          dialect,
+          clientId,
+        }),
+      });
+      const json = await readJson<{
+        analysis?: TtsDirectorAnalysis;
+        segments?: TtsDirectorSegment[];
+        error?: string;
+      }>(res);
+      if (!res.ok || !json.analysis || !json.segments) {
+        throw new Error(json.error ?? "Optimization failed");
+      }
+      setDirectorAnalysisId(json.analysis.id);
+      setQuickSegments(json.segments);
+
+      // v1 simplification: every optimized segment plays in the first
+      // speaker's voice — true per-segment voice assignment for a
+      // multi-speaker Quick Optimize script is a Director Mode capability.
+      const primary = speechBlocks[0];
+      const optimizedSegments: TtsSegment[] = json.segments.map((s) => ({
+        type: "speech",
+        voiceId: primary.voiceId,
+        voiceName: primary.voiceName,
+        text: s.tts || s.spoken || s.original,
+      }));
+      await generate({ segments: optimizedSegments, directorAnalysisId: json.analysis.id });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Optimization failed");
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  /** Director Mode — direction, dialect adaptation, and phonetics, in sequence. */
+  const runDirectorPipeline = async () => {
+    if (blockingReason) {
+      toast.error(blockingReason);
+      return;
+    }
+    setOptimizing(true);
+    setDirectorSegments([]);
+    try {
+      const analyzeRes = await fetch("/api/tts/director/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: scriptText(),
+          campaignContext,
+          mode: "director",
+          registerStrength,
+          dialect,
+          clientId,
+        }),
+      });
+      const analyzeJson = await readJson<{ analysis?: TtsDirectorAnalysis; error?: string }>(
+        analyzeRes
+      );
+      if (!analyzeRes.ok || !analyzeJson.analysis) {
+        throw new Error(analyzeJson.error ?? "Direction pass failed");
+      }
+      const analysisId = analyzeJson.analysis.id;
+      setDirectorAnalysisId(analysisId);
+
+      const adaptRes = await fetch("/api/tts/director/adapt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisId, registerStrength }),
+      });
+      const adaptJson = await readJson<{ error?: string }>(adaptRes);
+      if (!adaptRes.ok) throw new Error(adaptJson.error ?? "Dialect adaptation failed");
+
+      const phoneticsRes = await fetch("/api/tts/director/phonetics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ analysisId }),
+      });
+      const phoneticsJson = await readJson<{ segments?: TtsDirectorSegment[]; error?: string }>(
+        phoneticsRes
+      );
+      if (!phoneticsRes.ok || !phoneticsJson.segments) {
+        throw new Error(phoneticsJson.error ?? "Phonetic adaptation failed");
+      }
+      setDirectorSegments(phoneticsJson.segments.map((s) => ({ ...s, takes: [] })));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Direction failed");
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  /** Stitch every segment's picked take into a final master — no re-synthesis. */
+  const generateMaster = async () => {
+    if (!directorAnalysisId) return;
+    setGeneratingMaster(true);
+    try {
+      const res = await fetch("/api/tts/director/master", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          analysisId: directorAnalysisId,
+          title: title.trim() || undefined,
+          clientId,
+          projectId: defaultProjectId ?? null,
+        }),
+      });
+      const json = await readJson<{ generation?: TtsGenerationRecord; error?: string }>(res);
+      if (!res.ok || !json.generation) throw new Error(json.error ?? "Master generation failed");
+      setResult(json.generation);
+      setCurrentGroupId(json.generation.group_id);
+      toast.success("Master generated");
+      onNotify?.({
+        status: "success",
+        title: "Voice-over ready",
+        body: json.generation.title,
+        id: json.generation.id,
+      });
+      void loadVersions(json.generation.group_id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Master generation failed";
+      toast.error(message);
+      onNotify?.({ status: "error", title: "Voice-over failed", body: message });
+    } finally {
+      setGeneratingMaster(false);
+    }
+  };
+
+  const diffRows: DiffRow[] = (mode === "director" ? directorSegments : quickSegments).map(
+    (s, i) => ({ id: s.id, label: `Segment ${i + 1}`, original: s.original, tts: s.tts || s.spoken })
+  );
+
+  const applyDiffEdit = async (segmentId: string, newText: string) => {
+    const apply = (list: TtsDirectorSegment[]) =>
+      list.map((s) => (s.id === segmentId ? { ...s, tts: newText } : s));
+    if (mode === "director") setDirectorSegments(apply);
+    else setQuickSegments(apply);
+    await fetch(`/api/tts/director/segments/${segmentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tts: newText }),
+    }).catch(() => {});
+  };
+
+  const allTakesPicked =
+    directorSegments.length > 0 && directorSegments.every((s) => s.selected_take_id);
 
   /** Clears the canvas and starts a brand-new work — a fresh Versions group. */
   const startFresh = () => {
@@ -385,6 +591,9 @@ export function TextToSpeech({
     setResult(null);
     if (resultAudioUrl) URL.revokeObjectURL(resultAudioUrl);
     setResultAudioUrl(null);
+    setDirectorAnalysisId(null);
+    setQuickSegments([]);
+    setDirectorSegments([]);
   };
 
   const openLibraryFor = (blockId: string) => {
@@ -502,7 +711,24 @@ export function TextToSpeech({
               New script
             </button>
           )}
+          <div className="ml-auto">
+            <ModeToggle value={mode} onChange={setMode} />
+          </div>
         </div>
+
+        {mode !== "plain" && (
+          <VoDirectorBar
+            delivery={delivery}
+            onDeliveryChange={setDelivery}
+            dialect={dialect}
+            onDialectChange={setDialect}
+            registerStrength={registerStrength}
+            onRegisterStrengthChange={setRegisterStrength}
+            onOpenPronunciationEditor={() => setDiffOpen(true)}
+            pronunciationEditorDisabled={diffRows.length === 0}
+            onSkipToPlain={() => setMode("plain")}
+          />
+        )}
 
         <div className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/8 p-4">
           {blocks.map((block) =>
@@ -624,36 +850,89 @@ export function TextToSpeech({
           )}
         </div>
 
-        <div className="flex items-center justify-between">
-          <span
-            className={cn(
-              "text-xs tabular-nums",
-              overLimit ? "text-destructive" : "text-muted-foreground"
+        {mode === "director" && directorSegments.length > 0 ? (
+          <div className="space-y-3">
+            {speechBlocks.length > 1 && (
+              <p className="text-[11px] text-muted-foreground">
+                Delivery/dialect apply once across the whole script — pick each segment&apos;s
+                voice below.
+              </p>
             )}
-          >
-            {charCount.toLocaleString()}/{MAX_TTS_CHARACTERS.toLocaleString()} characters
-          </span>
-          <Button
-            size="lg"
-            onClick={() => void generate()}
-            disabled={generating}
-            title={blockingReason ?? undefined}
-            className={cn(
-              "h-10 gap-2 rounded-full px-6 font-medium text-primary-foreground",
-              blockingReason && "opacity-50"
-            )}
-          >
-            {generating ? (
-              <>
-                <Loader2 className="size-4 animate-spin" /> Generating…
-              </>
-            ) : (
-              <>
-                <Plus className="size-4" /> Generate
-              </>
-            )}
-          </Button>
-        </div>
+            <DirectorSegmentList
+              segments={directorSegments}
+              onSegmentsChange={setDirectorSegments}
+              voices={voices}
+              defaultVoiceId={speechBlocks[0]?.voiceId ?? ""}
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                {directorSegments.filter((s) => s.selected_take_id).length}/
+                {directorSegments.length} segments picked
+              </span>
+              <Button
+                size="lg"
+                onClick={() => void generateMaster()}
+                disabled={generatingMaster || !allTakesPicked}
+                className={cn(
+                  "h-10 gap-2 rounded-full px-6 font-medium text-primary-foreground",
+                  !allTakesPicked && "opacity-50"
+                )}
+              >
+                {generatingMaster ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" /> Generating…
+                  </>
+                ) : (
+                  <>
+                    <Plus className="size-4" /> Generate Master
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <span
+              className={cn(
+                "text-xs tabular-nums",
+                overLimit ? "text-destructive" : "text-muted-foreground"
+              )}
+            >
+              {charCount.toLocaleString()}/{MAX_TTS_CHARACTERS.toLocaleString()} characters
+            </span>
+            <Button
+              size="lg"
+              onClick={() =>
+                void (mode === "plain"
+                  ? generate()
+                  : mode === "quick"
+                    ? generateWithQuickOptimize()
+                    : runDirectorPipeline())
+              }
+              disabled={generating || optimizing}
+              title={blockingReason ?? undefined}
+              className={cn(
+                "h-10 gap-2 rounded-full px-6 font-medium text-primary-foreground",
+                blockingReason && "opacity-50"
+              )}
+            >
+              {generating || optimizing ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {optimizing ? "Directing…" : "Generating…"}
+                </>
+              ) : mode === "plain" ? (
+                <>
+                  <Plus className="size-4" /> Generate
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-4" /> Direct VO
+                </>
+              )}
+            </Button>
+          </div>
+        )}
 
         {audioSrc && (
           <div className="space-y-3 rounded-xl border border-white/8 bg-black/40 p-4">
@@ -912,6 +1191,14 @@ export function TextToSpeech({
       />
 
       <GeneratingOverlay open={generating} multiSpeaker={speechBlocks.length > 1} />
+
+      <TtsScriptDiffDialog
+        open={diffOpen}
+        onOpenChange={setDiffOpen}
+        rows={diffRows}
+        onEditRow={(id, text) => void applyDiffEdit(id, text)}
+        title="Pronunciation editor"
+      />
     </div>
   );
 }

@@ -54,6 +54,17 @@ async function ensureTtsTablesUncached() {
     alter table public.tts_generations
       add column if not exists group_id uuid not null default gen_random_uuid()
   `);
+  // Nullable FK to tts_director_analyses — set only when a generation came
+  // from the VO Director pipeline. Guarded here too (not just in
+  // tts-director.ts) so createTtsGeneration never depends on call order.
+  await db().query(`
+    alter table public.tts_generations
+      add column if not exists tts_director_analysis_id uuid
+  `);
+  await db().query(`
+    create index if not exists tts_generations_director_analysis_idx
+      on public.tts_generations (tts_director_analysis_id)
+  `);
   await db().query(`
     create index if not exists tts_generations_group_idx
       on public.tts_generations (group_id, created_at desc)
@@ -156,15 +167,18 @@ export async function createTtsGeneration(input: {
   createdBy?: string | null;
   /** Continues an existing work's version history — omit to start a new one. */
   groupId?: string | null;
+  /** Set only when this generation came from the VO Director pipeline. */
+  directorAnalysisId?: string | null;
 }): Promise<TtsGenerationRecord> {
   await ensureTtsTables();
   const { rows } = await db().query<TtsGenerationRecord>(
     `insert into tts_generations
        (title, status, error, segments, text, model, stability, speed, sample_rate,
         dialect, word_timestamps, timestamps, char_count, cost, output_url,
-        duration_s, render_ms, client_id, project_id, created_by, group_id, completed_at)
+        duration_s, render_ms, client_id, project_id, created_by, group_id, completed_at,
+        tts_director_analysis_id)
      values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14,
-             $15, $16, $17, $18, $19, $20, coalesce($21::uuid, gen_random_uuid()), now())
+             $15, $16, $17, $18, $19, $20, coalesce($21::uuid, gen_random_uuid()), now(), $22)
      returning *`,
     [
       input.title?.trim() || "Untitled voice-over",
@@ -188,6 +202,7 @@ export async function createTtsGeneration(input: {
       input.projectId ?? null,
       input.createdBy ?? null,
       input.groupId ?? null,
+      input.directorAnalysisId ?? null,
     ]
   );
   return rows[0];

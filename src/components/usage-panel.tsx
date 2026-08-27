@@ -392,49 +392,6 @@ export function UsagePanel() {
         </div>
       </div>
 
-      {/* Transcription runs through OpenAI's hosted whisper-1, billed per
-          minute — its spend is already folded into the totals above and
-          into By type / By model / By user below. This row is just the
-          detail behind that: how much audio, and how long it took. */}
-      {data.transcription && data.transcription.count > 0 && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard
-            label="Audio transcribed"
-            value={`${(data.transcription.audio_seconds / 3600).toFixed(1)}h`}
-          />
-          <StatCard label="Audio spend" value={usd(data.transcription.cost)} />
-          <StatCard
-            label="Audio — last 30 days"
-            value={`${(data.transcription.audio_seconds_30d / 3600).toFixed(1)}h`}
-          />
-          <StatCard
-            label="Processing time"
-            value={`${(data.transcription.compute_ms / 3600000).toFixed(1)}h`}
-          />
-        </div>
-      )}
-
-      {/* Munsit text-to-speech — its spend is already folded into the totals
-          above and into By type / By model / By user below. This row is
-          just the detail behind that: how much audio, how much text. */}
-      {data.tts && data.tts.count > 0 && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard
-            label="Voice generated"
-            value={`${(data.tts.audio_seconds / 3600).toFixed(1)}h`}
-          />
-          <StatCard label="Voice spend" value={usd(data.tts.cost)} />
-          <StatCard
-            label="Voice — last 30 days"
-            value={`${(data.tts.audio_seconds_30d / 3600).toFixed(1)}h`}
-          />
-          <StatCard
-            label="Characters synthesized"
-            value={data.tts.char_count.toLocaleString()}
-          />
-        </div>
-      )}
-
       {/* Spend and generation counts for the selected window. All-time also
           shows the last 30 days so a quiet month is not mistaken for zero. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

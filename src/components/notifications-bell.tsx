@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Bell, CheckCheck, Clapperboard, ImageIcon, X } from "lucide-react";
+import { AudioLines, Bell, CheckCheck, Clapperboard, ImageIcon, Mic, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type AppNotification = {
   id: string;
-  kind: "video" | "image";
+  kind: "video" | "image" | "transcript" | "voice";
   status: "success" | "error";
   title: string;
   body?: string;
@@ -130,6 +130,10 @@ export function NotificationsBell({
                             <X className="size-4" />
                           ) : n.kind === "video" ? (
                             <Clapperboard className="size-4" />
+                          ) : n.kind === "transcript" ? (
+                            <AudioLines className="size-4" />
+                          ) : n.kind === "voice" ? (
+                            <Mic className="size-4" />
                           ) : (
                             <ImageIcon className="size-4" />
                           )}

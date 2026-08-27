@@ -47,6 +47,8 @@ type Props = {
   onOpenStoryboard?: (storyboardId: string) => void;
   /** Opened once on mount/change — e.g. arriving here from a Library card. */
   initialOpenId?: string | null;
+  /** Surfaces a job's outcome in the app-wide notifications bell. */
+  onNotify?: (n: { status: "success" | "error"; title: string; body?: string; id?: string | null }) => void;
 };
 
 /** Select can't hold an empty value, so "no client" needs a sentinel. */
@@ -97,6 +99,7 @@ export function Transcribe({
   isAdmin,
   onOpenStoryboard,
   initialOpenId,
+  onNotify,
 }: Props) {
   const [transcripts, setTranscripts] = useState<TranscriptRecord[]>([]);
   const [openId, setOpenId] = useState<string | null>(initialOpenId ?? null);
@@ -290,7 +293,9 @@ export function Transcribe({
       projectId: defaultProjectId ?? null,
     });
     if (!res.ok || !json.transcript) {
-      toast.error(json.error ?? "Could not start that transcription");
+      const message = json.error ?? "Could not start that transcription";
+      toast.error(message);
+      onNotify?.({ status: "error", title: "Transcription failed", body: message });
       return;
     }
 
@@ -301,6 +306,7 @@ export function Transcribe({
       setJob((j) => (j ? { ...j, stage: "transcribing", percent } : j))
     );
     toast.success("Transcript ready");
+    onNotify?.({ status: "success", title: "Transcript ready", body: input.title, id });
     await load();
     setOpenId(id);
   };
@@ -341,6 +347,7 @@ export function Transcribe({
               ? err.message
               : "Could not transcribe that";
         toast.error(message);
+        onNotify?.({ status: "error", title: "Transcription failed", body: message });
         await load();
       } finally {
         setJob(null);

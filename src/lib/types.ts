@@ -554,3 +554,125 @@ export type TtsFavoriteVoice = {
   created_by: string | null;
   created_at: string;
 };
+
+// ---------------------------------------------------------------------------
+// VO Director — script analysis, performance direction, phonetic adaptation
+// ---------------------------------------------------------------------------
+
+export type TtsDirectorMode = "quick" | "director";
+export type TtsDirectorAnalysisStatus =
+  | "draft"
+  | "directed"
+  | "adapted"
+  | "phonetics_ready"
+  | "complete"
+  | "failed";
+
+export type TtsDirectorOverallDirection = {
+  dialect: string;
+  register: string;
+  emotional_arc: string;
+};
+
+export type TtsDirectorCampaignContext = {
+  speaker?: string;
+  audience?: string;
+  intention?: string;
+  notes?: string;
+};
+
+/** Mirrors the `tts_director_analyses` table. */
+export type TtsDirectorAnalysis = {
+  id: string;
+  mode: TtsDirectorMode;
+  status: TtsDirectorAnalysisStatus;
+  error: string | null;
+  original_text: string;
+  campaign_context: TtsDirectorCampaignContext;
+  overall_direction: TtsDirectorOverallDirection | null;
+  register_strength: number;
+  dialect: "emirati" | "fusha";
+  model: string | null;
+  client_id: string | null;
+  project_id: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TtsPhoneticNote = { canonical: string; respelling: string; applied: boolean };
+
+/** Mirrors the `tts_director_segments` table. */
+export type TtsDirectorSegment = {
+  id: string;
+  analysis_id: string;
+  idx: number;
+  speaker_label: string | null;
+  voice_id: string | null;
+  original: string;
+  spoken: string;
+  tts: string;
+  emotion: string | null;
+  intensity: number | null;
+  pace: "slow" | "normal" | "fast" | null;
+  continuity: string | null;
+  avoid: string[];
+  suggested_stability: number | null;
+  suggested_speed: number | null;
+  break_justification: string | null;
+  phonetic_notes: TtsPhoneticNote[];
+  selected_take_id: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Present when a route includes each segment's takes inline. */
+  takes?: TtsDirectorTake[];
+};
+
+/** Mirrors the `tts_director_takes` table — one generated variant. */
+export type TtsDirectorTake = {
+  id: string;
+  segment_id: string;
+  preset: "natural" | "controlled" | "expressive" | "custom";
+  voice_id: string;
+  stability: number;
+  speed: number;
+  text: string;
+  status: "ready" | "failed";
+  error: string | null;
+  output_url: string | null;
+  duration_s: number | null;
+  char_count: number;
+  cost: number;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** Mirrors the `tts_director_selection_events` table — the learning loop's log. */
+export type TtsDirectorSelectionEvent = {
+  id: string;
+  segment_id: string;
+  take_id: string;
+  voice_id: string;
+  outcome: "selected" | "rejected";
+  context: { emotion?: string; pace?: string; dialect?: string; register_strength?: number };
+  stability: number;
+  speed: number;
+  created_by: string | null;
+  created_at: string;
+};
+
+/** Mirrors the `tts_phonetic_dictionary` table. */
+export type TtsPhoneticEntry = {
+  id: string;
+  canonical: string;
+  respelling: string;
+  dialect: string;
+  notes: string | null;
+  example_context: string | null;
+  source: "seed" | "manual" | "llm_suggested";
+  status: "active" | "pending_review" | "rejected";
+  usage_count: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+};

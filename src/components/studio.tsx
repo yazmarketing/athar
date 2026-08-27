@@ -419,6 +419,8 @@ export function Studio() {
   const [voiceDetailTarget, setVoiceDetailTarget] = useState<TtsGenerationRecord | null>(
     null
   );
+  /** Every version of the group voiceDetailTarget belongs to, newest first. */
+  const [voiceDetailVersions, setVoiceDetailVersions] = useState<TtsGenerationRecord[]>([]);
   /** Set by "Continue editing" in the Library voice modal, consumed once by the Voice page. */
   const [continueVoiceGeneration, setContinueVoiceGeneration] =
     useState<TtsGenerationRecord | null>(null);
@@ -1193,7 +1195,7 @@ export function Studio() {
    */
   type LibraryEntry =
     | { kind: "render"; created_at: string; data: GenerationRecord }
-    | { kind: "voice"; created_at: string; data: TtsGenerationRecord }
+    | { kind: "voice"; created_at: string; data: TtsGenerationRecord; versions: TtsGenerationRecord[] }
     | { kind: "transcript"; created_at: string; data: TranscriptRecord };
 
   const libraryEntries = useMemo((): LibraryEntry[] => {
@@ -1206,12 +1208,31 @@ export function Studio() {
       }
     }
     if (typeFilter === "all" || typeFilter === "voice") {
+      // One card per script, not per regenerate — otherwise every version of
+      // the same work clutters the grid as its own tile. Grouped by
+      // group_id (see the tts_generations column), newest version first.
+      const byGroup = new Map<string, TtsGenerationRecord[]>();
       for (const v of libraryVoices ?? []) {
         if (v.status !== "ready") continue;
-        if (q && !v.title.toLowerCase().includes(q) && !v.text.toLowerCase().includes(q)) {
+        if (!byGroup.has(v.group_id)) byGroup.set(v.group_id, []);
+        byGroup.get(v.group_id)!.push(v);
+      }
+      for (const versions of byGroup.values()) {
+        versions.sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+        const latest = versions[0];
+        // Search matches if ANY version's title/text matches, but the card
+        // itself always shows the latest.
+        if (
+          q &&
+          !versions.some(
+            (v) => v.title.toLowerCase().includes(q) || v.text.toLowerCase().includes(q)
+          )
+        ) {
           continue;
         }
-        entries.push({ kind: "voice", created_at: v.created_at, data: v });
+        entries.push({ kind: "voice", created_at: latest.created_at, data: latest, versions });
       }
     }
     if (typeFilter === "all" || typeFilter === "transcript") {
@@ -2773,16 +2794,19 @@ export function Studio() {
 
   /** Audio has no visual, so voice-overs and transcripts get an icon tile
       instead of the image/video preview `renderCard` uses. */
-  const renderVoiceCard = (v: TtsGenerationRecord, i: number) => (
+  const renderVoiceCard = (v: TtsGenerationRecord, versions: TtsGenerationRecord[], i: number) => (
     <article
-      key={v.id}
+      key={v.group_id}
       className="animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
       style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
     >
       <button
         type="button"
         className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-gold-soft/25 to-transparent text-left transition group-hover:from-gold-soft/40"
-        onClick={() => setVoiceDetailTarget(v)}
+        onClick={() => {
+          setVoiceDetailTarget(v);
+          setVoiceDetailVersions(versions);
+        }}
         title="Open voice-over"
       >
         <span className="flex size-11 items-center justify-center rounded-full bg-white/8">
@@ -2792,10 +2816,15 @@ export function Studio() {
           {v.duration_s ? `${v.duration_s.toFixed(1)}s` : "Voice-over"}
         </span>
       </button>
-      <div className="pointer-events-none absolute top-2 left-2 z-10">
+      <div className="pointer-events-none absolute top-2 left-2 z-10 flex gap-1">
         <span className="rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
           Voice-over
         </span>
+        {versions.length > 1 && (
+          <span className="rounded-md bg-gold/90 px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground backdrop-blur-sm">
+            {versions.length} versions
+          </span>
+        )}
       </div>
       <div className="p-3">
         <p className="truncate text-sm text-foreground">{v.title}</p>
@@ -3258,6 +3287,32 @@ export function Studio() {
                   );
                   return;
                 }
+
+                if (n.kind === "transcript") {
+                  setLibraryOpenTranscriptId(n.generationId);
+                  setView("transcribe");
+                  return;
+                }
+
+                if (n.kind === "voice") {
+                  try {
+                    const res = await fetch(`/api/tts/${n.generationId}`);
+                    const json = await readJson<{
+                      generation?: TtsGenerationRecord;
+                      error?: string;
+                    }>(res);
+                    if (!res.ok || !json.generation) {
+                      toast.error("That voice-over could not be found.");
+                      return;
+                    }
+                    setVoiceDetailTarget(json.generation);
+                    setVoiceDetailVersions([json.generation]);
+                  } catch {
+                    toast.error("Could not open that voice-over");
+                  }
+                  return;
+                }
+
                 let g = (generations ?? []).find(
                   (r) => r.id === n.generationId
                 );
@@ -3798,6 +3853,15 @@ export function Studio() {
                 isAdmin={isManagement}
                 onOpenStoryboard={() => setView("storyboard")}
                 initialOpenId={libraryOpenTranscriptId}
+                onNotify={(n) =>
+                  pushNotification({
+                    kind: "transcript",
+                    status: n.status,
+                    title: n.title,
+                    body: n.body,
+                    generationId: n.id,
+                  })
+                }
               />
             </div>
           </>
@@ -3821,6 +3885,15 @@ export function Studio() {
                 defaultProjectId={activeProjectId}
                 isAdmin={isManagement}
                 initialGeneration={continueVoiceGeneration}
+                onNotify={(n) =>
+                  pushNotification({
+                    kind: "voice",
+                    status: n.status,
+                    title: n.title,
+                    body: n.body,
+                    generationId: n.id,
+                  })
+                }
               />
             </div>
           </>
@@ -4326,7 +4399,7 @@ export function Studio() {
                         entry.kind === "render"
                           ? renderCard(entry.data, i)
                           : entry.kind === "voice"
-                            ? renderVoiceCard(entry.data, i)
+                            ? renderVoiceCard(entry.data, entry.versions, i)
                             : renderTranscriptCard(entry.data, i)
                       )}
                     </div>
@@ -4412,46 +4485,97 @@ export function Studio() {
 
         <Dialog
           open={voiceDetailTarget != null}
-          onOpenChange={(open) => !open && setVoiceDetailTarget(null)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setVoiceDetailTarget(null);
+              setVoiceDetailVersions([]);
+            }
+          }}
         >
-          <DialogContent className="sm:max-w-lg">
+          <DialogContent
+            className={cn(voiceDetailVersions.length > 1 ? "sm:max-w-2xl" : "sm:max-w-lg")}
+          >
             <DialogHeader>
               <DialogTitle>{voiceDetailTarget?.title}</DialogTitle>
             </DialogHeader>
             {voiceDetailTarget?.output_url && (
-              <div className="space-y-3">
-                <Waveform src={voiceDetailTarget.output_url} />
-                <audio src={voiceDetailTarget.output_url} controls className="w-full" />
-                <p className="text-xs text-muted-foreground">
-                  {[
-                    voiceDetailTarget.client_name,
-                    voiceDetailTarget.duration_s
-                      ? `${voiceDetailTarget.duration_s.toFixed(1)}s`
-                      : null,
-                    voiceDetailTarget.cost > 0
-                      ? `$${voiceDetailTarget.cost.toFixed(3)}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </p>
-                {voiceDetailTarget.text && (
-                  <p dir="rtl" className="rounded-lg border border-white/8 p-3 text-sm leading-relaxed">
-                    {voiceDetailTarget.text}
-                  </p>
+              <div
+                className={cn(
+                  "grid gap-5",
+                  voiceDetailVersions.length > 1 && "sm:grid-cols-[1fr_180px]"
                 )}
-                <Button
-                  size="sm"
-                  className="h-8 gap-1.5 rounded-full bg-gold px-4 text-xs text-primary-foreground"
-                  onClick={() => {
-                    setContinueVoiceGeneration(voiceDetailTarget);
-                    setVoiceDetailTarget(null);
-                    setView("tts");
-                  }}
-                >
-                  <RefreshCw className="size-3" />
-                  Continue editing
-                </Button>
+              >
+                <div className="min-w-0 space-y-3">
+                  <Waveform src={voiceDetailTarget.output_url} />
+                  <audio
+                    key={voiceDetailTarget.id}
+                    src={voiceDetailTarget.output_url}
+                    controls
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {[
+                      voiceDetailTarget.client_name,
+                      voiceDetailTarget.duration_s
+                        ? `${voiceDetailTarget.duration_s.toFixed(1)}s`
+                        : null,
+                      voiceDetailTarget.cost > 0
+                        ? `$${voiceDetailTarget.cost.toFixed(3)}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {voiceDetailTarget.text && (
+                    <p
+                      dir="rtl"
+                      className="rounded-lg border border-white/8 p-3 text-sm leading-relaxed"
+                    >
+                      {voiceDetailTarget.text}
+                    </p>
+                  )}
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1.5 rounded-full bg-gold px-4 text-xs text-primary-foreground"
+                    onClick={() => {
+                      setContinueVoiceGeneration(voiceDetailTarget);
+                      setVoiceDetailTarget(null);
+                      setVoiceDetailVersions([]);
+                      setView("tts");
+                    }}
+                  >
+                    <RefreshCw className="size-3" />
+                    Continue editing
+                  </Button>
+                </div>
+
+                {voiceDetailVersions.length > 1 && (
+                  <div className="space-y-1 border-t border-white/8 pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-4">
+                    <p className="mb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                      Versions
+                    </p>
+                    <div className="max-h-64 space-y-1 overflow-y-auto">
+                      {[...voiceDetailVersions].reverse().map((v, idx) => (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => setVoiceDetailTarget(v)}
+                          className={cn(
+                            "block w-full rounded-lg px-2.5 py-1.5 text-left text-xs transition",
+                            v.id === voiceDetailTarget.id
+                              ? "bg-gold-soft/20 text-foreground ring-1 ring-gold/40"
+                              : "text-muted-foreground hover:bg-white/8 hover:text-foreground"
+                          )}
+                        >
+                          Version {idx + 1}
+                          <span className="mt-0.5 block text-[10px] text-muted-foreground">
+                            {new Date(v.created_at).toLocaleDateString()}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </DialogContent>
