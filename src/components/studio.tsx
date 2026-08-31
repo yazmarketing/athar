@@ -278,6 +278,10 @@ function isVideo(g: GenerationRecord) {
   );
 }
 
+/** First Library page; extra pages come from Load more. Capped on refresh. */
+const LIBRARY_PAGE_SIZE = 48;
+const LIBRARY_MAX_LIMIT = 240;
+
 /** Poll Nano Banana jobs until they land (used by Create / Vary / Edit). */
 async function waitForImageJobs(
   jobs: GenerationJobRecord[]
@@ -458,12 +462,16 @@ export function Studio() {
   const [ownerFilter, setOwnerFilter] = useState<"all" | "mine">("all");
   /** Favourites are marked on cards; this is how you actually get to them. */
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [galleryHasMore, setGalleryHasMore] = useState(false);
+  const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   /** Cinema Studio: the director chips row in the video dock. */
   const [cinemaOn, setCinemaOn] = useState(false);
   const [cinema, setCinema] = useState<CinemaControls>(CINEMA_DEFAULTS);
   const [editorOpen, setEditorOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [searchQ, setSearchQ] = useState("");
   const [referenceUrls, setReferenceUrls] = useState<string[]>([]);
   /**
    * Friendly names for attached references, keyed by URL. Only library picks
@@ -812,29 +820,75 @@ export function Studio() {
     setView("create");
   };
 
+  useEffect(() => {
+    if (!query.trim()) {
+      setSearchQ("");
+      return;
+    }
+    const t = window.setTimeout(() => setSearchQ(query.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [query]);
+
+  const generationsLenRef = useRef(0);
+  generationsLenRef.current = generations?.length ?? 0;
+  const gallerySeq = useRef(0);
+
+  const gallerySearchParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (activeProjectId) params.set("projectId", activeProjectId);
+    // A generation's client comes through its project, so the server has to
+    // resolve it — filtering here would only ever see the rows it fetched.
+    if (activeClientId) params.set("clientId", activeClientId);
+    if (ownerFilter === "mine") params.set("createdBy", "me");
+    if (sortOrder === "oldest") params.set("sort", "oldest");
+    if (typeFilter === "image" || typeFilter === "video") {
+      params.set("type", typeFilter);
+    }
+    if (favoritesOnly) params.set("favorites", "1");
+    if (searchQ) params.set("q", searchQ);
+    return params;
+  }, [
+    activeProjectId,
+    activeClientId,
+    ownerFilter,
+    sortOrder,
+    typeFilter,
+    favoritesOnly,
+    searchQ,
+  ]);
+
   /**
    * `showLoader` is for reloads that change which generations are in scope
-   * (project / client / owner filters). Those must show the loader, otherwise
-   * the previous result set stays on screen — and if it was empty the user
-   * reads "No matches" until the new rows suddenly appear.
+   * (project / client / owner / sort / type / favourites). Those must show
+   * the loader, otherwise the previous result set stays on screen — and if
+   * it was empty the user reads "No matches" until the new rows appear.
    *
    * Background refreshes after a generation finishes deliberately pass
-   * nothing, so the grid updates in place without flashing a spinner.
+   * nothing, so the grid updates in place without flashing a spinner. Those
+   * keep the already-loaded window so Load more is not thrown away.
    */
   const loadGallery = useCallback(async (opts: { showLoader?: boolean } = {}) => {
+    const seq = ++gallerySeq.current;
     if (opts.showLoader) setGalleryLoading(true);
+    setGalleryLoadingMore(false);
     try {
-      const params = new URLSearchParams();
-      if (activeProjectId) params.set("projectId", activeProjectId);
-      // A generation's client comes through its project, so the server has to
-      // resolve it — filtering here would only ever see the rows it fetched.
-      if (activeClientId) params.set("clientId", activeClientId);
-      if (ownerFilter === "mine") params.set("createdBy", "me");
+      const params = gallerySearchParams();
+      if (!opts.showLoader) {
+        const keep = Math.min(
+          LIBRARY_MAX_LIMIT,
+          Math.max(LIBRARY_PAGE_SIZE, generationsLenRef.current)
+        );
+        if (keep > LIBRARY_PAGE_SIZE) params.set("limit", String(keep));
+      }
       const qs = params.size ? `?${params.toString()}` : "";
       const res = await fetch(`/api/generations${qs}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
-      setGenerations(json.generations);
+      if (seq !== gallerySeq.current) return;
+      setGenerations(
+        Array.isArray(json.generations) ? json.generations : []
+      );
+      setGalleryHasMore(Boolean(json.hasMore));
       // Keep the sidebar's per-project item counts in sync with the gallery,
       // scoped to the active client so the project list stays consistent.
       try {
@@ -843,17 +897,50 @@ export function Studio() {
           : "";
         const resProjects = await fetch(`/api/projects${pQs}`);
         const jsonProjects = await resProjects.json();
-        if (resProjects.ok) setProjects(jsonProjects.projects);
+        if (resProjects.ok && seq === gallerySeq.current) {
+          setProjects(jsonProjects.projects);
+        }
       } catch {
         // counts refresh is best-effort
       }
     } catch (err) {
+      if (seq !== gallerySeq.current) return;
       toast.error(err instanceof Error ? err.message : "Failed to load gallery");
       setGenerations([]);
+      setGalleryHasMore(false);
     } finally {
-      if (opts.showLoader) setGalleryLoading(false);
+      if (opts.showLoader && seq === gallerySeq.current) {
+        setGalleryLoading(false);
+      }
     }
-  }, [activeProjectId, ownerFilter, activeClientId]);
+  }, [gallerySearchParams, activeClientId]);
+
+  const loadMoreGallery = useCallback(async () => {
+    if (galleryLoadingMore || !galleryHasMore) return;
+    const offset = generationsLenRef.current;
+    if (offset === 0) return;
+    const seq = gallerySeq.current;
+    setGalleryLoadingMore(true);
+    try {
+      const params = gallerySearchParams();
+      params.set("offset", String(offset));
+      const res = await fetch(`/api/generations?${params.toString()}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      if (seq !== gallerySeq.current) return;
+      const incoming = (json.generations as GenerationRecord[]) ?? [];
+      setGenerations((prev) => {
+        const seen = new Set((prev ?? []).map((g) => g.id));
+        return [...(prev ?? []), ...incoming.filter((g) => !seen.has(g.id))];
+      });
+      setGalleryHasMore(Boolean(json.hasMore));
+    } catch (err) {
+      if (seq !== gallerySeq.current) return;
+      toast.error(err instanceof Error ? err.message : "Could not load more");
+    } finally {
+      if (seq === gallerySeq.current) setGalleryLoadingMore(false);
+    }
+  }, [galleryHasMore, galleryLoadingMore, gallerySearchParams]);
 
   /**
    * Voice-overs and transcripts for the Library — same scope rules as
@@ -1187,24 +1274,14 @@ export function Studio() {
     void loadGallery({ showLoader: true });
   }, [loadGallery, projectsReady]);
 
-  const filtered = useMemo(() => {
-    if (!generations) return null;
-    // Voice-overs and transcripts aren't GenerationRecords — this list stays
-    // renders-only, and the Library grid adds the other two kinds itself.
-    if (typeFilter === "voice" || typeFilter === "transcript") return [];
-    const q = query.trim().toLowerCase();
-    let list = generations;
-    if (favoritesOnly) list = list.filter((g) => Boolean(g.is_favorite));
-    if (typeFilter === "image") list = list.filter((g) => !isVideo(g));
-    else if (typeFilter === "video") list = list.filter((g) => isVideo(g));
-    if (!q) return list;
-    return list.filter(
-      (g) =>
-        g.final_prompt.toLowerCase().includes(q) ||
-        g.mode.toLowerCase().includes(q) ||
-        g.model_endpoint.toLowerCase().includes(q)
-    );
-  }, [generations, query, typeFilter, favoritesOnly]);
+  const filtered =
+    generations == null
+      ? null
+      : typeFilter === "voice" || typeFilter === "transcript"
+        ? []
+        : generations;
+  const libraryFiltersOn =
+    Boolean(query.trim()) || typeFilter !== "all" || favoritesOnly;
 
   /**
    * Library's own view of the world — renders plus voice-overs and
@@ -1263,10 +1340,12 @@ export function Studio() {
       }
     }
 
-    return entries.sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
-  }, [filtered, libraryVoices, libraryTranscripts, typeFilter, query]);
+    return entries.sort((a, b) => {
+      const diff =
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+      return sortOrder === "oldest" ? diff : -diff;
+    });
+  }, [filtered, libraryVoices, libraryTranscripts, typeFilter, query, sortOrder]);
 
 
   const submit = useCallback(
@@ -4319,7 +4398,7 @@ export function Studio() {
                 </>
               ) : (
                 <>
-                  <div className="mb-5 flex items-center gap-2">
+                  <div className="mb-5 flex flex-wrap items-center gap-2">
                     <div className="flex w-full max-w-md items-center gap-2 rounded-full bg-card px-4 py-2.5 ring-1 ring-border shadow-sm">
                       <Search className="size-4 text-muted-foreground" />
                       <input
@@ -4405,6 +4484,23 @@ export function Studio() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <Select
+                      value={sortOrder}
+                      onValueChange={(v) =>
+                        setSortOrder(v as typeof sortOrder)
+                      }
+                    >
+                      <SelectTrigger
+                        aria-label="Sort by date"
+                        className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="newest">Newest</SelectItem>
+                        <SelectItem value="oldest">Oldest</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <button
                       type="button"
                       onClick={() => setFavoritesOnly((f) => !f)}
@@ -4453,9 +4549,7 @@ export function Studio() {
                       <Sparkles className="mb-3 size-6 text-gold" />
                       {/* An empty *source* list is a different story from a
                           search/type filter that matched nothing. */}
-                      {(generations?.length ?? 0) === 0 &&
-                      libraryVoices.length === 0 &&
-                      libraryTranscripts.length === 0 ? (
+                      {!libraryFiltersOn ? (
                         <>
                           <p className="athar-headline">
                             {activeProject
@@ -4506,15 +4600,35 @@ export function Studio() {
                       )}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                      {libraryEntries.map((entry, i) =>
-                        entry.kind === "render"
-                          ? renderCard(entry.data, i)
-                          : entry.kind === "voice"
-                            ? renderVoiceCard(entry.data, entry.versions, i)
-                            : renderTranscriptCard(entry.data, i)
-                      )}
-                    </div>
+                    <>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                        {libraryEntries.map((entry, i) =>
+                          entry.kind === "render"
+                            ? renderCard(entry.data, i)
+                            : entry.kind === "voice"
+                              ? renderVoiceCard(entry.data, entry.versions, i)
+                              : renderTranscriptCard(entry.data, i)
+                        )}
+                      </div>
+                      {galleryHasMore &&
+                        (typeFilter === "all" ||
+                          typeFilter === "image" ||
+                          typeFilter === "video") && (
+                          <div className="mt-6 flex justify-center">
+                            <button
+                              type="button"
+                              disabled={galleryLoadingMore}
+                              onClick={() => void loadMoreGallery()}
+                              className="inline-flex h-10 items-center gap-1.5 rounded-full bg-card px-5 text-xs text-muted-foreground ring-1 ring-border transition hover:text-foreground disabled:opacity-60"
+                            >
+                              {galleryLoadingMore && (
+                                <Loader2 className="size-3.5 animate-spin" />
+                              )}
+                              Load more
+                            </button>
+                          </div>
+                        )}
+                    </>
                   )}
                 </>
               )}

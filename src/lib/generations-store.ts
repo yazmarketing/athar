@@ -75,14 +75,19 @@ export async function ensureGenerationModes() {
 let favoriteColumnReady: Promise<void> | null = null;
 
 /**
- * Lets the library pick the next 120 rows from the index instead of sorting
- * every generation (including fat jsonb) on each GET. Best-effort — a
- * missing column on a brand-new database must not block the gallery.
+ * Lets the library page by created_at instead of sorting every generation
+ * (including fat jsonb) on each GET. Best-effort — a missing column on a
+ * brand-new database must not block the gallery.
  */
 export const ensureLibraryIndex = onceProcess(async () => {
   await db().query(`
     create index if not exists generations_library_idx
       on public.generations (is_favorite desc, created_at desc)
+      where deleted_at is null
+  `);
+  await db().query(`
+    create index if not exists generations_library_created_idx
+      on public.generations (created_at desc, id desc)
       where deleted_at is null
   `);
 });
