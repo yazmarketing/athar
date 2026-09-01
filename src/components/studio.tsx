@@ -82,6 +82,7 @@ import {
 } from "@/components/onboarding-tour";
 import { GenerationRating } from "@/components/generation-rating";
 import { activeMentionQuery, mentionToken } from "@/lib/mentions";
+import { inferOutputSettings } from "@/lib/prompt-output";
 import { SidebarUser } from "@/components/sidebar-user";
 import {
   UpscaleDialog,
@@ -820,6 +821,14 @@ export function Studio() {
     setView("create");
   };
 
+  // Keep the ratio / duration chips in step with a director prompt that
+  // already names them ("9:16 vertical", a 0–10s camera schedule).
+  useEffect(() => {
+    const inferred = inferOutputSettings(subject);
+    if (inferred.aspect) setAspect(inferred.aspect);
+    if (inferred.durationS) setDurationS(inferred.durationS);
+  }, [subject]);
+
   useEffect(() => {
     if (!query.trim()) {
       setSearchQ("");
@@ -1379,6 +1388,25 @@ export function Studio() {
       const activeVideoSources = opts.sourceImages ?? videoSources;
       const activeVideoEditSource =
         opts.sourceVideo !== undefined ? opts.sourceVideo : videoEditSource;
+      const inferred = inferOutputSettings(
+        [prompt.subject, prompt.action, prompt.lighting]
+          .filter(Boolean)
+          .join("\n")
+      );
+      const sendAspect = inferred.aspect ?? aspect;
+      const sendDuration =
+        opts.durationS ?? inferred.durationS ?? durationS;
+      if (inferred.aspect && inferred.aspect !== aspect) {
+        setAspect(inferred.aspect);
+      }
+      if (
+        activeMode === "t2v" &&
+        inferred.durationS &&
+        opts.durationS == null &&
+        inferred.durationS !== durationS
+      ) {
+        setDurationS(inferred.durationS);
+      }
       try {
         const res = await postFetch("/api/generate", {
           method: "POST",
@@ -1399,12 +1427,12 @@ export function Studio() {
                     audioTranscripts: audioSources.map((a) => a.transcript),
                   }
                 : prompt,
-            aspect,
+            aspect: sendAspect,
             numOutputs: activeMode === "t2v" ? 1 : numOutputs,
             resolution:
               activeMode === "t2i" ? (opts.resolution ?? resolution) : undefined,
             durationS:
-              activeMode === "t2v" ? (opts.durationS ?? durationS) : undefined,
+              activeMode === "t2v" ? sendDuration : undefined,
             sourceDurationS: activeVideoEditSource?.durationS ?? undefined,
             videoResolution:
               activeMode === "t2v" ? videoResolution : undefined,

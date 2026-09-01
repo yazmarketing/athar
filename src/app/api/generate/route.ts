@@ -9,6 +9,7 @@ import { submitVideoJob } from "@/lib/video-jobs";
 import { projectExists } from "@/lib/projects";
 import { uploadPublicObject } from "@/lib/storage";
 import { buildPrompt } from "@/lib/prompt";
+import { inferOutputSettings } from "@/lib/prompt-output";
 import {
   resolveModel,
   resolveFallbacks,
@@ -283,7 +284,14 @@ export async function POST(req: NextRequest) {
 
   const mode = body.mode;
   const tier = body.tier ?? "draft";
-  const aspect = body.aspect ?? "16:9";
+  // Director prompts name the frame in the text ("9:16 vertical"); the dock
+  // defaults to 16:9, so honour the prompt when it is explicit.
+  const inferred = inferOutputSettings(
+    [body.prompt.subject, body.prompt.action, body.prompt.lighting]
+      .filter(Boolean)
+      .join("\n")
+  );
+  const aspect = inferred.aspect ?? body.aspect ?? "16:9";
   const numOutputs = Math.min(body.numOutputs ?? 1, mode === "t2v" ? 2 : 4);
   const baseSeed = body.seed ?? Math.floor(Math.random() * 2 ** 31);
   // Nano Banana Pro holds consistency across more references than Seedream
@@ -303,7 +311,10 @@ export async function POST(req: NextRequest) {
       ? resolveFallbacks(mode).filter((m) => m.provider === "byteplus")
       : resolveFallbacks(mode);
   const durationS = Math.min(
-    Math.max(body.durationS ?? (mode === "t2v" ? 5 : 0), mode === "t2v" ? 4 : 0),
+    Math.max(
+      inferred.durationS ?? body.durationS ?? (mode === "t2v" ? 5 : 0),
+      mode === "t2v" ? 4 : 0
+    ),
     primary.maxDuration || 30
   );
   // 4K only exists on the Nano Banana Pro path; Seedream renders it at 2K.
