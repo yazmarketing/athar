@@ -821,12 +821,13 @@ export function Studio() {
     setView("create");
   };
 
-  // Keep the ratio / duration chips in step with a director prompt that
-  // already names them ("9:16 vertical", a 0–10s camera schedule).
+  // Keep the ratio chip in step with a director prompt that already names
+  // it ("9:16 vertical"). Duration stays whatever the dock chip is set to —
+  // camera timestamps in the prompt are direction for the model, not a
+  // length override.
   useEffect(() => {
     const inferred = inferOutputSettings(subject);
     if (inferred.aspect) setAspect(inferred.aspect);
-    if (inferred.durationS) setDurationS(inferred.durationS);
   }, [subject]);
 
   useEffect(() => {
@@ -1394,18 +1395,9 @@ export function Studio() {
           .join("\n")
       );
       const sendAspect = inferred.aspect ?? aspect;
-      const sendDuration =
-        opts.durationS ?? inferred.durationS ?? durationS;
+      const sendDuration = opts.durationS ?? durationS;
       if (inferred.aspect && inferred.aspect !== aspect) {
         setAspect(inferred.aspect);
-      }
-      if (
-        activeMode === "t2v" &&
-        inferred.durationS &&
-        opts.durationS == null &&
-        inferred.durationS !== durationS
-      ) {
-        setDurationS(inferred.durationS);
       }
       try {
         const res = await postFetch("/api/generate", {

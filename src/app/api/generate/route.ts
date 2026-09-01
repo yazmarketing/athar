@@ -286,6 +286,8 @@ export async function POST(req: NextRequest) {
   const tier = body.tier ?? "draft";
   // Director prompts name the frame in the text ("9:16 vertical"); the dock
   // defaults to 16:9, so honour the prompt when it is explicit.
+  // Duration is the opposite: the dock chip is what the person picked, so it
+  // wins over camera timestamps in the prompt (`0.0s to 10.0s`).
   const inferred = inferOutputSettings(
     [body.prompt.subject, body.prompt.action, body.prompt.lighting]
       .filter(Boolean)
@@ -312,7 +314,7 @@ export async function POST(req: NextRequest) {
       : resolveFallbacks(mode);
   const durationS = Math.min(
     Math.max(
-      inferred.durationS ?? body.durationS ?? (mode === "t2v" ? 5 : 0),
+      body.durationS ?? inferred.durationS ?? (mode === "t2v" ? 5 : 0),
       mode === "t2v" ? 4 : 0
     ),
     primary.maxDuration || 30

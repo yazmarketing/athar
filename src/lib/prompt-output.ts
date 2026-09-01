@@ -3,10 +3,14 @@ import type { AspectRatio } from "@/lib/types";
 /**
  * Pull output format out of a director-style prompt.
  *
- * Seedance's `ratio` / duration fields are what actually size the clip —
- * "shot vertical" in the text is ignored when the dock is still on 16:9 / 5s.
- * These prompts usually name the format in an OUTPUT SETTINGS block; we read
- * that so the request matches what the person wrote.
+ * Seedance's `ratio` field is what actually sizes the frame — "shot vertical"
+ * in the text is ignored when the dock is still on 16:9. These prompts usually
+ * name the format in an OUTPUT SETTINGS block; we read that so the request
+ * matches what the person wrote.
+ *
+ * Duration is inferred only as a fallback when the request omits `durationS`.
+ * The dock chip is the source of truth; camera timestamps (`0.0s to 10.0s`)
+ * stay in the prompt as direction for the model.
  */
 
 export type InferredOutputSettings = {
