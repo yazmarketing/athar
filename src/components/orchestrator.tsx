@@ -22,8 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn, readJson, postFetch } from "@/lib/utils";
-
-const ASPECTS = ["16:9", "9:16", "1:1", "4:5"];
+import { ASPECT_RATIOS } from "@/config/aspects";
 
 type Shot = {
   id: string;
@@ -296,7 +295,7 @@ export function Orchestrator({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {ASPECTS.map((a) => (
+                      {ASPECT_RATIOS.map((a) => (
                         <SelectItem key={a} value={a}>
                           {a}
                         </SelectItem>

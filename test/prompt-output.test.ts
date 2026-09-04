@@ -62,6 +62,17 @@ describe("inferOutputSettings", () => {
     );
   });
 
+  it("reads the extra landscape and portrait ratios", () => {
+    expect(inferOutputSettings("OUTPUT SETTINGS 4:3 horizontal.").aspect).toBe(
+      "4:3"
+    );
+    expect(inferOutputSettings("framed 3:4 for print").aspect).toBe("3:4");
+    expect(inferOutputSettings("3:2 photo crop").aspect).toBe("3:2");
+    expect(inferOutputSettings("2:3 vertical still").aspect).toBe("2:3");
+    expect(inferOutputSettings("5:4 landscape poster").aspect).toBe("5:4");
+    expect(inferOutputSettings("9:21 tall ultrawide").aspect).toBe("9:21");
+  });
+
   it("leaves short prompts that never name a format alone", () => {
     expect(inferOutputSettings("a camel walks across a dune")).toEqual({});
   });

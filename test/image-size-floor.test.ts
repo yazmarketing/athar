@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ensureMinPixels } from "@/app/api/generate/route";
 import { IMAGE_MODEL_CHOICES, resolveModel } from "@/config/models";
+import { ASPECT_RATIOS, ASPECT_TO_ARK_SIZE_1K } from "@/config/aspects";
 
 /**
  * Verified against the live BytePlus API on 2026-08-19: Seedream 5.x rejects
@@ -10,7 +11,7 @@ import { IMAGE_MODEL_CHOICES, resolveModel } from "@/config/models";
 const SEEDREAM_5_FLOOR = 3_686_400;
 
 /** The 1K sizes the app derives from each aspect. */
-const SIZES_1K = ["1280x720", "720x1280", "1024x1024", "896x1120", "1472x640"];
+const SIZES_1K = ASPECT_RATIOS.map((ratio) => ASPECT_TO_ARK_SIZE_1K[ratio]);
 
 const px = (size: string) => {
   const [w, h] = size.split("x").map(Number);

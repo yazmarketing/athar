@@ -1,6 +1,7 @@
 import "server-only";
 import { arkCreateVideoTask, type ArkVideoRequest } from "@/lib/byteplus-server";
 import { resolveModel, seedanceRealCost, type Tier } from "@/config/models";
+import { ASPECT_TO_VIDEO_RATIO, isAspectRatio } from "@/config/aspects";
 import {
   ensureGenerationModes,
   insertGeneration,
@@ -25,14 +26,7 @@ import type { GenerationJobRecord, PromptInputs } from "@/lib/types";
  * immediately; the studio's poll reports what the job row says.
  */
 
-/** Seedance ratio — map uncommon aspects to the closest supported. */
-const ASPECT_TO_VIDEO_RATIO: Record<string, string> = {
-  "16:9": "16:9",
-  "9:16": "9:16",
-  "1:1": "1:1",
-  "4:5": "9:16",
-  "21:9": "16:9",
-};
+/** Seedance ratio — map uncommon aspects to the closest supported. See ASPECT_TO_VIDEO_RATIO. */
 
 /** The parts of a stored job payload the provider request is built from. */
 type VideoJobInput = {
@@ -103,7 +97,9 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
     model: model.slug,
     prompt: job.final_prompt,
     negativePrompt: job.negative_prompt || undefined,
-    ratio: ASPECT_TO_VIDEO_RATIO[job.aspect] ?? "16:9",
+    ratio: isAspectRatio(job.aspect)
+      ? ASPECT_TO_VIDEO_RATIO[job.aspect]
+      : "16:9",
     resolution,
     duration,
     generateAudio: model.supportsAudio,

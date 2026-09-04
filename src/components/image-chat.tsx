@@ -34,6 +34,7 @@ import {
   imageModelIdFromEndpoint,
   type Tier,
 } from "@/config/models";
+import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
 import type {
   AspectRatio,
   GenerationRecord,
@@ -41,7 +42,6 @@ import type {
   PromptInputs,
 } from "@/lib/types";
 
-const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
 /**
  * Attachments per message, on top of the image being edited. Six plus the
  * base stays inside the eight references the edit request actually fuses.
@@ -115,9 +115,7 @@ function promptFrom(g: GenerationRecord): PromptInputs {
 }
 
 function asAspect(value: string | undefined): AspectRatio {
-  return ASPECTS.includes(value as AspectRatio)
-    ? (value as AspectRatio)
-    : "16:9";
+  return isAspectRatio(value) ? value : "16:9";
 }
 
 export function ImageChat({
@@ -643,7 +641,7 @@ export function ImageChat({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASPECTS.map((a) => (
+                {ASPECT_RATIOS.map((a) => (
                   <SelectItem key={a} value={a}>
                     {a}
                   </SelectItem>

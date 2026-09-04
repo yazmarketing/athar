@@ -47,6 +47,7 @@ import {
   STORYBOARD_STYLES,
 } from "@/config/storyboard-styles";
 import { cn } from "@/lib/utils";
+import { ASPECT_RATIOS } from "@/config/aspects";
 import type {
   ClientRecord,
   StoryboardCastMember,
@@ -54,7 +55,6 @@ import type {
   StoryboardRecord,
 } from "@/lib/types";
 
-const ASPECTS = ["16:9", "9:16", "1:1", "4:5"];
 /** Select can't hold an empty value, so "no client" needs a sentinel. */
 const NO_CLIENT = "__none__";
 
@@ -968,7 +968,7 @@ ${panels}
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ASPECTS.map((a) => (
+              {ASPECT_RATIOS.map((a) => (
                 <SelectItem key={a} value={a}>
                   {a}
                 </SelectItem>
@@ -1582,7 +1582,7 @@ function CreateDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASPECTS.map((a) => (
+                {ASPECT_RATIOS.map((a) => (
                   <SelectItem key={a} value={a}>
                     {a}
                   </SelectItem>
@@ -1865,7 +1865,7 @@ function FrameCard({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ASPECTS.map((a) => (
+              {ASPECT_RATIOS.map((a) => (
                 <SelectItem key={a} value={a}>
                   {a}
                 </SelectItem>

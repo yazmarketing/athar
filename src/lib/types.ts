@@ -7,7 +7,18 @@ export type GenerationStatus =
   | "failed"
   | "qc_flagged";
 
-export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:5" | "21:9";
+export type AspectRatio =
+  | "16:9"
+  | "9:16"
+  | "1:1"
+  | "4:3"
+  | "3:4"
+  | "3:2"
+  | "2:3"
+  | "4:5"
+  | "5:4"
+  | "21:9"
+  | "9:21";
 
 /** Seedream output resolution tier (maps to pixel sizes per aspect). */
 /** 4K is Nano Banana 2 / Pro only — Seedream paths clamp it back to 2K. */

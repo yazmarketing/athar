@@ -1,4 +1,5 @@
 import type { AspectRatio } from "@/lib/types";
+import { ASPECT_RATIOS } from "@/config/aspects";
 
 /**
  * Pull output format out of a director-style prompt.
@@ -18,16 +19,17 @@ export type InferredOutputSettings = {
   durationS?: number;
 };
 
-const RATIO_TOKEN_RE =
-  /\b(21\s*[:/]\s*9|16\s*[:/]\s*9|9\s*[:/]\s*16|4\s*[:/]\s*5|1\s*[:/]\s*1)\b/gi;
+const RATIO_TOKEN_RE = new RegExp(
+  `\\b(${[...ASPECT_RATIOS]
+    .sort((a, b) => b.length - a.length)
+    .map((r) => r.replace(":", "\\s*[:/]\\s*"))
+    .join("|")})\\b`,
+  "gi"
+);
 
-const RATIO_NORM: Record<string, AspectRatio> = {
-  "21:9": "21:9",
-  "16:9": "16:9",
-  "9:16": "9:16",
-  "4:5": "4:5",
-  "1:1": "1:1",
-};
+const RATIO_NORM: Record<string, AspectRatio> = Object.fromEntries(
+  ASPECT_RATIOS.map((r) => [r, r])
+) as Record<string, AspectRatio>;
 
 function lastRatioToken(text: string): AspectRatio | undefined {
   let last: AspectRatio | undefined;

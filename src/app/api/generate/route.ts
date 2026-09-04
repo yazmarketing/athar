@@ -18,31 +18,18 @@ import {
   maxReferenceImages,
   type ModelEndpoint,
 } from "@/config/models";
+import {
+  ASPECT_TO_ARK_SIZE_1K,
+  ASPECT_TO_ARK_SIZE_2K,
+} from "@/config/aspects";
 import type { GenerateRequest } from "@/lib/types";
 
 export const maxDuration = 300;
 
-/** BytePlus ModelArk pixel sizes — multiples of 16. 2K meets Seedream edit min (≥3.686M px). */
-const ASPECT_TO_ARK_SIZE_2K: Record<string, string> = {
-  "16:9": "2560x1440",
-  "9:16": "1440x2560",
-  "1:1": "2048x2048",
-  "4:5": "1728x2160",
-  "21:9": "2944x1264",
-};
-
-const ASPECT_TO_ARK_SIZE_1K: Record<string, string> = {
-  "16:9": "1280x720",
-  "9:16": "720x1280",
-  "1:1": "1024x1024",
-  "4:5": "896x1120",
-  "21:9": "1472x640",
-};
-
 function arkSizeFor(aspect: string, resolution: "1K" | "2K"): string {
   const table =
     resolution === "1K" ? ASPECT_TO_ARK_SIZE_1K : ASPECT_TO_ARK_SIZE_2K;
-  return table[aspect] ?? (resolution === "1K" ? "1280x720" : "2560x1440");
+  return table[aspect as keyof typeof table] ?? (resolution === "1K" ? "1280x720" : "2560x1440");
 }
 
 /** Seedream image edits require ≥ ~3.686M pixels (e.g. 2560×1440). */

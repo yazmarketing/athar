@@ -1,10 +1,12 @@
+import { ASPECT_RATIOS } from "@/config/aspects";
+
 /**
  * Pure helpers behind the shot planner — shared by the Campaign orchestrator
  * and Storyboards. Deliberately free of server-only imports so the parsing
  * and motion-stripping rules can be unit-tested directly.
  */
 
-export const PLAN_ASPECTS = ["16:9", "9:16", "1:1", "4:5"] as const;
+export const PLAN_ASPECTS = ASPECT_RATIOS;
 
 /**
  * A recurring character. `description` is the fixed identity string reused

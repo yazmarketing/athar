@@ -23,6 +23,7 @@ import {
   imageModelCost,
   imageModelIdFromEndpoint,
 } from "@/config/models";
+import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
 import { ImageModelSelect } from "@/components/image-model-select";
 import type {
   AspectRatio,
@@ -33,7 +34,6 @@ import type {
 
 export type VaryStrength = "subtle" | "medium" | "strong";
 
-const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
 const COUNTS = [2, 3, 4] as const;
 
 const STRENGTH_COPY: Record<
@@ -89,9 +89,7 @@ function promptFrom(g: GenerationRecord): PromptInputs {
 }
 
 function asAspect(value: string | undefined): AspectRatio {
-  return ASPECTS.includes(value as AspectRatio)
-    ? (value as AspectRatio)
-    : "16:9";
+  return isAspectRatio(value) ? value : "16:9";
 }
 
 export function VariationsPanel({
@@ -328,7 +326,7 @@ export function VariationsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ASPECTS.map((a) => (
+                {ASPECT_RATIOS.map((a) => (
                   <SelectItem key={a} value={a}>
                     {a}
                   </SelectItem>

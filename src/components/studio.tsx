@@ -121,6 +121,7 @@ import {
 } from "@/config/models";
 import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
+import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
 import {
@@ -185,7 +186,6 @@ import {
   type AppNotification,
 } from "@/components/notifications-bell";
 
-const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
 const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
   { value: "1K", label: "1K" },
   { value: "2K", label: "2K" },
@@ -2595,11 +2595,7 @@ export function Studio() {
       cameraId: inputs.cameraId,
     });
 
-    const aspect = (["16:9", "9:16", "1:1", "4:5", "21:9"] as const).includes(
-      g.aspect as AspectRatio
-    )
-      ? (g.aspect as AspectRatio)
-      : null;
+    const aspect = isAspectRatio(g.aspect) ? g.aspect : null;
     if (aspect) setAspect(aspect);
 
     if (video) {
@@ -6124,13 +6120,13 @@ export function Studio() {
                 value={aspect}
                 active={false}
                 icon={<AspectIcon ratio={aspect} />}
-                width="w-72"
+                width="w-80"
               >
                 <p className="px-2 pt-1 pb-1.5 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                   Aspect ratio
                 </p>
                 <div className="grid grid-cols-3 gap-1.5 p-1">
-                  {ASPECTS.map((a) => {
+                  {ASPECT_RATIOS.map((a) => {
                     const selected = a === aspect;
                     return (
                       <button
