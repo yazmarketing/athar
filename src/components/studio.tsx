@@ -340,13 +340,6 @@ export function Studio() {
   );
   const [googleModel, setGoogleModel] =
     useState<GoogleImageModelId | null>(null);
-  const [checkingModel, setCheckingModel] = useState(false);
-  const [modelSuggestion, setModelSuggestion] = useState<{
-    best: string;
-    label: string;
-    reason: string;
-    current: string;
-  } | null>(null);
   const [style, setStyle] = useState<string>(DEFAULT_STYLE_ID);
   const [camera, setCamera] = useState<string>(DEFAULT_CAMERA_ID);
   const [clientStyles, setClientStyles] = useState<StylePresetRecord[]>([]);
@@ -2219,30 +2212,9 @@ export function Studio() {
       submit(buildPromptInputs());
       return;
     }
-    // Ask the guide whether a different model fits this prompt better.
-    const currentModelId = imageModelId;
-    setCheckingModel(true);
-    try {
-      const rec = await fetch("/api/recommend-model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: subject, current: currentModelId }),
-      }).then((r) => r.json());
-      if (rec?.differs && rec.best) {
-        setModelSuggestion({
-          best: rec.best,
-          label: rec.label,
-          reason: rec.reason,
-          current: currentModelId,
-        });
-        setCheckingModel(false);
-        return;
-      }
-    } catch {
-      // guide is advisory — fall through and generate
-    }
-    setCheckingModel(false);
-    runGenerate(currentModelId);
+    // Generate with the model they picked. A "switch to X?" interrupt on
+    // every still made returning users look like first-timers.
+    runGenerate(imageModelId);
   };
 
   const uploadReference = async (file: File) => uploadImageFile(file);
@@ -4951,51 +4923,6 @@ export function Studio() {
           </DialogContent>
         </Dialog>
 
-        {/* Model guide — suggests a better-fit model for the prompt */}
-        <Dialog
-          open={modelSuggestion != null}
-          onOpenChange={(o) => {
-            if (!o) setModelSuggestion(null);
-          }}
-        >
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <Sparkles className="size-4 text-gold" />
-                Better with {modelSuggestion?.label}?
-              </DialogTitle>
-            </DialogHeader>
-            <p className="text-sm text-muted-foreground">
-              For this prompt,{" "}
-              <span className="text-foreground">{modelSuggestion?.label}</span>{" "}
-              is a stronger fit — {modelSuggestion?.reason}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  const s = modelSuggestion;
-                  setModelSuggestion(null);
-                  if (s) runGenerate(s.current);
-                }}
-              >
-                Keep current
-              </Button>
-              <Button
-                className="gap-1.5 bg-gold text-primary-foreground hover:bg-gold/90"
-                onClick={() => {
-                  const s = modelSuggestion;
-                  setModelSuggestion(null);
-                  if (s) runGenerate(s.best);
-                }}
-              >
-                <Sparkles className="size-4" />
-                Use {modelSuggestion?.label}
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-
         {/* Floating prompt dock — create views only */}
         {showDock && (
           <>
@@ -6318,7 +6245,7 @@ export function Studio() {
             // button inert to both mouse hover (native title tooltips don't
             // fire through disabled:pointer-events-none) and click, leaving
             // no way to discover why. onGenerate() shows the toast instead.
-            disabled={generating || checkingModel}
+            disabled={generating}
             title={
               !activeClientId
                 ? "Pick a client first — generations are always attributed to one"
@@ -6326,16 +6253,11 @@ export function Studio() {
             }
             className={cn(
               "h-10 rounded-full px-6 font-medium text-primary-foreground",
-              (generating || checkingModel) && "animate-gen-pulse",
+              generating && "animate-gen-pulse",
               !activeClientId && "opacity-50"
             )}
           >
-                  {checkingModel ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" />
-                      Picking the best model…
-                    </>
-                  ) : generating ? (
+                  {generating ? (
                     <>
                       <Loader2 className="size-4 animate-spin" />
                       {mode === "t2v" ? "Rendering…" : "Generating…"}
