@@ -14,7 +14,8 @@ import {
   resolveModel,
   resolveFallbacks,
   asGoogleImageModel,
-  googleAllows4K,
+  asOpenAIImageModel,
+  imageAllows4K,
   maxReferenceImages,
   type ModelEndpoint,
 } from "@/config/models";
@@ -284,13 +285,17 @@ export async function POST(req: NextRequest) {
   const aspect = inferred.aspect ?? body.aspect ?? "16:9";
   const numOutputs = Math.min(body.numOutputs ?? 1, mode === "t2v" ? 2 : 4);
   const baseSeed = body.seed ?? Math.floor(Math.random() * 2 ** 31);
-  // Nano Banana Pro holds consistency across more references than Seedream
-  // fuses, so the ceiling follows the model the request is actually routed to.
+  // Nano Banana Pro and GPT Image 2 hold consistency across more references
+  // than Seedream fuses, so the ceiling follows the model the request is
+  // actually routed to.
   const googleModel =
     body.mode === "t2i" ? asGoogleImageModel(body.imageModel) : null;
+  const openaiModel =
+    body.mode === "t2i" ? asOpenAIImageModel(body.imageModel) : null;
+  const routedImageModel = googleModel ?? openaiModel;
   let referenceUrls = (body.referenceUrls ?? [])
     .filter(Boolean)
-    .slice(0, maxReferenceImages(googleModel));
+    .slice(0, maxReferenceImages(routedImageModel));
 
   const { finalPrompt, negativePrompt } = buildPrompt(body.prompt);
   // Prefer Seedream standard+ for edits (better i2i than draft / fal)
@@ -307,11 +312,11 @@ export async function POST(req: NextRequest) {
     ),
     primary.maxDuration || 30
   );
-  // 4K only exists on Nano Banana 2 and Pro; Seedream renders it at 2K.
+  // 4K only exists on Nano Banana 2/Pro and GPT Image 2; Seedream renders it at 2K.
   const resolution: "1K" | "2K" | "4K" =
     body.resolution === "1K"
       ? "1K"
-      : body.resolution === "4K" && googleAllows4K(googleModel)
+      : body.resolution === "4K" && imageAllows4K(routedImageModel)
         ? "4K"
         : "2K";
   const arkResolution: "1K" | "2K" = resolution === "1K" ? "1K" : "2K";
@@ -381,21 +386,23 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Nano Banana: queue a durable job and return immediately. Gemini Pro often
-  // outruns the gateway; the studio polls /api/jobs/[id] the same way as video.
-  if (googleModel) {
+  // Nano Banana / GPT Image 2: queue a durable job and return immediately.
+  // Both often outrun the gateway; the studio polls /api/jobs/[id] the same
+  // way as video.
+  if (routedImageModel) {
+    const provider = openaiModel ? "openai" : "google";
     try {
       const jobs: Awaited<ReturnType<typeof createJob>>[] = [];
       for (let i = 0; i < numOutputs; i++) {
         const job = await createJob({
           kind: "t2i",
-          provider: "google",
-          modelEndpoint: imageJobModelEndpoint(googleModel),
+          provider,
+          modelEndpoint: imageJobModelEndpoint(routedImageModel),
           tier: editTier,
           input: {
             ...body,
             prompt: body.prompt,
-            imageModel: googleModel,
+            imageModel: routedImageModel,
             resolution,
             seed: baseSeed + i,
             referenceUrls,

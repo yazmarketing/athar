@@ -8,6 +8,7 @@ import {
   imageModelIdFromEndpoint,
   imageModelRequest,
   GOOGLE_IMAGE_MODELS,
+  OPENAI_IMAGE_MODELS,
 } from "@/config/models";
 import { IMAGE_MODELS } from "@/app/api/recommend-model/route";
 
@@ -26,13 +27,14 @@ describe("the image-model list", () => {
     expect(ids).toContain("nano");
     expect(ids).toContain("nano-2");
     expect(ids).toContain("nano-pro");
+    expect(ids).toContain("gpt-image-2");
   });
 
   it("gives every choice a usable request shape", () => {
     for (const choice of IMAGE_MODEL_CHOICES) {
       const req = imageModelRequest(choice.id);
       // Exactly one routing field — a tier (Seedream) or an imageModel
-      // (Google). Both or neither would be ambiguous at the API.
+      // (Google / OpenAI). Both or neither would be ambiguous at the API.
       expect(Boolean(req.tier) !== Boolean(req.imageModel)).toBe(true);
       expect(choice.slug.length).toBeGreaterThan(0);
       expect(choice.maxReferenceImages).toBeGreaterThan(0);
@@ -52,17 +54,14 @@ describe("the image-model list", () => {
   it("offers 4K only where the model supports it", () => {
     for (const choice of IMAGE_MODEL_CHOICES) {
       if (choice.resolutions.includes("4K")) {
-        expect(choice.provider).toBe("google");
         expect(choice.imageModel).not.toBeNull();
-        expect(
-          GOOGLE_IMAGE_MODELS[choice.imageModel!].costPerImage4K
-        ).toBeGreaterThan(0);
+        expect(imageModelCost(choice.id, "4K", 1)).toBeGreaterThan(0);
       }
     }
   });
 
   it("charges more for 4K than 2K on models that offer it", () => {
-    for (const id of ["nano-2", "nano-pro"] as const) {
+    for (const id of ["nano-2", "nano-pro", "gpt-image-2"] as const) {
       const at2K = imageModelCost(id, "2K", 1);
       const at4K = imageModelCost(id, "4K", 1);
       expect(at4K).toBeGreaterThan(at2K as number);
@@ -119,6 +118,18 @@ describe("recovering the model from a stored generation", () => {
     ).toBe("nano-2");
     expect(imageModelIdFromEndpoint("google:gemini-9-flash-image", "hero")).toBe(
       "nano"
+    );
+  });
+
+  it("reads an OpenAI endpoint back to GPT Image 2, not a tier", () => {
+    expect(
+      imageModelIdFromEndpoint(
+        `openai:${OPENAI_IMAGE_MODELS["gpt-image-2"].defaultSlug}`,
+        "standard"
+      )
+    ).toBe("gpt-image-2");
+    expect(imageModelIdFromEndpoint("openai:gpt-image-2-2026-04-21", "hero")).toBe(
+      "gpt-image-2"
     );
   });
 

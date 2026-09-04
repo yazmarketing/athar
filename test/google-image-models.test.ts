@@ -17,6 +17,7 @@ describe("asGoogleImageModel", () => {
   });
 
   it("treats anything else as a Seedream request", () => {
+    expect(asGoogleImageModel("gpt-image-2")).toBeNull();
     expect(asGoogleImageModel("seedream")).toBeNull();
     expect(asGoogleImageModel("hero")).toBeNull();
     // The picker's short id must not reach the API unmapped.
@@ -32,6 +33,7 @@ describe("maxReferenceImages", () => {
     expect(maxReferenceImages("nano-banana-pro")).toBe(14);
     expect(maxReferenceImages("nano-banana-2")).toBe(14);
     expect(maxReferenceImages("nano-banana")).toBe(MAX_REFERENCE_IMAGES);
+    expect(maxReferenceImages("gpt-image-2")).toBe(16);
     expect(maxReferenceImages("seedream")).toBe(MAX_REFERENCE_IMAGES);
     expect(maxReferenceImages(null)).toBe(MAX_REFERENCE_IMAGES);
   });
@@ -94,5 +96,6 @@ describe("Google model registry", () => {
     expect(friendlyModelName("google:gemini-3.1-flash-image-preview")).toBe(
       "Nano Banana 2"
     );
+    expect(friendlyModelName("openai:gpt-image-2")).toBe("GPT Image 2");
   });
 });

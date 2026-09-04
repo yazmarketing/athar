@@ -80,8 +80,8 @@ async function advance(job: GenerationJobRecord) {
     return { job, generation: null };
   }
 
-  // Gemini has no provider task to poll — submitImageJob writes completed
-  // or failed on the job row itself.
+  // Gemini / OpenAI image jobs have no provider task to poll —
+  // submitImageJob writes completed or failed on the job row itself.
   if (isImageJob(job)) {
     return { job, generation: null };
   }

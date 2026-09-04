@@ -4,9 +4,8 @@
  * Single source of truth mapping internal capabilities → provider endpoints.
  * Never hardcode model IDs in components or routes; always resolve through here.
  *
- * Provider strategy: BytePlus ModelArk (Seedream / Seedance) only — the
- * studio runs entirely on the YAZ BytePlus account (decision 14 Aug 2026;
- * the earlier fal.ai gap-filler was removed).
+ * Provider strategy: BytePlus ModelArk (Seedream / Seedance) for the core
+ * studio, plus Google Gemini and OpenAI GPT Image 2 for stills.
  *
  * Verify BytePlus model IDs in the ModelArk console (they carry version
  * suffixes like seedream-5-0-pro-260628) before wiring.
@@ -14,7 +13,7 @@
 
 export type Capability = "t2i" | "i2v" | "t2v" | "v2v";
 export type Tier = "draft" | "standard" | "hero";
-export type Provider = "byteplus" | "google";
+export type Provider = "byteplus" | "google" | "openai";
 
 export type ModelEndpoint = {
   provider: Provider;
@@ -452,12 +451,83 @@ export function googleAllows4K(id: GoogleImageModelId | null): boolean {
   return id != null && GOOGLE_IMAGE_MODELS[id].costPerImage4K != null;
 }
 
+// ---------------------------------------------------------------------------
+// OpenAI GPT Image 2 — priced per image (token-billed; estimates below)
+// ---------------------------------------------------------------------------
+
+export type OpenAIImageModelId = "gpt-image-2";
+
+/**
+ * OpenAI still models the studio can route to.
+ *
+ * `defaultSlug` is the published API id; OPENAI_IMAGE_MODEL can override it
+ * without a deploy (see lib/openai-image-server.ts).
+ */
+export const OPENAI_IMAGE_MODELS: Record<
+  OpenAIImageModelId,
+  {
+    label: string;
+    defaultSlug: string;
+    costPerImage: number;
+    costPerImage2K?: number;
+    costPerImage4K?: number;
+    maxReferenceImages: number;
+    notes: string;
+  }
+> = {
+  "gpt-image-2": {
+    label: "GPT Image 2",
+    defaultSlug: "gpt-image-2",
+    // OpenAI calculator, high quality, checked 2026-09-04:
+    // ~$0.211 at 1024×1024. 2K/4K are planning estimates — billing is
+    // token-based (image out $30 / 1M tokens).
+    costPerImage: 0.211,
+    costPerImage2K: 0.35,
+    costPerImage4K: 0.5,
+    maxReferenceImages: 16,
+    notes:
+      "OpenAI GPT Image 2 — photorealism, readable text, instruction-following edits, 1K/2K/4K",
+  },
+};
+
+export function asOpenAIImageModel(
+  id: string | null | undefined
+): OpenAIImageModelId | null {
+  if (!id) return null;
+  return Object.hasOwn(OPENAI_IMAGE_MODELS, id)
+    ? (id as OpenAIImageModelId)
+    : null;
+}
+
+export function openaiImageCost(
+  id: OpenAIImageModelId,
+  resolution: ImageResolutionOption
+): number {
+  const spec = OPENAI_IMAGE_MODELS[id];
+  if (resolution === "4K") return spec.costPerImage4K ?? spec.costPerImage;
+  if (resolution === "2K") return spec.costPerImage2K ?? spec.costPerImage;
+  return spec.costPerImage;
+}
+
+export function openaiAllows4K(id: OpenAIImageModelId | null): boolean {
+  return id != null && OPENAI_IMAGE_MODELS[id].costPerImage4K != null;
+}
+
+/** 4K exists on Nano Banana 2/Pro and GPT Image 2. */
+export function imageAllows4K(id: string | null | undefined): boolean {
+  const google = asGoogleImageModel(id);
+  if (google) return googleAllows4K(google);
+  const openai = asOpenAIImageModel(id);
+  if (openai) return openaiAllows4K(openai);
+  return false;
+}
+
 /**
  * How many reference images one request may carry.
  *
- * Seedream fuses up to 8; Nano Banana 2 and Pro hold consistency across 14. The
- * dock and the API agree on this number so the UI never accepts an image the
- * request would silently drop.
+ * Seedream fuses up to 8; Nano Banana 2 and Pro hold consistency across 14;
+ * GPT Image 2 accepts 16. The dock and the API agree on this number so the
+ * UI never accepts an image the request would silently drop.
  */
 export const MAX_REFERENCE_IMAGES = 8;
 
@@ -465,9 +535,10 @@ export function maxReferenceImages(
   imageModel: string | null | undefined
 ): number {
   const google = asGoogleImageModel(imageModel);
-  return google
-    ? GOOGLE_IMAGE_MODELS[google].maxReferenceImages
-    : MAX_REFERENCE_IMAGES;
+  if (google) return GOOGLE_IMAGE_MODELS[google].maxReferenceImages;
+  const openai = asOpenAIImageModel(imageModel);
+  if (openai) return OPENAI_IMAGE_MODELS[openai].maxReferenceImages;
+  return MAX_REFERENCE_IMAGES;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,7 +564,7 @@ export type ImageModelChoice = {
   /** Tier to send to /api/generate — null for models outside the registry. */
   tier: Tier | null;
   /** imageModel to send to /api/generate — null for Seedream tiers. */
-  imageModel: GoogleImageModelId | null;
+  imageModel: GoogleImageModelId | OpenAIImageModelId | null;
   maxReferenceImages: number;
   resolutions: ImageResolutionOption[];
   /** What this model is genuinely best at — used by the routing guide. */
@@ -580,6 +651,18 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
     bestFor:
       "the hardest text-heavy work — infographics, slides, posters with long copy — plus 4K output and fusing many references (up to 14) or several people in one frame",
   },
+  {
+    id: "gpt-image-2",
+    label: OPENAI_IMAGE_MODELS["gpt-image-2"].label,
+    slug: OPENAI_IMAGE_MODELS["gpt-image-2"].defaultSlug,
+    provider: "openai",
+    tier: null,
+    imageModel: "gpt-image-2",
+    maxReferenceImages: OPENAI_IMAGE_MODELS["gpt-image-2"].maxReferenceImages,
+    resolutions: ["1K", "2K", "4K"],
+    bestFor:
+      "photorealism, readable on-image text, precise instruction-following edits, and brand stills fused from many references (up to 16)",
+  },
 ];
 
 export const DEFAULT_IMAGE_MODEL_ID = "standard";
@@ -600,6 +683,13 @@ export function imageModelIdFrom(
   if (google) {
     return (
       IMAGE_MODEL_CHOICES.find((m) => m.imageModel === google)?.id ??
+      DEFAULT_IMAGE_MODEL_ID
+    );
+  }
+  const openai = asOpenAIImageModel(imageModel);
+  if (openai) {
+    return (
+      IMAGE_MODEL_CHOICES.find((m) => m.imageModel === openai)?.id ??
       DEFAULT_IMAGE_MODEL_ID
     );
   }
@@ -631,13 +721,16 @@ export function imageModelIdFromEndpoint(
     if (/3\.1-flash-image|nano-banana-2/i.test(slug)) return "nano-2";
     return /pro/i.test(slug) ? "nano-pro" : "nano";
   }
+  if (/^openai:/i.test(endpoint ?? "") || /^gpt-image/i.test(slug)) {
+    return "gpt-image-2";
+  }
   return imageModelIdFrom(tier);
 }
 
 /** The request fields a choice implies. */
 export function imageModelRequest(id: string): {
   tier: Tier | undefined;
-  imageModel: GoogleImageModelId | undefined;
+  imageModel: GoogleImageModelId | OpenAIImageModelId | undefined;
 } {
   const choice = imageModelChoice(id);
   return {
@@ -655,7 +748,10 @@ export function imageModelCost(
   const choice = imageModelChoice(id);
   if (!choice) return null;
   if (choice.imageModel) {
-    return googleImageCost(choice.imageModel, resolution) * numOutputs;
+    const google = asGoogleImageModel(choice.imageModel);
+    if (google) return googleImageCost(google, resolution) * numOutputs;
+    const openai = asOpenAIImageModel(choice.imageModel);
+    if (openai) return openaiImageCost(openai, resolution) * numOutputs;
   }
   if (!choice.tier) return null;
   try {
@@ -772,6 +868,7 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-3-pro-image-preview": "Nano Banana Pro",
   "gemini-3-pro-image": "Nano Banana Pro",
   "nano-banana-pro": "Nano Banana Pro",
+  "gpt-image-2": "GPT Image 2",
   "whisper-1": "Whisper",
   "faseeh-v1-preview": "Athar Voice",
 };
@@ -784,7 +881,7 @@ export function friendlyModelName(endpoint: string | null | undefined): string {
   // Fallback: drop the vendor word and trailing build date, then turn the
   // dashed version ("5-0-pro") back into something readable ("5.0 Pro").
   const cleaned = slug
-    .replace(/^(dreamina|dola|byteplus|google|fal)-/i, "")
+    .replace(/^(dreamina|dola|byteplus|google|fal|openai)-/i, "")
     .replace(/-\d{6,}$/, "");
 
   return cleaned

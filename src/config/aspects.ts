@@ -60,6 +60,46 @@ export const ASPECT_TO_ARK_SIZE_1K: Record<AspectRatio, string> = {
 };
 
 /**
+ * GPT Image 2 pixel size for a dock resolution.
+ *
+ * OpenAI wants both edges as multiples of 16, an aspect between 1:3 and 3:1,
+ * and a max of 3840×2160 (portrait swapped). 1K/2K reuse the Seedream tables
+ * so the same aspect always means the same canvas; 4K scales the long edge
+ * toward 3840 without breaking the ratio.
+ */
+const OPENAI_MAX_LONG = 3840;
+const OPENAI_MAX_SHORT = 2160;
+
+export function openaiSizeFor(
+  aspect: AspectRatio,
+  resolution: "1K" | "2K" | "4K"
+): string {
+  if (resolution === "1K") return ASPECT_TO_ARK_SIZE_1K[aspect];
+  if (resolution === "2K") return ASPECT_TO_ARK_SIZE_2K[aspect];
+  const [aw, ah] = aspect.split(":").map(Number);
+  let w: number;
+  let h: number;
+  if (aw >= ah) {
+    w = OPENAI_MAX_LONG;
+    h = (OPENAI_MAX_LONG * ah) / aw;
+    if (h > OPENAI_MAX_SHORT) {
+      h = OPENAI_MAX_SHORT;
+      w = (OPENAI_MAX_SHORT * aw) / ah;
+    }
+  } else {
+    h = OPENAI_MAX_LONG;
+    w = (OPENAI_MAX_LONG * aw) / ah;
+    if (w > OPENAI_MAX_SHORT) {
+      w = OPENAI_MAX_SHORT;
+      h = (OPENAI_MAX_SHORT * ah) / aw;
+    }
+  }
+  const nw = Math.max(16, Math.round(w / 16) * 16);
+  const nh = Math.max(16, Math.round(h / 16) * 16);
+  return `${nw}x${nh}`;
+}
+
+/**
  * Seedance only accepts 16:9 / 9:16 / 1:1. Other dock ratios map to the
  * closest of those so a still aspect still produces a clip.
  */

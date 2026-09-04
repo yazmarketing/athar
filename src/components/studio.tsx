@@ -111,10 +111,11 @@ import {
   imageModelIdFromEndpoint,
   imageModelRequest,
   friendlyModelName,
-  googleAllows4K,
+  asGoogleImageModel,
   DEFAULT_IMAGE_MODEL_ID,
   type Capability,
   type GoogleImageModelId,
+  type OpenAIImageModelId,
   type ImageModelChoice,
   type ImageResolutionOption,
   type Tier,
@@ -556,7 +557,7 @@ export function Studio() {
    */
   const applyImageModel = (id: string, choice: ImageModelChoice) => {
     setImageModelId(id);
-    setGoogleModel(choice.imageModel);
+    setGoogleModel(asGoogleImageModel(choice.imageModel));
     if (choice.tier) setTier(choice.tier);
     if (!choice.resolutions.includes(resolution as ImageResolutionOption)) {
       setResolution(choice.resolutions[choice.resolutions.length - 1]);
@@ -1378,8 +1379,8 @@ export function Studio() {
         } | null;
         /** Stay on Home/Library instead of jumping to Create */
         stayOnView?: boolean;
-        /** Explicit image-model override — a Google model id or "seedream". */
-        imageModel?: GoogleImageModelId | "seedream";
+        /** Explicit image-model override — a Google/OpenAI model id or "seedream". */
+        imageModel?: GoogleImageModelId | OpenAIImageModelId | "seedream";
         /** Override the dock's resolution (model switch clamps 4K → 2K). */
         resolution?: ImageResolution;
       } = {}
@@ -1413,7 +1414,10 @@ export function Studio() {
                 ? undefined
                 : opts.imageModel === "seedream"
                   ? undefined
-                  : (opts.imageModel ?? googleModel ?? undefined),
+                  : (opts.imageModel ??
+                    googleModel ??
+                    imageModelChoice(imageModelId)?.imageModel ??
+                    undefined),
             prompt:
               activeMode === "t2v" && audioSources.length > 0
                 ? {
@@ -1610,6 +1614,7 @@ export function Studio() {
       mode,
       tier,
       googleModel,
+      imageModelId,
       aspect,
       resolution,
       numOutputs,
@@ -2172,7 +2177,8 @@ export function Studio() {
   });
 
   // Generate with a specific image model id — a Seedream tier
-  // (draft/standard/hero) or a Google model ("nano" / "nano-2" / "nano-pro").
+  // (draft/standard/hero), a Google model ("nano" / "nano-2" / "nano-pro"),
+  // or GPT Image 2.
   const runGenerate = (modelId: string) => {
     const choice = imageModelChoice(modelId);
     if (!choice) return;
@@ -6168,8 +6174,13 @@ export function Studio() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {RESOLUTIONS.filter(
-                        (r) => r.value !== "4K" || googleAllows4K(googleModel)
+                      {RESOLUTIONS.filter((r) =>
+                        (
+                          imageModelChoice(imageModelId)?.resolutions ?? [
+                            "1K",
+                            "2K",
+                          ]
+                        ).includes(r.value)
                       ).map((r) => (
                         <SelectItem key={r.value} value={r.value}>
                           {r.label}

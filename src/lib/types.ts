@@ -21,7 +21,7 @@ export type AspectRatio =
   | "9:21";
 
 /** Seedream output resolution tier (maps to pixel sizes per aspect). */
-/** 4K is Nano Banana 2 / Pro only — Seedream paths clamp it back to 2K. */
+/** 4K is Nano Banana 2 / Pro and GPT Image 2 — Seedream paths clamp it back to 2K. */
 export type ImageResolution = "1K" | "2K" | "4K";
 
 /** Structured prompt inputs — never concatenate raw user text (§5.3). */
@@ -67,7 +67,7 @@ export type PromptInputs = {
 export type GenerateRequest = {
   mode: Capability;
   tier: Tier;
-  /** Image provider/model override — "nano-banana" / "nano-banana-2" / "nano-banana-pro" routes to Google Gemini. */
+  /** Image provider/model override — "nano-banana" / "nano-banana-2" / "nano-banana-pro" routes to Google Gemini; "gpt-image-2" routes to OpenAI. */
   imageModel?: string;
   prompt: PromptInputs;
   aspect: AspectRatio;
