@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import {
+  imageModelChoice,
   imageModelCost,
   imageModelIdFromEndpoint,
 } from "@/config/models";
@@ -33,7 +34,6 @@ import type {
 export type VaryStrength = "subtle" | "medium" | "strong";
 
 const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
-const RESOLUTIONS: ImageResolution[] = ["1K", "2K"];
 const COUNTS = [2, 3, 4] as const;
 
 const STRENGTH_COPY: Record<
@@ -344,7 +344,9 @@ export function VariationsPanel({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {RESOLUTIONS.map((r) => (
+                {(
+                  imageModelChoice(imageModelId)?.resolutions ?? ["1K", "2K"]
+                ).map((r) => (
                   <SelectItem key={r} value={r}>
                     {r}
                   </SelectItem>

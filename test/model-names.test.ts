@@ -12,6 +12,7 @@ describe("friendlyModelName", () => {
   it("handles the remaining registry slugs", () => {
     expect(friendlyModelName("byteplus:dreamina-seedance-2-0-mini-260615")).toBe("Seedance 2.0 Mini");
     expect(friendlyModelName("nano-banana")).toBe("Nano Banana");
+    expect(friendlyModelName("nano-banana-2")).toBe("Nano Banana 2");
   });
 
   it("tidies an unknown slug instead of leaking the raw id", () => {

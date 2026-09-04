@@ -42,7 +42,6 @@ import type {
 } from "@/lib/types";
 
 const ASPECTS: AspectRatio[] = ["16:9", "9:16", "1:1", "4:5", "21:9"];
-const RESOLUTIONS: ImageResolution[] = ["1K", "2K"];
 /**
  * Attachments per message, on top of the image being edited. Six plus the
  * base stays inside the eight references the edit request actually fuses.
@@ -660,7 +659,9 @@ export function ImageChat({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {RESOLUTIONS.map((r) => (
+                {(
+                  imageModelChoice(imageModelId)?.resolutions ?? ["1K", "2K"]
+                ).map((r) => (
                   <SelectItem key={r} value={r}>
                     {r}
                   </SelectItem>

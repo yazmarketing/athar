@@ -110,6 +110,8 @@ import {
   imageModelCost,
   imageModelIdFromEndpoint,
   imageModelRequest,
+  friendlyModelName,
+  googleAllows4K,
   DEFAULT_IMAGE_MODEL_ID,
   type Capability,
   type GoogleImageModelId,
@@ -2170,7 +2172,7 @@ export function Studio() {
   });
 
   // Generate with a specific image model id — a Seedream tier
-  // (draft/standard/hero) or a Google model ("nano" / "nano-pro").
+  // (draft/standard/hero) or a Google model ("nano" / "nano-2" / "nano-pro").
   const runGenerate = (modelId: string) => {
     const choice = imageModelChoice(modelId);
     if (!choice) return;
@@ -4271,10 +4273,10 @@ export function Studio() {
                                     : (job.error ?? "Failed")}
                                 {" · "}
                                 {isImageJob(job)
-                                  ? (job.input as { imageModel?: string })
-                                      .imageModel === "nano-banana-pro"
-                                    ? "Nano Banana Pro"
-                                    : "Nano Banana"
+                                  ? friendlyModelName(
+                                      (job.input as { imageModel?: string })
+                                        .imageModel
+                                    )
                                   : job.duration_s != null
                                     ? `${Number(job.duration_s)}s clip`
                                     : job.tier}
@@ -6171,9 +6173,7 @@ export function Studio() {
                     </SelectTrigger>
                     <SelectContent>
                       {RESOLUTIONS.filter(
-                        (r) =>
-                          r.value !== "4K" ||
-                          googleModel === "nano-banana-pro"
+                        (r) => r.value !== "4K" || googleAllows4K(googleModel)
                       ).map((r) => (
                         <SelectItem key={r.value} value={r.value}>
                           {r.label}

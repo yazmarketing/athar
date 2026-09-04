@@ -362,26 +362,37 @@ export const UPSCALE_MODELS: Record<UpscaleMode, ModelEndpoint> = {
 // Google Gemini image models — priced per image, outside the tiered registry
 // ---------------------------------------------------------------------------
 
-export type GoogleImageModelId = "nano-banana" | "nano-banana-pro";
+export type ImageResolutionOption = "1K" | "2K" | "4K";
+
+export type GoogleImageModelId =
+  | "nano-banana"
+  | "nano-banana-2"
+  | "nano-banana-pro";
 
 /**
  * The Gemini image models the studio can route a still to.
  *
  * `defaultSlug` is the published API id; the server may override it via
- * GEMINI_IMAGE_MODEL / GEMINI_PRO_IMAGE_MODEL when Google promotes a preview
- * to GA under a new id (see lib/gemini-server.ts). Kept here — free of any
- * secret or process.env read — so the picker can import it on the client.
+ * GEMINI_IMAGE_MODEL / GEMINI_NANO2_IMAGE_MODEL / GEMINI_PRO_IMAGE_MODEL
+ * when Google promotes a preview to GA under a new id (see
+ * lib/gemini-server.ts). Kept here — free of any secret or process.env
+ * read — so the picker can import it on the client.
  */
 export const GOOGLE_IMAGE_MODELS: Record<
   GoogleImageModelId,
   {
     label: string;
     defaultSlug: string;
-    /** USD per image. Pro is quoted per resolution — see costPerImage4K. */
+    /** USD per image at 1K (and 2K when costPerImage2K is unset). */
     costPerImage: number;
+    /** USD per 2K image when it differs from 1K. */
+    costPerImage2K?: number;
+    /** USD per 4K image — also the flag that this model can emit 4K. */
     costPerImage4K?: number;
     /** Reference images the model fuses in one call. */
     maxReferenceImages: number;
+    /** Send Gemini imageConfig (size + aspect). Original Nano Banana rejects it. */
+    supportsImageConfig: boolean;
     notes: string;
   }
 > = {
@@ -390,7 +401,21 @@ export const GOOGLE_IMAGE_MODELS: Record<
     defaultSlug: "gemini-2.5-flash-image",
     costPerImage: 0.039,
     maxReferenceImages: 8,
+    supportsImageConfig: false,
     notes: "Readable text/logos, precise edits, character consistency",
+  },
+  "nano-banana-2": {
+    label: "Nano Banana 2",
+    defaultSlug: "gemini-3.1-flash-image",
+    // Gemini API paid tier, checked 2026-09-04:
+    // $0.067 / 1K, $0.101 / 2K, $0.151 / 4K.
+    costPerImage: 0.067,
+    costPerImage2K: 0.101,
+    costPerImage4K: 0.151,
+    maxReferenceImages: 14,
+    supportsImageConfig: true,
+    notes:
+      "Gemini 3.1 Flash Image — Pro-level quality at Flash speed, 1K/2K/4K, up to 14 references",
   },
   "nano-banana-pro": {
     label: "Nano Banana Pro",
@@ -398,6 +423,7 @@ export const GOOGLE_IMAGE_MODELS: Record<
     costPerImage: 0.134,
     costPerImage4K: 0.24,
     maxReferenceImages: 14,
+    supportsImageConfig: true,
     notes: "Gemini 3 Pro Image — 2K/4K, up to 14 references, best text",
   },
 };
@@ -405,13 +431,31 @@ export const GOOGLE_IMAGE_MODELS: Record<
 export function asGoogleImageModel(
   id: string | null | undefined
 ): GoogleImageModelId | null {
-  return id === "nano-banana" || id === "nano-banana-pro" ? id : null;
+  if (!id) return null;
+  return Object.hasOwn(GOOGLE_IMAGE_MODELS, id)
+    ? (id as GoogleImageModelId)
+    : null;
+}
+
+/** Per-image USD for a Google still, honouring 2K/4K rates where they exist. */
+export function googleImageCost(
+  id: GoogleImageModelId,
+  resolution: ImageResolutionOption
+): number {
+  const spec = GOOGLE_IMAGE_MODELS[id];
+  if (resolution === "4K") return spec.costPerImage4K ?? spec.costPerImage;
+  if (resolution === "2K") return spec.costPerImage2K ?? spec.costPerImage;
+  return spec.costPerImage;
+}
+
+export function googleAllows4K(id: GoogleImageModelId | null): boolean {
+  return id != null && GOOGLE_IMAGE_MODELS[id].costPerImage4K != null;
 }
 
 /**
  * How many reference images one request may carry.
  *
- * Seedream fuses up to 8; Nano Banana Pro holds consistency across 14. The
+ * Seedream fuses up to 8; Nano Banana 2 and Pro hold consistency across 14. The
  * dock and the API agree on this number so the UI never accepts an image the
  * request would silently drop.
  */
@@ -455,8 +499,6 @@ export type ImageModelChoice = {
   /** What this model is genuinely best at — used by the routing guide. */
   bestFor: string;
 };
-
-export type ImageResolutionOption = "1K" | "2K" | "4K";
 
 const SEEDREAM_RESOLUTIONS: ImageResolutionOption[] = ["1K", "2K"];
 
@@ -512,6 +554,18 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
     resolutions: SEEDREAM_RESOLUTIONS,
     bestFor:
       "images that need readable text/logos, precise edits, complex compositional instructions, and character/product consistency",
+  },
+  {
+    id: "nano-2",
+    label: GOOGLE_IMAGE_MODELS["nano-banana-2"].label,
+    slug: GOOGLE_IMAGE_MODELS["nano-banana-2"].defaultSlug,
+    provider: "google",
+    tier: null,
+    imageModel: "nano-banana-2",
+    maxReferenceImages: GOOGLE_IMAGE_MODELS["nano-banana-2"].maxReferenceImages,
+    resolutions: ["1K", "2K", "4K"],
+    bestFor:
+      "Pro-level quality and text at Flash speed — rapid iteration, precise edits, 4K, and fusing many references (up to 14)",
   },
   {
     id: "nano-pro",
@@ -574,6 +628,7 @@ export function imageModelIdFromEndpoint(
   // still a Google render — keep it on that provider rather than a Seedream
   // tier the endpoint never used.
   if (/^google:/i.test(endpoint ?? "") || /^gemini-/i.test(slug)) {
+    if (/3\.1-flash-image|nano-banana-2/i.test(slug)) return "nano-2";
     return /pro/i.test(slug) ? "nano-pro" : "nano";
   }
   return imageModelIdFrom(tier);
@@ -600,10 +655,7 @@ export function imageModelCost(
   const choice = imageModelChoice(id);
   if (!choice) return null;
   if (choice.imageModel) {
-    const spec = GOOGLE_IMAGE_MODELS[choice.imageModel];
-    const per =
-      resolution === "4K" ? (spec.costPerImage4K ?? spec.costPerImage) : spec.costPerImage;
-    return per * numOutputs;
+    return googleImageCost(choice.imageModel, resolution) * numOutputs;
   }
   if (!choice.tier) return null;
   try {
@@ -714,6 +766,9 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-2-5-flash-image": "Nano Banana",
   "gemini-2.5-flash-image": "Nano Banana",
   "nano-banana": "Nano Banana",
+  "gemini-3.1-flash-image": "Nano Banana 2",
+  "gemini-3.1-flash-image-preview": "Nano Banana 2",
+  "nano-banana-2": "Nano Banana 2",
   "gemini-3-pro-image-preview": "Nano Banana Pro",
   "gemini-3-pro-image": "Nano Banana Pro",
   "nano-banana-pro": "Nano Banana Pro",

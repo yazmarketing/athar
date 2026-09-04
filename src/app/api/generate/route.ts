@@ -14,6 +14,7 @@ import {
   resolveModel,
   resolveFallbacks,
   asGoogleImageModel,
+  googleAllows4K,
   maxReferenceImages,
   type ModelEndpoint,
 } from "@/config/models";
@@ -319,11 +320,11 @@ export async function POST(req: NextRequest) {
     ),
     primary.maxDuration || 30
   );
-  // 4K only exists on the Nano Banana Pro path; Seedream renders it at 2K.
+  // 4K only exists on Nano Banana 2 and Pro; Seedream renders it at 2K.
   const resolution: "1K" | "2K" | "4K" =
     body.resolution === "1K"
       ? "1K"
-      : body.resolution === "4K" && googleModel === "nano-banana-pro"
+      : body.resolution === "4K" && googleAllows4K(googleModel)
         ? "4K"
         : "2K";
   const arkResolution: "1K" | "2K" = resolution === "1K" ? "1K" : "2K";

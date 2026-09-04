@@ -24,6 +24,7 @@ describe("the image-model list", () => {
     expect(ids).toContain("standard");
     expect(ids).toContain("hero");
     expect(ids).toContain("nano");
+    expect(ids).toContain("nano-2");
     expect(ids).toContain("nano-pro");
   });
 
@@ -51,15 +52,21 @@ describe("the image-model list", () => {
   it("offers 4K only where the model supports it", () => {
     for (const choice of IMAGE_MODEL_CHOICES) {
       if (choice.resolutions.includes("4K")) {
-        expect(choice.imageModel).toBe("nano-banana-pro");
+        expect(choice.provider).toBe("google");
+        expect(choice.imageModel).not.toBeNull();
+        expect(
+          GOOGLE_IMAGE_MODELS[choice.imageModel!].costPerImage4K
+        ).toBeGreaterThan(0);
       }
     }
   });
 
-  it("charges more for 4K than 2K on the model that offers it", () => {
-    const at2K = imageModelCost("nano-pro", "2K", 1);
-    const at4K = imageModelCost("nano-pro", "4K", 1);
-    expect(at4K).toBeGreaterThan(at2K as number);
+  it("charges more for 4K than 2K on models that offer it", () => {
+    for (const id of ["nano-2", "nano-pro"] as const) {
+      const at2K = imageModelCost(id, "2K", 1);
+      const at4K = imageModelCost(id, "4K", 1);
+      expect(at4K).toBeGreaterThan(at2K as number);
+    }
   });
 });
 
@@ -94,6 +101,12 @@ describe("recovering the model from a stored generation", () => {
         "standard"
       )
     ).toBe("nano-pro");
+    expect(
+      imageModelIdFromEndpoint(
+        `google:${GOOGLE_IMAGE_MODELS["nano-banana-2"].defaultSlug}`,
+        "standard"
+      )
+    ).toBe("nano-2");
   });
 
   it("keeps an unrecognised Google slug on Google", () => {
@@ -101,6 +114,9 @@ describe("recovering the model from a stored generation", () => {
     expect(imageModelIdFromEndpoint("google:gemini-3-pro-image", "hero")).toBe(
       "nano-pro"
     );
+    expect(
+      imageModelIdFromEndpoint("google:gemini-3.1-flash-image-preview", "hero")
+    ).toBe("nano-2");
     expect(imageModelIdFromEndpoint("google:gemini-9-flash-image", "hero")).toBe(
       "nano"
     );

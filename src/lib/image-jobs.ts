@@ -3,7 +3,9 @@ import "server-only";
 import {
   GOOGLE_IMAGE_MODELS,
   asGoogleImageModel,
+  googleImageCost,
   type GoogleImageModelId,
+  type ImageResolutionOption,
 } from "@/config/models";
 import { geminiGenerateImage, geminiModelSlug } from "@/lib/gemini-server";
 import { insertGeneration } from "@/lib/generations-store";
@@ -67,8 +69,8 @@ export async function submitImageJob(jobId: string): Promise<void> {
   const modelId: GoogleImageModelId =
     asGoogleImageModel(input.imageModel) ?? "nano-banana";
   const spec = GOOGLE_IMAGE_MODELS[modelId];
-  const isPro = modelId === "nano-banana-pro";
-  const resolution =
+  const sendImageConfig = spec.supportsImageConfig;
+  const resolution: ImageResolutionOption =
     input.resolution === "1K" ||
     input.resolution === "2K" ||
     input.resolution === "4K"
@@ -86,15 +88,12 @@ export async function submitImageJob(jobId: string): Promise<void> {
       prompt: job.final_prompt,
       imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
       model: modelId,
-      imageSize: isPro ? resolution : undefined,
-      aspectRatio: isPro ? job.aspect : undefined,
+      imageSize: sendImageConfig ? resolution : undefined,
+      aspectRatio: sendImageConfig ? job.aspect : undefined,
     });
 
     const outputUrl = await persistDataUriImage(dataUri, seed);
-    const cost =
-      isPro && resolution === "4K"
-        ? (spec.costPerImage4K ?? spec.costPerImage)
-        : spec.costPerImage;
+    const cost = googleImageCost(modelId, resolution);
 
     const generation = await insertGeneration({
       mode: "t2i",

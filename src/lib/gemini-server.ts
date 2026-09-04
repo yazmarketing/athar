@@ -6,10 +6,11 @@ import {
 } from "@/config/models";
 
 /**
- * Google Gemini image generation — "Nano Banana" (gemini-2.5-flash-image) and
- * "Nano Banana Pro" (Gemini 3 Pro Image). SERVER ONLY. Key from
- * GEMINI_API_KEY. Returns a data URI so it flows through the same
- * persistOutput path as BytePlus outputs.
+ * Google Gemini image generation — "Nano Banana" (gemini-2.5-flash-image),
+ * "Nano Banana 2" (gemini-3.1-flash-image) and "Nano Banana Pro"
+ * (Gemini 3 Pro Image). SERVER ONLY. Key from GEMINI_API_KEY. Returns a
+ * data URI so it flows through the same persistOutput path as BytePlus
+ * outputs.
  *
  * Docs: https://ai.google.dev/gemini-api/docs/image-generation
  */
@@ -30,8 +31,14 @@ export const NANO_BANANA_PRO_MODEL =
   process.env.GEMINI_PRO_IMAGE_MODEL?.trim() ||
   GOOGLE_IMAGE_MODELS["nano-banana-pro"].defaultSlug;
 
+export const NANO_BANANA_2_MODEL =
+  process.env.GEMINI_NANO2_IMAGE_MODEL?.trim() ||
+  GOOGLE_IMAGE_MODELS["nano-banana-2"].defaultSlug;
+
 export function geminiModelSlug(id: GoogleImageModelId): string {
-  return id === "nano-banana-pro" ? NANO_BANANA_PRO_MODEL : NANO_BANANA_MODEL;
+  if (id === "nano-banana-pro") return NANO_BANANA_PRO_MODEL;
+  if (id === "nano-banana-2") return NANO_BANANA_2_MODEL;
+  return NANO_BANANA_MODEL;
 }
 
 export function geminiConfigured(): boolean {
@@ -103,9 +110,9 @@ export async function geminiGenerateImage(opts: {
   imageUrls?: string[];
   /** Which Gemini image model to route to. Defaults to Nano Banana. */
   model?: GoogleImageModelId;
-  /** Pro only — "1K" | "2K" | "4K". Ignored by models without imageConfig. */
+  /** "1K" | "2K" | "4K" — sent when the model supports imageConfig. */
   imageSize?: string;
-  /** Pro only — e.g. "16:9". */
+  /** e.g. "16:9" — sent when the model supports imageConfig. */
   aspectRatio?: string;
 }): Promise<{ dataUri: string; mimeType: string; model: string }> {
   const key = process.env.GEMINI_API_KEY?.trim();
