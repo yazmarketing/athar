@@ -97,6 +97,9 @@ export async function openaiGenerateImage(opts: {
       form.append("prompt", opts.prompt);
       form.append("size", size);
       form.append("quality", "high");
+      // OpenAI rejects repeated `image` fields (400 Duplicate parameter).
+      // One file uses `image`; two or more must use the array field `image[]`.
+      const imageField = refs.length === 1 ? "image" : "image[]";
       for (let i = 0; i < refs.length; i++) {
         const blob = await urlToBlob(refs[i]);
         const ext = blob.type.includes("jpeg")
@@ -104,7 +107,7 @@ export async function openaiGenerateImage(opts: {
           : blob.type.includes("webp")
             ? "webp"
             : "png";
-        form.append("image", blob, `reference-${i + 1}.${ext}`);
+        form.append(imageField, blob, `reference-${i + 1}.${ext}`);
       }
       res = await fetch(`${OPENAI_BASE}/images/edits`, {
         method: "POST",
