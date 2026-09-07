@@ -463,7 +463,7 @@ export function Studio() {
   const [galleryHasMore, setGalleryHasMore] = useState(false);
   const [galleryLoadingMore, setGalleryLoadingMore] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  /** Cinema Studio: the director chips row in the video dock. */
+  /** Cinema Studio: director chips stay hidden until this is on. */
   const [cinemaOn, setCinemaOn] = useState(false);
   const [cinema, setCinema] = useState<CinemaControls>(CINEMA_DEFAULTS);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -782,7 +782,6 @@ export function Studio() {
     "Style";
   const selectedCameraLabel =
     CAMERA_PRESETS.find((c) => c.id === camera)?.label ?? "Camera";
-
   const openTool = (
     next: StudioMode,
     seed?: Partial<PromptInputs> | null
@@ -2136,7 +2135,7 @@ export function Studio() {
     }
   };
 
-  /** How many Cinema Studio picks are set — the badge on the toggle chip. */
+  /** How many Cinema Studio picks are set — the badge on the option chip. */
   const activeCinemaCount = useMemo(
     () =>
       Object.values(cinema).filter((id) => id !== DEFAULT_DIRECTOR_ID).length +
@@ -5876,6 +5875,32 @@ export function Studio() {
                     </button>
                   )}
 
+                  {mode === "t2v" && (
+                    <button
+                      type="button"
+                      onClick={() => setCinemaOn((o) => !o)}
+                      aria-pressed={cinemaOn}
+                      aria-label="Cinema Studio"
+                      title="Cinema Studio — genre, camera, colour, light, emotion and pacing"
+                      className={cn(
+                        "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
+                        cinemaOn
+                          ? "border-gold/30 bg-gold/15 text-foreground"
+                          : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <Aperture
+                        className={cn("size-3.5", cinemaOn && "text-gold")}
+                      />
+                      Cinema Studio
+                      {cinemaOn && activeCinemaCount > 0 && (
+                        <span className="rounded-full bg-gold/20 px-1.5 text-[10px] text-gold">
+                          {activeCinemaCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+
                   <span data-tour="model" className="inline-flex">
                     {mode === "t2i" ? (
                       <ImageModelSelect
@@ -5996,33 +6021,6 @@ export function Studio() {
                 </button>
               )}
 
-              {mode === "t2v" && (
-                <button
-                  type="button"
-                  onClick={() => setCinemaOn((o) => !o)}
-                  aria-pressed={cinemaOn}
-                  title="Cinema Studio — direct genre, camera, colour, light, emotion and pacing"
-                  className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
-                    cinemaOn
-                      ? "border-gold bg-gold/15 text-foreground"
-                      : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <Aperture
-                    className={cn("size-3.5", cinemaOn && "text-gold")}
-                  />
-                  Cinema Studio
-                  {cinemaOn && activeCinemaCount > 0 && (
-                    <span className="rounded-full bg-gold/20 px-1.5 text-[10px] text-gold">
-                      {activeCinemaCount}
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* The plain camera pick lives inside the Cinema chips when the
-                  studio is on — two controls writing one value reads as a bug. */}
               {mode === "t2v" && !cinemaOn && (
                 <Select value={camera} onValueChange={setCamera}>
                   <SelectTrigger
