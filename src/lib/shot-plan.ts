@@ -286,6 +286,20 @@ export const ALWAYS_BANNED =
   "text, lettering, signage, captions, subtitles, watermark, logo, emblem, " +
   "flag, arabic script, garbled writing";
 
+/**
+ * When reference images ride along, they — not the style preset and not the
+ * shot text's incidental lighting language — are the style authority. Without
+ * this said out loud the model treats an attached illustration as mere
+ * content and renders the text's photographic description photorealistically,
+ * which is exactly the frame the reference was attached to prevent.
+ */
+export const REFERENCE_STYLE_INSTRUCTION =
+  "Render this frame in exactly the visual style of the attached reference " +
+  "image(s): same medium, artistic technique, texture, brushwork, line " +
+  "quality, colour palette, lighting treatment and level of finish. The " +
+  "references define HOW the frame is drawn; the text defines only WHAT is " +
+  "in it.";
+
 export function composeFramePrompt(opts: {
   prompt: string;
   shotSize?: string | null;
@@ -296,16 +310,38 @@ export function composeFramePrompt(opts: {
   stylePositive?: string;
   /** True when the render already carries reference images. */
   hasReferences: boolean;
+  /**
+   * True when the attached images genuinely carry the characters' identity
+   * (their faces, their wardrobe). A pure style reference — an illustration
+   * of the mood, a palette board — does NOT: dropping the written cast for
+   * one leaves the character described by neither picture nor text.
+   * Defaults to `hasReferences` (the old assumption) when unset.
+   */
+  identityInReferences?: boolean;
+  /**
+   * The analyzed style contract for the attached references (the board's
+   * `reference_style.styleBrief`). Written once by a vision model, so the
+   * same references say the same words on every render of every board.
+   */
+  referenceStyle?: string;
 }): string {
   const shot = stripLegacyContinuity(opts.prompt);
+  const identityInPictures = opts.identityInReferences ?? opts.hasReferences;
   return [
+    // References own the look, and they say it before anything else does —
+    // the style preset would only argue with them, so it stands down.
+    opts.hasReferences ? REFERENCE_STYLE_INSTRUCTION : "",
+    // Belt and braces: the pixels show the style, the contract names it.
+    opts.hasReferences && opts.referenceStyle?.trim()
+      ? `The reference style, precisely: ${opts.referenceStyle.trim()}`
+      : "",
     opts.shotSize ? SHOT_SIZE_PREFIX[opts.shotSize] : "",
     shot,
-    // With reference images attached the pictures hold identity far better
-    // than a paragraph, and keeping both simply crowds the shot again.
-    opts.hasReferences ? "" : castTail(opts.cast ?? [], opts.castIds ?? []),
+    // When the pictures hold identity, a paragraph re-describing it only
+    // crowds the shot. When they don't, the paragraph is all there is.
+    identityInPictures ? "" : castTail(opts.cast ?? [], opts.castIds ?? []),
     CRAFT_TAIL,
-    opts.stylePositive ?? "",
+    opts.hasReferences ? "" : (opts.stylePositive ?? ""),
   ]
     .map((part) => (part ?? "").trim())
     .filter(Boolean)

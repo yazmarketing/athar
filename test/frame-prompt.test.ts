@@ -147,6 +147,72 @@ describe("composeFramePrompt", () => {
       })
     ).not.toMatch(/gouache|storyboard illustration/);
   });
+
+  it("hands the look to the references when they are attached", () => {
+    // The real failure: an illustrated reference attached to the board, and
+    // the frame came back photoreal — the style preset and the shot's own
+    // photographic language outvoted the picture.
+    const out = composeFramePrompt({
+      ...base,
+      castIds: [],
+      hasReferences: true,
+      stylePositive: resolveStoryboardStyle("photoreal").positive,
+    });
+    expect(out).toMatch(/^Render this frame in exactly the visual style/);
+    expect(out).not.toContain("photorealistic cinematic film still");
+    expect(out).toContain(FRAME_1);
+  });
+
+  it("keeps the style preset when no reference is attached", () => {
+    const out = composeFramePrompt({
+      ...base,
+      castIds: [],
+      hasReferences: false,
+      stylePositive: resolveStoryboardStyle("photoreal").positive,
+    });
+    expect(out).toContain("photorealistic cinematic film still");
+    expect(out).not.toMatch(/visual style of the attached reference/);
+  });
+
+  it("keeps the written cast when the references are style-only", () => {
+    // The real trap: an illustrated mood reference attached, cast text
+    // dropped because "the pictures hold identity" — but a mood board holds
+    // nobody's face, so the character arrived described by nothing at all.
+    const out = composeFramePrompt({
+      ...base,
+      shotSize: "Wide",
+      castIds: ["boy"],
+      hasReferences: true,
+      identityInReferences: false,
+    });
+    expect(out).toContain("كندورة إماراتية بيضاء");
+    expect(out).toMatch(/^Render this frame in exactly the visual style/);
+  });
+
+  it("binds the analyzed style contract into the prompt", () => {
+    const brief =
+      "Flat digital gouache illustration, soft undefined edges, warm sand " +
+      "beige and dusty sage palette, tiny simplified figures.";
+    const out = composeFramePrompt({
+      ...base,
+      castIds: [],
+      hasReferences: true,
+      referenceStyle: brief,
+    });
+    expect(out).toContain(`The reference style, precisely: ${brief}`);
+    // The contract rides with the instruction, never instead of it.
+    expect(out).toMatch(/^Render this frame in exactly the visual style/);
+  });
+
+  it("carries no contract when no reference is attached", () => {
+    const out = composeFramePrompt({
+      ...base,
+      castIds: [],
+      hasReferences: false,
+      referenceStyle: "gouache illustration",
+    });
+    expect(out).not.toContain("The reference style, precisely");
+  });
 });
 
 describe("composeFrameNegative", () => {

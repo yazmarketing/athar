@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -46,6 +47,7 @@ import {
   resolveStoryboardStyle,
   STORYBOARD_STYLES,
 } from "@/config/storyboard-styles";
+import { generateStills } from "@/lib/generate-client";
 import { cn } from "@/lib/utils";
 import { ASPECT_RATIOS } from "@/config/aspects";
 import type {
@@ -137,6 +139,9 @@ export function Storyboards({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [refsOpen, setRefsOpen] = useState(false);
   const [refsLoading, setRefsLoading] = useState(false);
+  const [analyzingRefs, setAnalyzingRefs] = useState(false);
+  /** Debounce so toggling three references analyzes once, not three times. */
+  const analyzeTimer = useRef<number | null>(null);
 
   const setFrameStatus = useCallback((id: string, next: FrameStatus) => {
     setStatus((prev) => ({ ...prev, [id]: next }));
@@ -229,6 +234,7 @@ export function Storyboards({
   useEffect(() => {
     return () => {
       if (flushTimer.current) window.clearTimeout(flushTimer.current);
+      if (analyzeTimer.current) window.clearTimeout(analyzeTimer.current);
       void flushFrames();
     };
   }, [flushFrames]);
@@ -437,6 +443,72 @@ export function Storyboards({
     [board, patchBoard]
   );
 
+  /**
+   * Look at the board's references and write down what they are — the style
+   * contract every frame render carries. Renders work without it (the pixels
+   * still ride along); with it, the same references produce the same look on
+   * every board instead of a fresh interpretation per render.
+   */
+  const analyzeRefs = useCallback(
+    async (boardId: string) => {
+      setAnalyzingRefs(true);
+      try {
+        const res = await fetch(`/api/storyboards/${boardId}/analyze-style`, {
+          method: "POST",
+        });
+        const json = (await res.json()) as {
+          error?: string;
+          storyboard?: StoryboardRecord;
+        };
+        if (!res.ok) throw new Error(json.error ?? "Style analysis failed");
+        // Only the reference fields — a full replace would clobber frame
+        // edits and toggles made while the analysis ran.
+        if (json.storyboard) {
+          const analyzed = json.storyboard;
+          setBoard((prev) =>
+            prev && prev.id === analyzed.id
+              ? { ...prev, reference_style: analyzed.reference_style }
+              : prev
+          );
+        }
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Style analysis failed"
+        );
+      } finally {
+        setAnalyzingRefs(false);
+      }
+    },
+    []
+  );
+
+  const scheduleAnalyze = useCallback(
+    (boardId: string) => {
+      if (analyzeTimer.current) window.clearTimeout(analyzeTimer.current);
+      analyzeTimer.current = window.setTimeout(() => {
+        void analyzeRefs(boardId);
+      }, 1500);
+    },
+    [analyzeRefs]
+  );
+
+  /**
+   * A stored contract is only trusted for the exact reference set it was made
+   * from; opening a board whose references changed elsewhere re-analyzes.
+   */
+  useEffect(() => {
+    if (!board?.id) return;
+    const urls = [...(board.reference_urls ?? [])].filter(Boolean).sort();
+    if (urls.length === 0) return;
+    const analyzed = [...(board.reference_style?.sourceUrls ?? [])].sort();
+    const fresh =
+      analyzed.length === urls.length &&
+      analyzed.every((u, i) => u === urls[i]);
+    if (!fresh && !analyzingRefs) scheduleAnalyze(board.id);
+    // Only when the board or its reference set changes — not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board?.id, board?.reference_urls?.join("\n")]);
+
   /** Toggle a reference on the open board and persist it. */
   const toggleBoardRef = useCallback(
     (url: string) => {
@@ -445,7 +517,15 @@ export function Storyboards({
       const next = current.includes(url)
         ? current.filter((u) => u !== url)
         : [...current, url];
-      void patchBoard({ referenceUrls: next }, { reference_urls: next });
+      void patchBoard(
+        { referenceUrls: next },
+        {
+          reference_urls: next,
+          // The server clears the contract with the last reference.
+          ...(next.length === 0 ? { reference_style: null } : {}),
+        }
+      );
+      // The staleness effect above re-analyzes once the set settles.
     },
     [board, patchBoard]
   );
@@ -463,69 +543,86 @@ export function Storyboards({
 
       const refs = board.reference_urls ?? [];
       const style = resolveStoryboardStyle(board.style_id);
+      const fingerprint = board.reference_style;
+      /**
+       * Do the attached references carry the cast's identity? The analysis
+       * answers this; until it has run, assume they do (the old behaviour —
+       * conservative, and right for character references).
+       */
+      const refsCarryCast = refs.length > 0 && (fingerprint?.carriesCast ?? true);
       /**
        * The anchor holds identity but also drags composition — it is a whole
-       * picture, and the model treats it as one. Two rules keep it useful:
-       * attached references do the identity job better, so the anchor stands
-       * down when they exist; and any frame can opt out, which is what an
-       * insert or a macro needs.
+       * picture, and the model treats it as one. It stands down when the
+       * attached references already carry the cast (they do that job better),
+       * but rejoins when they are style-only: an illustration of the mood
+       * holds nobody's face, so the first rendered frame has to.
+       * Any frame can still opt out, which is what an insert or a macro needs.
        */
       // The caller has already checked that the anchor shares a character.
-      const useAnchor = Boolean(anchor) && frame.lock_to_anchor && refs.length === 0;
+      const useAnchor =
+        Boolean(anchor) && frame.lock_to_anchor && !refsCarryCast;
       const referenceUrls = [...refs, useAnchor ? anchor : null].filter(
         (u): u is string => Boolean(u)
       );
       /**
        * Written identity is dropped only when an image genuinely carrying this
-       * character is attached — board references, or a cast-sharing anchor.
+       * character is attached — cast-bearing references, or a sharing anchor.
        */
-      const identityInPictures = refs.length > 0 || useAnchor;
+      const identityInPictures = refsCarryCast || useAnchor;
 
       setFrameStatus(frame.id, "rendering");
       setErrors((e) => ({ ...e, [frame.id]: "" }));
       try {
-        const res = await fetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mode: "t2i",
-            // Whatever the rest of the board inherits from is worth paying
-            // more for: the reference-less anchor frame, or nothing.
-            tier: referenceUrls.length === 0 ? "hero" : "standard",
-            prompt: {
-              subject: composeFramePrompt({
-                prompt: frame.prompt,
-                shotSize: frame.shot_size,
-                // Only the people actually in THIS frame. A landscape beat
-                // gets nobody, which is the point.
-                cast: board.cast_members ?? [],
-                castIds: frame.cast_ids ?? [],
-                stylePositive: style.positive,
-                hasReferences: identityInPictures,
-              }),
-              negativeAdditions: composeFrameNegative(
-                board.banned_elements ?? [],
-                style.negative
-              ),
-            },
-            aspect: frame.aspect || board.aspect,
-            numOutputs: 1,
-            resolution: "2K",
-            referenceUrls,
-            projectId: board.project_id ?? undefined,
-            brandKitId: board.brand_kit_id ?? undefined,
-          }),
+        const hasPictures = referenceUrls.length > 0;
+        const [generation] = await generateStills({
+          mode: "t2i",
+          // Whatever the rest of the board inherits from is worth paying
+          // more for: the reference-less anchor frame, or nothing.
+          tier: referenceUrls.length === 0 ? "hero" : "standard",
+          // Board-level engine choice — Nano Banana Pro holds style across
+          // references best; unset means the Seedream tier registry.
+          imageModel: board.image_model || undefined,
+          prompt: {
+            subject: composeFramePrompt({
+              prompt: frame.prompt,
+              shotSize: frame.shot_size,
+              // Only the people actually in THIS frame. A landscape beat
+              // gets nobody, which is the point.
+              cast: board.cast_members ?? [],
+              castIds: frame.cast_ids ?? [],
+              stylePositive: style.positive,
+              hasReferences: hasPictures,
+              identityInReferences: identityInPictures,
+              // Only the board's own references have a contract — an anchor
+              // frame alone carries the look in pixels already.
+              referenceStyle:
+                refs.length > 0 ? fingerprint?.styleBrief : undefined,
+            }),
+            // The style preset's negative goes the way of its positive when
+            // references are attached — a painterly preset banning
+            // "photograph" must not fight a photographic reference. The
+            // analyzed contract's own negative takes its place.
+            negativeAdditions: composeFrameNegative(
+              board.banned_elements ?? [],
+              hasPictures
+                ? refs.length > 0
+                  ? fingerprint?.styleNegative
+                  : undefined
+                : style.negative
+            ),
+          },
+          aspect: frame.aspect || board.aspect,
+          numOutputs: 1,
+          resolution: "2K",
+          referenceUrls,
+          projectId: board.project_id ?? undefined,
+          brandKitId: board.brand_kit_id ?? undefined,
         });
-        const json: {
-          error?: string;
-          generation?: { id?: string; output_url?: string | null };
-        } = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Generation failed");
 
-        const url = json.generation?.output_url ?? null;
+        const url = generation?.output_url ?? null;
         patchFrame(frame.id, {
           image_url: url,
-          generation_id: json.generation?.id ?? null,
+          generation_id: generation?.id ?? null,
           // A re-render invalidates the clip that was made from the old still.
           video_url: null,
         });
@@ -997,6 +1094,40 @@ ${panels}
               ))}
             </SelectContent>
           </Select>
+          {/* Render engine, board-level like the style. Nano Banana Pro holds
+              a style across reference images best — the pick when matching
+              attached references exactly is the whole job. */}
+          <Select
+            value={board.image_model || "seedream"}
+            onValueChange={(v) => {
+              const imageModel = v === "seedream" ? null : v;
+              void patchBoard({ imageModel }, { image_model: imageModel });
+            }}
+          >
+            <SelectTrigger className="h-8 w-auto min-w-[9rem] text-xs">
+              <SelectValue placeholder="Engine" />
+            </SelectTrigger>
+            <SelectContent className="max-w-sm">
+              <SelectItem value="seedream">
+                <span className="block">Seedream</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Fast and cheap — the default
+                </span>
+              </SelectItem>
+              <SelectItem value="nano-banana">
+                <span className="block">Nano Banana</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Precise edits, character consistency
+                </span>
+              </SelectItem>
+              <SelectItem value="nano-banana-pro">
+                <span className="block">Nano Banana Pro</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Strongest reference matching — pricier
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copyShotList}>
             <Copy className="size-3.5" />
             Copy
@@ -1140,9 +1271,55 @@ ${panels}
           </div>
         )}
 
+        {/* The analyzed style contract — what every frame is rendered against.
+            Visible so the director can see exactly what the machine read into
+            their references, and re-run it if the reading is wrong. */}
+        {(board.reference_urls ?? []).length > 0 && (
+          <div className="mt-3 rounded-xl bg-muted/40 p-3 ring-1 ring-border/60">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                Reference style
+              </span>
+              {analyzingRefs ? (
+                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" />
+                  Analyzing the references…
+                </span>
+              ) : board.reference_style ? (
+                <span className="rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground ring-1 ring-border">
+                  {board.reference_style.carriesCast
+                    ? "Carries the cast"
+                    : "Style only — cast stays written"}
+                </span>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">
+                  Not analyzed yet
+                </span>
+              )}
+              <div className="flex-1" />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-[11px]"
+                disabled={analyzingRefs}
+                onClick={() => void analyzeRefs(board.id)}
+              >
+                <Wand2 className="size-3" />
+                Re-analyze
+              </Button>
+            </div>
+            {board.reference_style && !analyzingRefs && (
+              <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+                {board.reference_style.styleBrief}
+              </p>
+            )}
+          </div>
+        )}
+
         <p className="mt-3 text-[11px] text-muted-foreground">
           A character, a product, a look — whatever has to stay the same. The
-          first rendered frame is used as an anchor on top of these.
+          style is analyzed once and bound to every render; the first rendered
+          frame is used as an anchor on top of these.
         </p>
       </div>
 
@@ -1283,7 +1460,7 @@ ${panels}
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
             {frames.map((frame, i) => (
               <FrameCard
                 key={frame.id}
@@ -1718,6 +1895,16 @@ function FrameCard({
   onRemove: () => void;
 }) {
   const working = status === "rendering" || status === "animating";
+  // Secondary fields (motion, dialogue, duration/aspect, cast, anchor lock)
+  // stay collapsed by default — a card full of open form fields is what made
+  // these too tall to browse a whole board at once. Auto-open when any of
+  // them already has a real value, so existing work stays visible.
+  const hasDetails =
+    frame.motion.trim() ||
+    frame.dialogue.trim() ||
+    (frame.cast_ids ?? []).length > 0 ||
+    !frame.lock_to_anchor;
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(hasDetails));
 
   return (
     <div
@@ -1821,135 +2008,157 @@ function FrameCard({
           value={stripLegacyContinuity(frame.prompt)}
           onChange={(e) => onChange({ prompt: e.target.value })}
           placeholder="Describe the still frame — subject, setting, light."
-          className="min-h-20 bg-background text-xs"
+          className="min-h-14 bg-background text-xs"
         />
 
-        {/* Motion is stored apart from the prompt on purpose: it is the only
-            thing sent when the still is animated, and putting it in the image
-            prompt makes the model draw the instruction. */}
-        <Textarea
-          value={frame.motion}
-          onChange={(e) => onChange({ motion: e.target.value })}
-          placeholder="Camera move — used when this frame is animated."
-          className="min-h-12 bg-background text-xs"
-        />
-
-        <Input
-          value={frame.dialogue}
-          onChange={(e) => onChange({ dialogue: e.target.value })}
-          placeholder="VO / dialogue — optional"
-          className="h-8 bg-background text-xs"
-        />
-
-        <div className="flex items-center gap-2">
-          <Select
-            value={String(frame.duration_s ?? 5)}
-            onValueChange={(v) => onChange({ duration_s: Number(v) })}
-          >
-            <SelectTrigger className="h-8 w-auto min-w-[4.5rem] text-[11px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {[3, 4, 5, 6, 8, 10, 12].map((n) => (
-                <SelectItem key={n} value={String(n)}>
-                  {n}s
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={frame.aspect || boardAspect}
-            onValueChange={(v) => onChange({ aspect: v })}
-          >
-            <SelectTrigger className="h-8 w-auto min-w-[4.5rem] text-[11px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ASPECT_RATIOS.map((a) => (
-                <SelectItem key={a} value={a}>
-                  {a}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={frame.is_blank}
+            onChange={(e) => onChange({ is_blank: e.target.checked })}
+            className="size-3.5 accent-current"
+          />
+          Black frame
+        </label>
 
         {error && <p className="text-[11px] text-red-400">{error}</p>}
 
-        {/* Who is in this frame. An empty row is normal — a landscape or an
-            insert has nobody in it, and adding one flattens the sequence. */}
-        {!frame.is_blank && cast.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
-              In frame
-            </span>
-            {cast.map((member) => {
-              const on = (frame.cast_ids ?? []).includes(member.id);
-              return (
-                <button
-                  key={member.id}
-                  type="button"
-                  title={member.description}
-                  onClick={() =>
-                    onChange({
-                      cast_ids: on
-                        ? (frame.cast_ids ?? []).filter((c) => c !== member.id)
-                        : [...(frame.cast_ids ?? []), member.id],
-                    })
-                  }
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[11px] ring-1 transition",
-                    on
-                      ? "bg-gold text-primary-foreground ring-transparent"
-                      : "text-muted-foreground ring-border hover:text-foreground"
-                  )}
-                >
-                  {member.name}
-                </button>
-              );
-            })}
-            {(frame.cast_ids ?? []).length === 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                nobody — landscape or insert
-              </span>
-            )}
-          </div>
-        )}
-
-        {/* Consistency controls. Matching the anchor holds the subject but
-            also copies its framing, so an insert or a macro wants it off. */}
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5 pt-0.5">
-          <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={frame.is_blank}
-              onChange={(e) => onChange({ is_blank: e.target.checked })}
-              className="size-3.5 accent-current"
-            />
-            Black frame
-          </label>
-          {!frame.is_blank && (
-            <label
-              className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
-              title={
-                anchorInUse
-                  ? "Render this frame against the board's first frame"
-                  : "Not in use — the board's own references are holding the look"
-              }
+        {!frame.is_blank && (
+          <>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((o) => !o)}
+              className="flex items-center gap-1 self-start text-[11px] text-muted-foreground transition hover:text-foreground"
             >
-              <input
-                type="checkbox"
-                checked={frame.lock_to_anchor}
-                disabled={!anchorInUse}
-                onChange={(e) => onChange({ lock_to_anchor: e.target.checked })}
-                className="size-3.5 accent-current disabled:opacity-40"
+              <ChevronDown
+                className={cn("size-3.5 transition", detailsOpen && "rotate-180")}
               />
-              <span className={cn(!anchorInUse && "opacity-40")}>
-                Match frame 1
-              </span>
-            </label>
-          )}
-        </div>
+              Details
+              {!detailsOpen && hasDetails && (
+                <span className="size-1.5 rounded-full bg-gold" />
+              )}
+            </button>
+
+            {detailsOpen && (
+              <div className="flex flex-col gap-2">
+                {/* Motion is stored apart from the prompt on purpose: it is
+                    the only thing sent when the still is animated, and
+                    putting it in the image prompt makes the model draw the
+                    instruction. */}
+                <Textarea
+                  value={frame.motion}
+                  onChange={(e) => onChange({ motion: e.target.value })}
+                  placeholder="Camera move — used when this frame is animated."
+                  className="min-h-12 bg-background text-xs"
+                />
+
+                <Input
+                  value={frame.dialogue}
+                  onChange={(e) => onChange({ dialogue: e.target.value })}
+                  placeholder="VO / dialogue — optional"
+                  className="h-8 bg-background text-xs"
+                />
+
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={String(frame.duration_s ?? 5)}
+                    onValueChange={(v) => onChange({ duration_s: Number(v) })}
+                  >
+                    <SelectTrigger className="h-8 w-auto min-w-[4.5rem] text-[11px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[3, 4, 5, 6, 8, 10, 12].map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {n}s
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    value={frame.aspect || boardAspect}
+                    onValueChange={(v) => onChange({ aspect: v })}
+                  >
+                    <SelectTrigger className="h-8 w-auto min-w-[4.5rem] text-[11px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ASPECT_RATIOS.map((a) => (
+                        <SelectItem key={a} value={a}>
+                          {a}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Who is in this frame. An empty row is normal — a
+                    landscape or an insert has nobody in it, and adding one
+                    flattens the sequence. */}
+                {cast.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
+                      In frame
+                    </span>
+                    {cast.map((member) => {
+                      const on = (frame.cast_ids ?? []).includes(member.id);
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          title={member.description}
+                          onClick={() =>
+                            onChange({
+                              cast_ids: on
+                                ? (frame.cast_ids ?? []).filter((c) => c !== member.id)
+                                : [...(frame.cast_ids ?? []), member.id],
+                            })
+                          }
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[11px] ring-1 transition",
+                            on
+                              ? "bg-gold text-primary-foreground ring-transparent"
+                              : "text-muted-foreground ring-border hover:text-foreground"
+                          )}
+                        >
+                          {member.name}
+                        </button>
+                      );
+                    })}
+                    {(frame.cast_ids ?? []).length === 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        nobody — landscape or insert
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Consistency control. Matching the anchor holds the
+                    subject but also copies its framing, so an insert or a
+                    macro wants it off. */}
+                <label
+                  className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+                  title={
+                    anchorInUse
+                      ? "Render this frame against the board's first frame"
+                      : "Not in use — the board's own references are holding the look"
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={frame.lock_to_anchor}
+                    disabled={!anchorInUse}
+                    onChange={(e) => onChange({ lock_to_anchor: e.target.checked })}
+                    className="size-3.5 accent-current disabled:opacity-40"
+                  />
+                  <span className={cn(!anchorInUse && "opacity-40")}>
+                    Match frame 1
+                  </span>
+                </label>
+              </div>
+            )}
+          </>
+        )}
 
         {frame.is_blank ? (
           <p className="mt-auto pt-1 text-[11px] text-muted-foreground">

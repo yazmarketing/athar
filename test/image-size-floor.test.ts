@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureMinPixels } from "@/app/api/generate/route";
+import { ensureMinPixels } from "@/lib/ark-image";
 import { IMAGE_MODEL_CHOICES, resolveModel } from "@/config/models";
 import { ASPECT_RATIOS, ASPECT_TO_ARK_SIZE_1K } from "@/config/aspects";
 

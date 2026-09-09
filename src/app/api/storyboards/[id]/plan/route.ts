@@ -66,8 +66,30 @@ export async function POST(req: NextRequest, { params }: Params) {
 
     // Attached references bind the shots to a real character/product/look, and
     // appending must not re-invent the world the board already established.
+    const hasRefs = (board.reference_urls ?? []).length > 0;
     const direction = [
       await describeReferences(board.reference_urls ?? []),
+      // What the references actually show, per the vision analysis — sharper
+      // than the library's names alone.
+      hasRefs && board.reference_style?.subjects
+        ? `The reference images show: ${board.reference_style.subjects}`
+        : "",
+      /**
+       * With references attached, the LOOK is the references' job, not the
+       * shot text's. A planner that writes "photorealistic, cold side light
+       * cutting the sea spray, hard shadows" into every frame is describing a
+       * photograph — and at render time that language outvotes an illustrated
+       * reference. Content only: the render pipeline injects the analyzed
+       * reference style itself.
+       */
+      hasRefs
+        ? "The attached reference images govern the rendering style, so " +
+          "write each shot's prompt as pure content — subject, staging, " +
+          "composition, the moment — with NO rendering-style or finish " +
+          "language: no 'photorealistic', no lens or camera-body talk, no " +
+          "film grain, no colour-grade or medium descriptions. Natural facts " +
+          "like the time of day belong; how the image is rendered does not."
+        : "",
       append ? continuityBrief(board.look) : "",
     ]
       .filter(Boolean)

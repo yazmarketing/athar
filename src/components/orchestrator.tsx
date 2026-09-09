@@ -21,8 +21,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { cn, readJson, postFetch } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { ASPECT_RATIOS } from "@/config/aspects";
+import { generateStills } from "@/lib/generate-client";
 
 type Shot = {
   id: string;
@@ -123,30 +124,21 @@ export function Orchestrator({
         // (correctly) rejects as circular.
         const anchor: string | null = keyFrameUrl;
         const isKeyFrame = anchor === null;
-        const res = await postFetch("/api/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mode: "t2i",
-            tier: isKeyFrame ? "hero" : "standard",
-            prompt: { subject: shot.prompt },
-            aspect: shot.aspect,
-            numOutputs: 1,
-            resolution: "2K",
-            referenceUrls: anchor ? [anchor] : undefined,
-            projectId: projectId ?? undefined,
-            brandKitId: brandKitId ?? undefined,
-          }),
+        // Rides the durable job layer: the POST answers immediately and the
+        // helper polls until the still lands, so a slow render can no longer
+        // outrun the gateway and surface as an HTML 504.
+        const [generation] = await generateStills({
+          mode: "t2i",
+          tier: isKeyFrame ? "hero" : "standard",
+          prompt: { subject: shot.prompt },
+          aspect: shot.aspect,
+          numOutputs: 1,
+          resolution: "2K",
+          referenceUrls: anchor ? [anchor] : undefined,
+          projectId: projectId ?? undefined,
+          brandKitId: brandKitId ?? undefined,
         });
-        // Annotated: without it the inferred type of `json` flows into
-        // `keyFrameUrl`, which the request body reads, making `res` depend on
-        // its own response.
-        const json: {
-          error?: string;
-          generation?: { output_url?: string | null };
-        } = await readJson(res);
-        if (!res.ok) throw new Error(json.error ?? "Generation failed");
-        const url: string | null = json.generation?.output_url ?? null;
+        const url: string | null = generation?.output_url ?? null;
         // Only promote a real URL — a failed key frame must not leave the
         // rest of the campaign anchored to nothing.
         if (!keyFrameUrl && url) keyFrameUrl = url;

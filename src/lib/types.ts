@@ -328,6 +328,26 @@ export type StoryboardCastMember = {
   description: string;
 };
 
+/**
+ * What the board's attached references actually ARE, written down once by a
+ * vision model and injected into every frame render. The pixels alone are
+ * re-interpreted on every render; the written contract is what makes the same
+ * references produce the same look on every board.
+ */
+export type ReferenceStyleFingerprint = {
+  /** The binding style description every frame is rendered against. */
+  styleBrief: string;
+  /** Comma-separated phrases that would break the style — fed to the negative. */
+  styleNegative: string;
+  /** Do the references depict the recurring cast (faces, wardrobe)? */
+  carriesCast: boolean;
+  /** One sentence: what the images literally show. */
+  subjects: string;
+  /** The reference URLs analyzed (sorted) — staleness detection. */
+  sourceUrls: string[];
+  analyzedAt: string;
+};
+
 /** The world a whole board shares: where it is, how it is lit, how it is graded. */
 export type StoryboardLook = {
   subject: string;
@@ -360,6 +380,14 @@ export type StoryboardRecord = {
    * look. Text alone will not hold a face across twelve frames.
    */
   reference_urls: string[];
+  /** The analyzed style contract for those references. Null until analyzed. */
+  reference_style: ReferenceStyleFingerprint | null;
+  /**
+   * Which engine renders the frames: null/"seedream" for the tiered Seedream
+   * registry, or a Google image model id ("nano-banana" / "nano-banana-pro" —
+   * the latter holds style across references best).
+   */
+  image_model: string | null;
   created_by: string | null;
   archived_at: string | null;
   created_at: string;

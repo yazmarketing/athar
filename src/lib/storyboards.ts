@@ -1,6 +1,7 @@
 import "server-only";
 import { db, onceProcess } from "@/lib/db";
 import type {
+  ReferenceStyleFingerprint,
   StoryboardCastMember,
   StoryboardFrameRecord,
   StoryboardLook,
@@ -75,6 +76,14 @@ async function ensureStoryboardTablesUncached() {
   await db().query(`
     alter table public.storyboards
       add column if not exists look_locked boolean not null default false
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists reference_style jsonb
+  `);
+  await db().query(`
+    alter table public.storyboards
+      add column if not exists image_model text
   `);
   await db().query(`
     create table if not exists public.storyboard_frames (
@@ -245,6 +254,8 @@ export async function updateStoryboard(
     aspect?: string;
     styleId?: string;
     referenceUrls?: string[];
+    referenceStyle?: ReferenceStyleFingerprint | null;
+    imageModel?: string | null;
     look?: StoryboardLook | null;
     cast?: StoryboardCastMember[];
     bannedElements?: string[];
@@ -275,6 +286,21 @@ export async function updateStoryboard(
   if (patch.styleId !== undefined) set("style_id = $?", patch.styleId);
   if (patch.referenceUrls !== undefined) {
     set("reference_urls = $?::text[]", cleanUrls(patch.referenceUrls));
+    // Dropping the last reference orphans its style contract too. (Changing
+    // the set merely makes it stale — the client re-analyzes; a slightly
+    // stale contract still beats none while that runs.)
+    if (cleanUrls(patch.referenceUrls).length === 0) {
+      sets.push("reference_style = null");
+    }
+  }
+  if (patch.referenceStyle !== undefined) {
+    set(
+      "reference_style = $?::jsonb",
+      patch.referenceStyle ? JSON.stringify(patch.referenceStyle) : null
+    );
+  }
+  if (patch.imageModel !== undefined) {
+    set("image_model = $?", patch.imageModel || null);
   }
   if (patch.cast !== undefined) {
     set("cast_members = $?::jsonb", JSON.stringify(patch.cast));
