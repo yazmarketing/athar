@@ -51,7 +51,10 @@ async function waitForJobs(
         continue; // transient network blip — poll again
       }
       if (json.job.status === "completed") {
-        if (json.generation) results.push(json.generation);
+        if (!json.generation?.output_url) {
+          throw new Error("Render finished but no image came back");
+        }
+        results.push(json.generation);
         pending.delete(id);
       } else if (
         json.job.status === "failed" ||
@@ -76,5 +79,6 @@ export async function generateStills(
 
   // An older server answering inline still works.
   if (json.generations?.length) return json.generations;
-  return json.generation ? [json.generation] : [];
+  if (json.generation) return [json.generation];
+  throw new Error("No image came back");
 }

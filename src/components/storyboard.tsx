@@ -620,6 +620,7 @@ export function Storyboards({
         });
 
         const url = generation?.output_url ?? null;
+        if (!url) throw new Error("No image came back");
         patchFrame(frame.id, {
           image_url: url,
           generation_id: generation?.id ?? null,
@@ -650,16 +651,39 @@ export function Storyboards({
     // it comes back unchanged, which is indistinguishable from the re-render
     // having done nothing.
     const justRendered = new Map<string, string>();
-    for (const frame of frames) {
-      if (frame.is_blank) continue;
-      if (onlyMissing && frame.image_url) continue;
-      if (!frame.prompt.trim()) continue;
-      const url = await renderFrame(frame, identityAnchor(frame, justRendered));
-      if (url) justRendered.set(frame.id, url);
+    let ok = 0;
+    let failed = 0;
+    try {
+      for (const frame of frames) {
+        if (frame.is_blank) continue;
+        if (onlyMissing && frame.image_url) continue;
+        if (!frame.prompt.trim()) continue;
+        const url = await renderFrame(
+          frame,
+          identityAnchor(frame, justRendered)
+        );
+        if (url) {
+          justRendered.set(frame.id, url);
+          ok++;
+        } else {
+          failed++;
+        }
+      }
+    } finally {
+      setRenderingAll(false);
+      await flushFrames();
     }
-    setRenderingAll(false);
-    await flushFrames();
-    toast.success("Board rendered — every frame is in the Library too");
+    if (ok > 0 && failed === 0) {
+      toast.success(
+        ok === 1
+          ? "Frame rendered — it's in the Library too"
+          : `All ${ok} frames rendered — they're in the Library too`
+      );
+    } else if (ok > 0) {
+      toast.error(`${ok} rendered, ${failed} failed`);
+    } else {
+      toast.error("No frames rendered. Check the red cards.");
+    }
   }
 
   /* ---------------------------------------------------------------- animate */
