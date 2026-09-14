@@ -4,6 +4,7 @@ import {
   IMAGE_UPLOAD_MAX_BYTES,
   IMAGE_UPLOAD_TYPES,
 } from "@/lib/image-upload-limits";
+import { fitAssetSize } from "@/lib/byteplus-asset-size";
 
 /** Longest edge after shrinking a huge PNG so models can actually use it. */
 const MAX_EDGE = 4096;
@@ -41,6 +42,49 @@ async function compressIfNeeded(file: File): Promise<File> {
     );
     if (!blob || blob.size >= file.size) return file;
     const name = file.name.replace(/\.[^.]+$/, "") || "reference";
+    return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
+  } finally {
+    bitmap.close();
+  }
+}
+
+/**
+ * BytePlus rejects faces taller/wider than its limits (a stacked camera
+ * shot often fails with "Height must be between 300 and …"). Always fit
+ * before we upload a verified-asset photo.
+ */
+export async function prepareVerifiedFaceImage(file: File): Promise<File> {
+  assertImageFile(file);
+  if (typeof createImageBitmap !== "function") return file;
+  const bitmap = await createImageBitmap(file);
+  try {
+    const target = fitAssetSize(bitmap.width, bitmap.height);
+    if (target.width === bitmap.width && target.height === bitmap.height) {
+      return file;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = target.width;
+    canvas.height = target.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    const cover = Math.max(
+      target.width / bitmap.width,
+      target.height / bitmap.height
+    );
+    const dw = bitmap.width * cover;
+    const dh = bitmap.height * cover;
+    ctx.drawImage(
+      bitmap,
+      (target.width - dw) / 2,
+      (target.height - dh) / 2,
+      dw,
+      dh
+    );
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+    if (!blob) return file;
+    const name = file.name.replace(/\.[^.]+$/, "") || "asset";
     return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
   } finally {
     bitmap.close();

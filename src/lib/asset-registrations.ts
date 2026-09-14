@@ -2,6 +2,7 @@ import "server-only";
 import { db, onceProcess } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import { createAsset } from "@/lib/byteplus-assets";
+import { publishFittedAssetImage } from "@/lib/fit-byteplus-asset-image";
 
 export type AssetRegistrationRecord = {
   id: string;
@@ -120,7 +121,7 @@ export async function claimDueRegistrations(
        select id from asset_registrations
        where status = 'queued'
           or (status = 'processing' and updated_at < now() - interval '3 minutes')
-          or (status = 'failed' and updated_at < now() - interval '3 minutes')
+          or (status = 'failed' and updated_at < now() - interval '30 seconds')
        order by created_at asc
        limit $1
        for update skip locked
@@ -141,9 +142,15 @@ export async function processAssetRegistration(
     return;
   }
   try {
+    let url = row.image_url;
+    try {
+      url = await publishFittedAssetImage(row.image_url);
+    } catch (err) {
+      console.error("Could not resize asset photo before BytePlus:", err);
+    }
     const asset = await createAsset({
       groupId,
-      url: row.image_url,
+      url,
       name: row.tagged_name ?? row.name,
     });
     await db().query(
@@ -165,6 +172,11 @@ export async function processAssetRegistration(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Asset registration failed";
+    const friendly = /height must be between/i.test(message)
+      ? "This photo is too tall for BytePlus. Crop to a single portrait and try again."
+      : /width must be between/i.test(message)
+        ? "This photo is too wide for BytePlus. Crop to a single portrait and try again."
+        : message;
     // Timeout often means BytePlus is still moderating — keep it queued
     // so the next list/retry can pick it up instead of looking deleted.
     if (/taking too long/i.test(message)) {
@@ -176,7 +188,7 @@ export async function processAssetRegistration(
       );
       return;
     }
-    await markRegistrationFailed(row.id, message);
+    await markRegistrationFailed(row.id, friendly);
     console.error(`BytePlus asset registration failed for ${row.image_url}:`, err);
   }
 }

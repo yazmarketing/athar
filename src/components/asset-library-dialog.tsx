@@ -314,7 +314,10 @@ export function AssetLibraryDialog({
                             <span className="truncate text-xs font-medium text-foreground">
                               {a.name || "Unnamed"}
                             </span>
-                            <span className="truncate font-mono text-[10px] text-muted-foreground">
+                            <span
+                              className="line-clamp-2 font-mono text-[10px] text-muted-foreground"
+                              title={failed && a.error ? a.error : a.id}
+                            >
                               {failed && a.error ? a.error : a.id}
                             </span>
                           </span>

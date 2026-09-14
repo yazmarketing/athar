@@ -56,7 +56,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
-import { uploadImageFile } from "@/lib/upload-image";
+import { prepareVerifiedFaceImage, uploadImageFile } from "@/lib/upload-image";
 import { isAudioFile, uploadAudioFile } from "@/lib/upload-audio";
 import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
@@ -2464,7 +2464,7 @@ export function Studio() {
   ) => {
     setRegisteringAsset(true);
     try {
-      const url = await uploadReference(file);
+      const url = await uploadImageFile(await prepareVerifiedFaceImage(file));
       const assetName =
         name.trim().slice(0, 60) ||
         file.name.replace(/\.[^.]+$/, "").slice(0, 60);
