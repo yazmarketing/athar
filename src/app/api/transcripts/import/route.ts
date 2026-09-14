@@ -1,9 +1,10 @@
 import { spawn, spawnSync } from "node:child_process";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { Readable } from "node:stream";
 import { NextRequest, NextResponse } from "next/server";
-import { Innertube } from "youtubei.js";
 import { requireCreator } from "@/lib/authz";
+
+const requireFromHere = createRequire(import.meta.url);
 
 /**
  * Import-from-link for Transcribe: the server fetches a public media URL
@@ -60,7 +61,7 @@ function youTubeVideoId(url: URL): string | null {
 }
 
 /** One Innertube session for the process — creating it costs a round-trip. */
-let innertube: Promise<Innertube> | null = null;
+let innertube: Promise<import("youtubei.js").Innertube> | null = null;
 
 /**
  * YouTube pages hide the media behind a player, so a plain fetch gets HTML.
@@ -81,7 +82,9 @@ async function importYouTube(url: URL): Promise<Response> {
     );
   }
 
-  innertube ??= Innertube.create();
+  innertube ??= import("youtubei.js").then(({ Innertube }) =>
+    Innertube.create()
+  );
   const yt = await innertube;
 
   let title = "youtube-audio";
@@ -154,7 +157,11 @@ let pythonBin: string | null | undefined;
 function findPython(): string | null {
   if (pythonBin !== undefined) return pythonBin;
   for (const candidate of ["python3.13", "python3.12", "python3.11", "python3.10", "python3"]) {
-    const probe = spawnSync(candidate, ["--version"], { encoding: "utf8" });
+    const probe = spawnSync(
+      /* turbopackIgnore: true */ candidate,
+      ["--version"],
+      { encoding: "utf8" }
+    );
     const minor = probe.stdout?.match(/^Python 3\.(\d+)/)?.[1];
     if (minor && Number(minor) >= 10) {
       pythonBin = candidate;
@@ -165,13 +172,12 @@ function findPython(): string | null {
   return null;
 }
 
-const YT_DLP = path.join(
-  process.cwd(),
-  "node_modules",
-  "youtube-dl-exec",
-  "bin",
-  "yt-dlp"
-);
+function ytDlpBin(): string {
+  const mod = requireFromHere(
+    /* turbopackIgnore: true */ "youtube-dl-exec"
+  ) as { constants: { YOUTUBE_DL_PATH: string } };
+  return mod.constants.YOUTUBE_DL_PATH;
+}
 
 /** Run yt-dlp once and collect its output — used for the metadata check. */
 function runYtDlp(
@@ -179,7 +185,11 @@ function runYtDlp(
   args: string[]
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(python, [YT_DLP, ...args], { timeout: 90_000 });
+    const child = spawn(
+      /* turbopackIgnore: true */ python,
+      [ytDlpBin(), ...args],
+      { timeout: 90_000 }
+    );
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
@@ -229,8 +239,8 @@ async function importSocial(url: URL): Promise<Response> {
     meta.stdout.trim().split("\n")[0]?.replace(/[\\/:*?"<>|]/g, "").trim() ||
     "imported-media";
 
-  const child = spawn(python, [
-    YT_DLP,
+  const child = spawn(/* turbopackIgnore: true */ python, [
+    ytDlpBin(),
     "--no-playlist",
     "-f",
     "bestaudio/best",

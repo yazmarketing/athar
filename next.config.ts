@@ -50,6 +50,10 @@ const nextConfig: NextConfig = {
   // Hide the Next.js Dev Tools badge (bottom-left N) and its toolbar
   devIndicators: false,
 
+  // Keep native/binary packages out of the route bundle so Turbopack does
+  // not trace process.cwd() / spawnSync as "the whole project".
+  serverExternalPackages: ["youtubei.js", "youtube-dl-exec"],
+
   // Don't advertise the framework/version to attackers.
   poweredByHeader: false,
 

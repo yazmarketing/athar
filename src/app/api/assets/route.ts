@@ -170,12 +170,12 @@ export async function POST(req: NextRequest) {
       category: category && ASSET_CATEGORIES.has(category) ? category : null,
       taggedName: taggedName ?? displayName,
       groupId,
-      createdBy: sessionUser.id,
+      createdBy: sessionUser.id ?? null,
     });
     after(() =>
       processAssetRegistration(row, {
         userId: sessionUser.id,
-        userEmail: sessionUser.email,
+        userEmail: sessionUser.email ?? null,
       })
     );
 
