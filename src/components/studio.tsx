@@ -2397,9 +2397,17 @@ export function Studio() {
     try {
       const res = await fetch("/api/assets");
       const json = await res.json();
-      setLibraryAssets(json.assets ?? []);
+      const incoming = (json.assets ?? []) as LibraryAsset[];
+      setLibraryAssets((prev) => {
+        const pending = (prev ?? []).filter(
+          (a) =>
+            a.id.startsWith("pending-") &&
+            !incoming.some((b) => b.name === a.name)
+        );
+        return [...pending, ...incoming];
+      });
     } catch {
-      setLibraryAssets([]);
+      setLibraryAssets((prev) => prev ?? []);
     } finally {
       setAssetsLoading(false);
     }
@@ -2457,17 +2465,25 @@ export function Studio() {
       const { res, json } = await postJson<{ error?: string }>("/api/assets", {
         imageUrl: url,
         name: assetName,
-        category: category === "auto" ? undefined : category,
+        category: category === "auto" ? "character" : category,
       });
       if (!res.ok) throw new Error(json.error ?? "Could not register character");
+      const pending: LibraryAsset = {
+        id: `pending-${Date.now()}`,
+        name: assetName,
+        category: category === "auto" ? "character" : category,
+        status: "Processing",
+        url,
+      };
+      setLibraryAssets((prev) => [pending, ...(prev ?? [])]);
       toast.success(
         "Photo submitted — BytePlus is verifying it. It appears in the asset list once approved (about a minute)."
       );
-      // Registration finishes server-side after this response — refresh the
-      // list when it has plausibly landed, and once more for slow passes.
+      // Registration finishes server-side after this response — keep the
+      // local preview until BytePlus lists the real asset. An immediate
+      // refresh would wipe the photo and look like it never saved.
       window.setTimeout(() => void loadAssets(), 20_000);
       window.setTimeout(() => void loadAssets(), 75_000);
-      await loadAssets();
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Could not register character"

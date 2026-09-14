@@ -12,6 +12,8 @@ import {
 } from "@/lib/byteplus-assets";
 import type { GenerationRecord } from "@/lib/types";
 
+export const maxDuration = 300;
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -49,7 +51,9 @@ export async function GET() {
         name: rawName.replace(CATEGORY_TAG_RE, ""),
         category: tag ? tag[1].toLowerCase() : null,
         status: a.Status ?? "Processing",
-        url: a.URL ?? null,
+        // TOS signed URLs 403 in the browser (Referer / hotlink). Serve
+        // them same-origin so the library actually shows the face.
+        url: a.URL ? `/api/assets/${encodeURIComponent(a.Id)}/image` : null,
         groupId: a.GroupId ?? null,
         createdAt: a.CreateTime ?? null,
       };

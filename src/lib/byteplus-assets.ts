@@ -191,16 +191,52 @@ export async function createAsset(opts: {
   url: string;
   name?: string;
 }): Promise<AssetRecord> {
-  return assetsCall<AssetRecord>("CreateAsset", {
+  const asset = await assetsCall<AssetRecord>("CreateAsset", {
     GroupId: opts.groupId,
     URL: opts.url,
     AssetType: "Image",
     Name: opts.name,
   });
+  rememberAssetImageUrl(asset);
+  return asset;
 }
 
 export async function getAsset(id: string): Promise<AssetRecord> {
-  return assetsCall<AssetRecord>("GetAsset", { Id: id });
+  const asset = await assetsCall<AssetRecord>("GetAsset", { Id: id });
+  rememberAssetImageUrl(asset);
+  return asset;
+}
+
+const imageUrlById = new Map<string, string>();
+
+function rememberAssetImageUrl(asset: Pick<AssetRecord, "Id" | "URL">) {
+  if (asset.Id && asset.URL) imageUrlById.set(asset.Id, asset.URL);
+}
+
+/** BytePlus copies the photo onto TOS; only those hosts are fetched for thumbs. */
+export function isBytePlusMediaUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "https:") return false;
+    const host = u.hostname.toLowerCase();
+    return (
+      host.endsWith(".volces.com") ||
+      host.endsWith(".byteplusapi.com") ||
+      host.endsWith(".byteimg.com") ||
+      host.endsWith(".volcengineapi.com")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveAssetImageUrl(
+  id: string
+): Promise<string | null> {
+  const cached = imageUrlById.get(id);
+  if (cached) return cached;
+  const asset = await getAsset(id);
+  return asset.URL ?? null;
 }
 
 export async function listAssets(groupId?: string): Promise<AssetRecord[]> {
@@ -212,11 +248,14 @@ export async function listAssets(groupId?: string): Promise<AssetRecord[]> {
     PageNumber: 1,
     PageSize: 100,
   });
-  return result.Items ?? [];
+  const items = result.Items ?? [];
+  for (const item of items) rememberAssetImageUrl(item);
+  return items;
 }
 
 export async function deleteAsset(id: string): Promise<void> {
   await assetsCall<Record<string, never>>("DeleteAsset", { Id: id });
+  imageUrlById.delete(id);
 }
 
 /**

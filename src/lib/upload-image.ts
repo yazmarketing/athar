@@ -76,15 +76,24 @@ async function uploadViaApp(file: File): Promise<string> {
 }
 
 /**
- * Upload a reference image. Files over 8MB go straight to Spaces so they
- * never hit the app-server body parser (that is the FormData error on a
- * 29MB PNG). Smaller files fall back to `/api/upload` if CORS is missing.
+ * Upload a reference image.
+ *
+ * The Space has no CORS PUT rule the browser can use (the keys on this
+ * project cannot even read/write that config). A failed preflight still
+ * logs as a red CORS error even when we catch it — and that is what
+ * "new face didn't save" looks like in the asset library. Files that fit
+ * through `/api/upload` go that way first. Larger files still PUT to the
+ * Space; without CORS those cannot succeed from the browser.
  */
 export async function uploadImageFile(file: File): Promise<string> {
   assertImageFile(file);
   file = await compressIfNeeded(file);
   if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
     throw new Error("Image must be 32MB or smaller");
+  }
+
+  if (file.size <= IMAGE_UPLOAD_APP_MAX_BYTES) {
+    return uploadViaApp(file);
   }
 
   try {
@@ -108,13 +117,10 @@ export async function uploadImageFile(file: File): Promise<string> {
     await putToSpace(json.uploadUrl, file);
     return json.publicUrl;
   } catch (err) {
-    if (file.size > IMAGE_UPLOAD_APP_MAX_BYTES) {
-      throw new Error(
-        err instanceof Error
-          ? err.message
-          : "This image is too large to send through the app. Add a CORS PUT rule on the Space and retry."
-      );
-    }
-    return uploadViaApp(file);
+    throw new Error(
+      err instanceof Error
+        ? err.message
+        : "This image is too large to send through the app. Add a CORS PUT rule on the Space and retry."
+    );
   }
 }

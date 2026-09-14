@@ -26,6 +26,8 @@ function isAllowedImageUrl(raw: string): boolean {
     if (hosts.has(host)) return true;
     if (host.endsWith(".byteplusapi.com")) return true;
     if (host.endsWith(".byteimg.com")) return true;
+    if (host.endsWith(".volces.com")) return true;
+    if (host.endsWith(".volcengineapi.com")) return true;
     return false;
   } catch {
     return false;
