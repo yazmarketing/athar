@@ -37,10 +37,20 @@ export const AUDIO_UPLOAD_TYPES = new Set([
 /**
  * Reference clips for Seedance subject/motion/style referencing. BytePlus
  * accepts up to 200MB per clip; 100MB is a generous ceiling for a reference
- * (as opposed to a feature-film source) while keeping presigned uploads
- * quick. Always direct-to-Spaces — never the 8MB app-server fallback.
+ * (as opposed to a feature-film source).
+ *
+ * The Space keys cannot set CORS (`AccessDenied` on Get/PutBucketCors), so
+ * the browser cannot PUT these clips. They go through `/api/upload/multipart`
+ * in 5MB parts — S3's minimum part size except the last — instead of the
+ * 8MB `/api/upload` buffer that would OOM a 1 GiB instance at 100MB.
  */
 export const VIDEO_UPLOAD_MAX_BYTES = 100 * 1024 * 1024;
+
+/** Same-origin multipart part size. Must stay ≥5MB for S3/Spaces. */
+export const VIDEO_UPLOAD_PART_BYTES = 5 * 1024 * 1024;
+
+/** Reject a part bigger than this so one request cannot fill RAM. */
+export const VIDEO_UPLOAD_PART_MAX_BYTES = 6 * 1024 * 1024;
 
 export const VIDEO_UPLOAD_TYPES = new Set([
   "video/mp4",

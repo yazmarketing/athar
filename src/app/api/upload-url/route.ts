@@ -43,10 +43,8 @@ function extFor(contentType: string, filename: string): string {
 }
 
 /**
- * Presigned PUT for reference images, lip-sync reference audio, and
- * Seedance reference video clips. A 29MB PNG (or any video) must not travel
- * through `/api/upload` — that path buffers the file in memory on a 1 GiB
- * instance.
+ * Presigned PUT for reference images and lip-sync audio. Video clips use
+ * `/api/upload/multipart` instead — the Space has no CORS PUT rule.
  */
 export async function POST(req: NextRequest) {
   try {

@@ -1,5 +1,12 @@
 import "server-only";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
+  CreateMultipartUploadCommand,
+  PutObjectCommand,
+  S3Client,
+  UploadPartCommand,
+} from "@aws-sdk/client-s3";
 
 /**
  * DigitalOcean Spaces (S3-compatible) client. Server-only.
@@ -91,4 +98,73 @@ export async function presignUpload(opts: {
     expiresIn: opts.expiresIn ?? 900,
   });
   return { uploadUrl, publicUrl: publicObjectUrl(opts.path) };
+}
+
+/** Begin an S3 multipart upload. Used when the browser cannot PUT to the Space. */
+export async function startMultipartUpload(opts: {
+  path: string;
+  contentType: string;
+}): Promise<{ uploadId: string; publicUrl: string }> {
+  const out = await spaces().send(
+    new CreateMultipartUploadCommand({
+      Bucket: env("DO_SPACES_BUCKET"),
+      Key: opts.path,
+      ContentType: opts.contentType,
+      ACL: "public-read",
+    })
+  );
+  if (!out.UploadId) throw new Error("Storage did not start the upload");
+  return { uploadId: out.UploadId, publicUrl: publicObjectUrl(opts.path) };
+}
+
+export async function uploadMultipartPart(opts: {
+  path: string;
+  uploadId: string;
+  partNumber: number;
+  body: Uint8Array;
+}): Promise<{ etag: string }> {
+  const out = await spaces().send(
+    new UploadPartCommand({
+      Bucket: env("DO_SPACES_BUCKET"),
+      Key: opts.path,
+      UploadId: opts.uploadId,
+      PartNumber: opts.partNumber,
+      Body: opts.body,
+      ContentLength: opts.body.byteLength,
+    })
+  );
+  if (!out.ETag) throw new Error("Storage did not accept that part");
+  return { etag: out.ETag };
+}
+
+export async function completeMultipartUpload(opts: {
+  path: string;
+  uploadId: string;
+  parts: { partNumber: number; etag: string }[];
+}): Promise<void> {
+  await spaces().send(
+    new CompleteMultipartUploadCommand({
+      Bucket: env("DO_SPACES_BUCKET"),
+      Key: opts.path,
+      UploadId: opts.uploadId,
+      MultipartUpload: {
+        Parts: [...opts.parts]
+          .sort((a, b) => a.partNumber - b.partNumber)
+          .map((p) => ({ PartNumber: p.partNumber, ETag: p.etag })),
+      },
+    })
+  );
+}
+
+export async function abortMultipartUpload(opts: {
+  path: string;
+  uploadId: string;
+}): Promise<void> {
+  await spaces().send(
+    new AbortMultipartUploadCommand({
+      Bucket: env("DO_SPACES_BUCKET"),
+      Key: opts.path,
+      UploadId: opts.uploadId,
+    })
+  );
 }

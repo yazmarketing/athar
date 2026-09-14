@@ -8,6 +8,9 @@
  *
  * Run: node --env-file=.env.local scripts/setup-spaces-cors.mjs
  * Safe to re-run — it overwrites the bucket's CORS config with this one.
+ *
+ * The app Spaces key is AccessDenied on Get/PutBucketCors. Use a Full Access
+ * Spaces key, or paste the same origins/methods in the DO Spaces CORS UI.
  */
 import {
   S3Client,
@@ -17,6 +20,7 @@ import {
 
 const ALLOWED_ORIGINS = [
   "https://athar.yazmedia.com",
+  "https://athar.yszmedia.com",
   "http://localhost:3000",
 ];
 
