@@ -50,7 +50,8 @@ function sha256Hex(data: string): string {
 /** Sign and call a BytePlus OpenAPI action (SigV4-style HMAC-SHA256). */
 async function assetsCall<T>(
   action: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  opts?: { timeoutMs?: number }
 ): Promise<T> {
   const { ak, sk } = requireKeys();
   const region = assetsRegion();
@@ -97,10 +98,10 @@ async function assetsCall<T>(
 
   /**
    * CreateAsset fetches and moderates the image before it answers, which
-   * can be slow for a large photo. Without a cap the call outlives the
-   * platform gateway (~60s) and surfaces as a bare 504 — fail earlier,
-   * with a sentence that says what actually happened.
+   * can be slow for a large photo. Background registration uses a longer
+   * cap; inline calls stay under the platform gateway (~60s).
    */
+  const timeoutMs = opts?.timeoutMs ?? 45_000;
   let res: Response;
   try {
     res = await fetch(`https://${ASSETS_HOST}/?${query}`, {
@@ -113,7 +114,7 @@ async function assetsCall<T>(
         Authorization: `HMAC-SHA256 Credential=${ak}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
       },
       body: payload,
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
     if (err instanceof Error && err.name === "TimeoutError") {
@@ -191,12 +192,16 @@ export async function createAsset(opts: {
   url: string;
   name?: string;
 }): Promise<AssetRecord> {
-  const asset = await assetsCall<AssetRecord>("CreateAsset", {
-    GroupId: opts.groupId,
-    URL: opts.url,
-    AssetType: "Image",
-    Name: opts.name,
-  });
+  const asset = await assetsCall<AssetRecord>(
+    "CreateAsset",
+    {
+      GroupId: opts.groupId,
+      URL: opts.url,
+      AssetType: "Image",
+      Name: opts.name,
+    },
+    { timeoutMs: 120_000 }
+  );
   rememberAssetImageUrl(asset);
   return asset;
 }

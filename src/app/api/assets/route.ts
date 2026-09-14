@@ -5,11 +5,19 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import {
   assetsConfigured,
-  createAsset,
   deleteAsset,
   ensureDefaultAssetGroup,
   listAssets,
 } from "@/lib/byteplus-assets";
+import {
+  claimDueRegistrations,
+  completeRegistrationsMatching,
+  deleteAssetRegistration,
+  listOpenAssetRegistrations,
+  processAssetRegistration,
+  queueAssetRegistration,
+  registrationAsLibraryAsset,
+} from "@/lib/asset-registrations";
 import type { GenerationRecord } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -58,7 +66,15 @@ export async function GET() {
         createdAt: a.CreateTime ?? null,
       };
     });
-    return NextResponse.json({ assets });
+    await completeRegistrationsMatching(new Set(assets.map((a) => a.name)));
+    const due = await claimDueRegistrations();
+    for (const row of due) {
+      after(() => processAssetRegistration(row));
+    }
+    const pending = (await listOpenAssetRegistrations()).map(
+      registrationAsLibraryAsset
+    );
+    return NextResponse.json({ assets: [...pending, ...assets] });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Could not list assets";
@@ -138,34 +154,39 @@ export async function POST(req: NextRequest) {
     /**
      * CreateAsset makes BytePlus fetch and moderate the photo before it
      * answers, which routinely outlives the platform gateway (~60s) and
-     * surfaced in the browser as a bare 504 — even though the registration
-     * itself then succeeded. So answer now and register after the response
-     * is out; the asset list is the source of truth for the outcome.
+     * surfaced in the browser as a bare 504. Persist the upload first so a
+     * refresh still shows the face, then register after the response.
      */
-    const generationId = body.generationId;
     const url = imageUrl;
     // Strip any tag someone typed by hand, then append the chosen one.
     const taggedName =
       category && ASSET_CATEGORIES.has(category)
         ? `${(name ?? "Asset").replace(CATEGORY_TAG_RE, "")} [${category}]`
         : name;
-    after(async () => {
-      try {
-        const asset = await createAsset({ groupId, url, name: taggedName });
-        await logAudit({
-          userId: sessionUser.id,
-          userEmail: sessionUser.email,
-          action: "asset_create",
-          subjectType: "asset",
-          subjectId: asset.Id,
-          meta: { group_id: groupId, source_generation_id: generationId },
-        });
-      } catch (err) {
-        console.error(`BytePlus asset registration failed for ${url}:`, err);
-      }
+    const displayName = (name ?? "Asset").replace(CATEGORY_TAG_RE, "").trim() || "Asset";
+    const row = await queueAssetRegistration({
+      imageUrl: url,
+      name: displayName,
+      category: category && ASSET_CATEGORIES.has(category) ? category : null,
+      taggedName: taggedName ?? displayName,
+      groupId,
+      createdBy: sessionUser.id,
     });
+    after(() =>
+      processAssetRegistration(row, {
+        userId: sessionUser.id,
+        userEmail: sessionUser.email,
+      })
+    );
 
-    return NextResponse.json({ queued: true, groupId }, { status: 202 });
+    return NextResponse.json(
+      {
+        queued: true,
+        groupId,
+        asset: registrationAsLibraryAsset(row),
+      },
+      { status: 202 }
+    );
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Asset upload failed";
@@ -202,6 +223,21 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
+    if (UUID_RE.test(id)) {
+      const removed = await deleteAssetRegistration(id);
+      if (!removed) {
+        return NextResponse.json({ error: "Asset not found" }, { status: 404 });
+      }
+      await logAudit({
+        userId: sessionUser.id,
+        userEmail: sessionUser.email,
+        action: "asset_delete",
+        subjectType: "asset",
+        subjectId: id,
+        meta: { pending: true },
+      });
+      return NextResponse.json({ ok: true });
+    }
     await deleteAsset(id);
     await logAudit({
       userId: sessionUser.id,

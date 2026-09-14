@@ -2374,6 +2374,10 @@ export function Studio() {
   const attachAsset = (rawId: string) => {
     const id = rawId.replace(/^asset:\/\//, "").trim();
     if (!id) return;
+    if (!id.startsWith("asset-")) {
+      toast.message("BytePlus is still verifying this photo");
+      return;
+    }
     if (videoSources.length >= MAX_VIDEO_IMAGES) {
       toast.error(`Up to ${MAX_VIDEO_IMAGES} images per video`);
       return;
@@ -2397,15 +2401,7 @@ export function Studio() {
     try {
       const res = await fetch("/api/assets");
       const json = await res.json();
-      const incoming = (json.assets ?? []) as LibraryAsset[];
-      setLibraryAssets((prev) => {
-        const pending = (prev ?? []).filter(
-          (a) =>
-            a.id.startsWith("pending-") &&
-            !incoming.some((b) => b.name === a.name)
-        );
-        return [...pending, ...incoming];
-      });
+      setLibraryAssets((json.assets ?? []) as LibraryAsset[]);
     } catch {
       setLibraryAssets((prev) => prev ?? []);
     } finally {
@@ -2428,6 +2424,16 @@ export function Studio() {
       void loadAssets();
     }
   }, [mention, mode, libraryAssets, assetsLoading, loadAssets]);
+
+  useEffect(() => {
+    if (!assetIdOpen) return;
+    const verifying = (libraryAssets ?? []).some(
+      (a) => a.status === "Processing"
+    );
+    if (!verifying) return;
+    const t = window.setInterval(() => void loadAssets(), 8_000);
+    return () => window.clearInterval(t);
+  }, [assetIdOpen, libraryAssets, loadAssets]);
 
   const deleteLibraryAsset = async (id: string) => {
     setDeletingAssetId(id);
@@ -2462,26 +2468,25 @@ export function Studio() {
       const assetName =
         name.trim().slice(0, 60) ||
         file.name.replace(/\.[^.]+$/, "").slice(0, 60);
-      const { res, json } = await postJson<{ error?: string }>("/api/assets", {
+      const { res, json } = await postJson<{
+        error?: string;
+        asset?: LibraryAsset;
+      }>("/api/assets", {
         imageUrl: url,
         name: assetName,
         category: category === "auto" ? "character" : category,
       });
       if (!res.ok) throw new Error(json.error ?? "Could not register character");
-      const pending: LibraryAsset = {
-        id: `pending-${Date.now()}`,
-        name: assetName,
-        category: category === "auto" ? "character" : category,
-        status: "Processing",
-        url,
-      };
-      setLibraryAssets((prev) => [pending, ...(prev ?? [])]);
+      if (json.asset) {
+        setLibraryAssets((prev) => [
+          json.asset as LibraryAsset,
+          ...(prev ?? []).filter((a) => a.id !== json.asset?.id),
+        ]);
+      }
       toast.success(
-        "Photo submitted — BytePlus is verifying it. It appears in the asset list once approved (about a minute)."
+        "Photo submitted — BytePlus is verifying it. It stays in this list while that runs."
       );
-      // Registration finishes server-side after this response — keep the
-      // local preview until BytePlus lists the real asset. An immediate
-      // refresh would wipe the photo and look like it never saved.
+      window.setTimeout(() => void loadAssets(), 8_000);
       window.setTimeout(() => void loadAssets(), 20_000);
       window.setTimeout(() => void loadAssets(), 75_000);
     } catch (err) {
@@ -4838,12 +4843,14 @@ export function Studio() {
           }}
           title="Delete this character?"
           description={
-            assetToDelete &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-              assetToDelete.name
-            )
-              ? "This removes it from the BytePlus asset library and frees quota. This cannot be undone."
-              : `“${assetToDelete?.name || "This character"}” will be removed from the BytePlus asset library and quota will be freed. This cannot be undone.`
+            assetToDelete && !assetToDelete.id.startsWith("asset-")
+              ? "This photo is still being verified. Removing it drops it from this list."
+              : assetToDelete &&
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+                    assetToDelete.name
+                  )
+                ? "This removes it from the BytePlus asset library and frees quota. This cannot be undone."
+                : `“${assetToDelete?.name || "This character"}” will be removed from the BytePlus asset library and quota will be freed. This cannot be undone.`
           }
           confirmLabel="Delete"
           destructive
@@ -5876,7 +5883,7 @@ export function Studio() {
                       type="button"
                       onClick={() =>
                         setAssetIdOpen((o) => {
-                          if (!o && libraryAssets === null) void loadAssets();
+                          if (!o) void loadAssets();
                           return !o;
                         })
                       }

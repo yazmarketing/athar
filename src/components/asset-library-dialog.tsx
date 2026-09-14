@@ -34,6 +34,7 @@ export type LibraryAsset = {
   category?: AssetCategory | string | null;
   status: string;
   url: string | null;
+  error?: string | null;
 };
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -250,6 +251,8 @@ export function AssetLibraryDialog({
 
                   {(filtered ?? []).map((a) => {
                     const active = a.status === "Active";
+                    const verifying = a.status === "Processing";
+                    const failed = a.status === "Failed";
                     const deleting = deletingAssetId === a.id;
                     return (
                       <div
@@ -257,7 +260,7 @@ export function AssetLibraryDialog({
                         className={cn(
                           "group relative overflow-hidden rounded-xl bg-white/[0.03] ring-1 ring-white/10 transition",
                           active && "hover:ring-gold/40",
-                          !active && "opacity-60"
+                          failed && "ring-red-500/40"
                         )}
                       >
                         <button
@@ -270,29 +273,49 @@ export function AssetLibraryDialog({
                           )}
                         >
                           {a.url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={a.url}
-                              alt={a.name || "Asset"}
-                              className="aspect-square w-full object-cover"
-                            />
+                            <span className="relative block aspect-square w-full overflow-hidden">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={a.url}
+                                alt={a.name || "Asset"}
+                                className="size-full object-cover"
+                              />
+                              {verifying && (
+                                <span className="absolute inset-0 flex items-center justify-center bg-black/40">
+                                  <Loader2 className="size-5 animate-spin text-white" />
+                                </span>
+                              )}
+                            </span>
                           ) : (
                             <span className="flex aspect-square w-full items-center justify-center bg-white/5">
-                              <ShieldCheck className="size-7 text-gold/70" />
+                              {verifying ? (
+                                <Loader2 className="size-7 animate-spin text-gold/70" />
+                              ) : (
+                                <ShieldCheck className="size-7 text-gold/70" />
+                              )}
                             </span>
                           )}
                           <span className="flex min-w-0 flex-col gap-0.5 px-2.5 py-2">
                             <span className="text-[10px] tracking-wide text-muted-foreground">
                               {CATEGORY_LABEL[a.category ?? ""] ?? "Asset"} ·{" "}
-                              <span className={active ? "text-gold" : ""}>
-                                {a.status}
+                              <span
+                                className={cn(
+                                  active && "text-gold",
+                                  failed && "text-red-400"
+                                )}
+                              >
+                                {verifying
+                                  ? "Verifying"
+                                  : failed
+                                    ? "Failed"
+                                    : a.status}
                               </span>
                             </span>
                             <span className="truncate text-xs font-medium text-foreground">
                               {a.name || "Unnamed"}
                             </span>
                             <span className="truncate font-mono text-[10px] text-muted-foreground">
-                              {a.id}
+                              {failed && a.error ? a.error : a.id}
                             </span>
                           </span>
                         </button>
