@@ -1,5 +1,9 @@
 import "server-only";
-import { arkCreateVideoTask, type ArkVideoRequest } from "@/lib/byteplus-server";
+import {
+  arkCancelVideoTask,
+  arkCreateVideoTask,
+  type ArkVideoRequest,
+} from "@/lib/byteplus-server";
 import { resolveModel, seedanceRealCost, type Tier } from "@/config/models";
 import { ASPECT_TO_VIDEO_RATIO, isAspectRatio } from "@/config/aspects";
 import {
@@ -10,6 +14,7 @@ import {
 import {
   attachProviderTask,
   claimJobForSubmit,
+  getJob,
   markJobCompleted,
   markJobFailed,
 } from "@/lib/jobs";
@@ -125,6 +130,11 @@ export async function submitVideoJob(jobId: string): Promise<void> {
   try {
     const { taskId } = await arkCreateVideoTask(videoRequestForJob(job));
     await attachProviderTask(job.id, taskId);
+    // Cancelled while we were talking to Seedance — drop the paid task.
+    const latest = await getJob(job.id);
+    if (latest?.status === "cancelled") {
+      await arkCancelVideoTask(taskId).catch(() => {});
+    }
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Video submit failed";
@@ -148,6 +158,9 @@ export async function finalizeVideoJob(
   usage?: { completion_tokens?: number; total_tokens?: number } | null
 ): Promise<void> {
   try {
+    const latest = await getJob(job.id);
+    if (!latest || latest.status === "cancelled") return;
+
     const outputUrl = await persistOutputToSpaces(
       providerUrl,
       "video",
@@ -182,6 +195,9 @@ export async function finalizeVideoJob(
       // Older databases restrict generations.mode — relax before insert
       await ensureGenerationModes();
     }
+
+    const stillActive = await getJob(job.id);
+    if (!stillActive || stillActive.status === "cancelled") return;
 
     const generation = await insertGeneration({
       mode: job.kind,

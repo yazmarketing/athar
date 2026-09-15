@@ -361,6 +361,31 @@ export async function arkGetVideoTask(taskId: string): Promise<ArkVideoTask> {
   );
 }
 
+/**
+ * Stop a Seedance task so a cancelled studio job does not keep billing.
+ * Best-effort: 404 means it is already gone. Empty bodies are fine.
+ */
+export async function arkCancelVideoTask(taskId: string): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`${arkBaseUrl()}/contents/generations/tasks/${taskId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${arkKey()}` },
+      signal: AbortSignal.timeout(ARK_STATUS_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error("BytePlus ModelArk did not respond while cancelling");
+    }
+    throw err;
+  }
+  if (res.ok || res.status === 404) return;
+  const text = await res.text().catch(() => "");
+  throw new Error(
+    text.slice(0, 200) || `BytePlus ModelArk error (HTTP ${res.status})`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Chat — text models (prompt rewrite / editor assist)
 // ---------------------------------------------------------------------------

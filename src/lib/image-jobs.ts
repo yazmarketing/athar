@@ -25,6 +25,7 @@ import {
 import { insertGeneration } from "@/lib/generations-store";
 import {
   claimJobForSubmit,
+  getJob,
   markJobCompleted,
   markJobFailed,
 } from "@/lib/jobs";
@@ -51,6 +52,11 @@ type ImageJobInput = {
 
 export function imageJobInput(job: GenerationJobRecord): ImageJobInput {
   return (job.input ?? {}) as ImageJobInput;
+}
+
+async function wasCancelled(jobId: string): Promise<boolean> {
+  const latest = await getJob(jobId);
+  return !latest || latest.status === "cancelled";
 }
 
 async function persistDataUriImage(
@@ -139,6 +145,8 @@ async function runArkJob(
 
     const { url: outputUrl, providerUrl } = await persistArkImage(output);
 
+    if (await wasCancelled(job.id)) return;
+
     const generation = await insertGeneration({
       mode: "t2i",
       tier: job.tier,
@@ -208,6 +216,8 @@ async function runGeminiJob(
     const outputUrl = await persistDataUriImage(dataUri, seed);
     const cost = googleImageCost(modelId, resolution);
 
+    if (await wasCancelled(job.id)) return;
+
     const generation = await insertGeneration({
       mode: "t2i",
       tier: job.tier,
@@ -265,6 +275,8 @@ async function runOpenAIJob(
 
     const outputUrl = await persistDataUriImage(dataUri, seed);
     const cost = openaiImageCost(modelId, resolution);
+
+    if (await wasCancelled(job.id)) return;
 
     const generation = await insertGeneration({
       mode: "t2i",

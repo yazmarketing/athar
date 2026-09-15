@@ -388,6 +388,9 @@ export function Studio() {
   const [brandKits, setBrandKits] = useState<BrandKitRecord[]>([]);
   const [activeBrandKitId, setActiveBrandKitId] = useState<string | null>(null);
   const [videoJobs, setVideoJobs] = useState<GenerationJobRecord[]>([]);
+  const [cancellingJobIds, setCancellingJobIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [videoDetailTarget, setVideoDetailTarget] =
     useState<GenerationRecord | null>(null);
@@ -1240,6 +1243,8 @@ export function Studio() {
               title: image ? "Image render failed" : "Video render failed",
               body: next.error ?? next.final_prompt,
             });
+          } else if (next.status === "cancelled") {
+            setVideoJobs((prev) => prev.filter((j) => j.id !== next.id));
           }
         } catch {
           // transient poll error — try again next tick
@@ -1269,6 +1274,140 @@ export function Studio() {
     // Persist the dismissal so the card doesn't reappear after a refresh
     if (job.status === "failed" || job.status === "completed") {
       void fetch(`/api/jobs/${job.id}`, { method: "DELETE" }).catch(() => {});
+    }
+  };
+
+  /** Put a cancelled job's prompt and attachments back in the dock. */
+  const restoreJobToDock = (job: GenerationJobRecord) => {
+    const input = (job.input ?? {}) as {
+      prompt?: PromptInputs;
+      sourceImageUrls?: string[] | null;
+      sourceImageUrl?: string | null;
+      sourceGenerationId?: string | null;
+      sourceVideoUrl?: string | null;
+      sourceVideoGenerationId?: string | null;
+      sourceDurationS?: number | null;
+      referenceVideoUrls?: string[] | null;
+      sourceAudioUrls?: string[] | null;
+      referenceUrls?: string[] | null;
+      videoResolution?: string | null;
+      resolution?: string | null;
+      imageModel?: string | null;
+    };
+    const prompt = input.prompt ?? { subject: job.final_prompt };
+    const video = !isImageJob(job);
+
+    openTool(video ? "t2v" : "t2i", {
+      subject: prompt.subject || job.final_prompt,
+      action: prompt.action,
+      lighting: prompt.lighting,
+      brandTokens: prompt.brandTokens,
+      negativeAdditions: prompt.negativeAdditions,
+      styleId: prompt.styleId,
+      cameraId: prompt.cameraId,
+    });
+
+    if (isAspectRatio(job.aspect)) setAspect(job.aspect);
+    if (job.project_id) setActiveProjectId(job.project_id);
+    if (job.brand_kit_id) setActiveBrandKitId(job.brand_kit_id);
+
+    if (video) {
+      setTier(job.tier);
+      if (job.duration_s != null) setDurationS(Number(job.duration_s));
+      const vr = input.videoResolution;
+      if (vr === "480p" || vr === "720p" || vr === "1080p") {
+        setVideoResolution(vr);
+      }
+      const imageUrls = input.sourceImageUrls?.length
+        ? input.sourceImageUrls
+        : input.sourceImageUrl
+          ? [input.sourceImageUrl]
+          : [];
+      setVideoSources(
+        imageUrls.map((url, i) => ({
+          url,
+          generationId: i === 0 ? (input.sourceGenerationId ?? null) : null,
+        }))
+      );
+      if (
+        imageUrls.some((url) => url.startsWith("asset://")) &&
+        libraryAssets === null
+      ) {
+        void loadAssets();
+      }
+      setVideoEditSource(
+        input.sourceVideoUrl
+          ? {
+              url: input.sourceVideoUrl,
+              generationId: input.sourceVideoGenerationId ?? null,
+              intent: "edit",
+              durationS: input.sourceDurationS ?? job.duration_s ?? null,
+            }
+          : null
+      );
+      setVideoRefSources(
+        (input.referenceVideoUrls ?? []).map((url) => ({
+          url,
+          generationId: null,
+        }))
+      );
+      const audioUrls = input.sourceAudioUrls ?? [];
+      const transcripts = prompt.audioTranscripts ?? [];
+      setAudioSources(
+        audioUrls.map((url, i) => ({
+          url,
+          name: `audio ${i + 1}`,
+          transcript: transcripts[i] ?? null,
+        }))
+      );
+      const nextCinema: CinemaControls = {
+        genreId: prompt.genreId ?? DEFAULT_DIRECTOR_ID,
+        eraId: prompt.eraId ?? DEFAULT_DIRECTOR_ID,
+        shotId: prompt.shotId ?? DEFAULT_DIRECTOR_ID,
+        gradeId: prompt.gradeId ?? DEFAULT_DIRECTOR_ID,
+        lightLookId: prompt.lightLookId ?? DEFAULT_DIRECTOR_ID,
+        emotionId: prompt.emotionId ?? DEFAULT_DIRECTOR_ID,
+        tempoId: prompt.tempoId ?? DEFAULT_DIRECTOR_ID,
+        pacingId: prompt.pacingId ?? DEFAULT_DIRECTOR_ID,
+      };
+      setCinema(nextCinema);
+      setCinemaOn(
+        Object.values(nextCinema).some((id) => id !== DEFAULT_DIRECTOR_ID)
+      );
+      return;
+    }
+
+    setVideoSources([]);
+    setVideoEditSource(null);
+    setVideoRefSources([]);
+    setAudioSources([]);
+    const modelId =
+      input.imageModel ??
+      imageModelIdFromEndpoint(job.model_endpoint, job.tier);
+    const choice = imageModelChoice(modelId);
+    if (choice) applyImageModel(modelId, choice);
+    const res = input.resolution;
+    if (res === "1K" || res === "2K" || res === "4K") setResolution(res);
+    setReferenceUrls(input.referenceUrls?.filter(Boolean) ?? []);
+  };
+
+  const cancelJob = async (job: GenerationJobRecord) => {
+    setCancellingJobIds((prev) => new Set(prev).add(job.id));
+    try {
+      const res = await fetch(`/api/jobs/${job.id}`, { method: "DELETE" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error ?? "Cancel failed");
+      setVideoJobs((prev) => prev.filter((j) => j.id !== job.id));
+      restoreJobToDock(job);
+      toast.message("Cancelled — prompt restored. Edit and generate again.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Cancel failed");
+    } finally {
+      setCancellingJobIds((prev) => {
+        const next = new Set(prev);
+        next.delete(job.id);
+        return next;
+      });
     }
   };
 
@@ -4289,6 +4428,19 @@ export function Studio() {
                                 />
                               )}
                             </div>
+                            {active && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 shrink-0 text-xs"
+                                disabled={cancellingJobIds.has(job.id)}
+                                onClick={() => void cancelJob(job)}
+                              >
+                                {cancellingJobIds.has(job.id)
+                                  ? "Cancelling…"
+                                  : "Cancel"}
+                              </Button>
+                            )}
                             {job.status === "failed" && (
                               <Button
                                 size="sm"

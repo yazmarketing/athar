@@ -142,7 +142,7 @@ export async function markJobCompleted(
     `update generation_jobs
      set status = 'completed', generation_id = $2, error = null,
          updated_at = now(), completed_at = now()
-     where id = $1
+     where id = $1 and status = 'running'
      returning *`,
     [id, generationId]
   );
@@ -156,7 +156,7 @@ export async function markJobFailed(
   const { rows } = await db().query<GenerationJobRecord>(
     `update generation_jobs
      set status = 'failed', error = $2, updated_at = now(), completed_at = now()
-     where id = $1
+     where id = $1 and status in ('queued', 'running')
      returning *`,
     [id, error.slice(0, 2000)]
   );

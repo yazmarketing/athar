@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse, after } from "next/server";
+import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/auth-session";
 import { requireCreator } from "@/lib/authz";
-import { arkGetVideoTask } from "@/lib/byteplus-server";
+import { arkCancelVideoTask, arkGetVideoTask } from "@/lib/byteplus-server";
 import { getGeneration } from "@/lib/generations-store";
 import { submitImageJob } from "@/lib/image-jobs";
 import {
@@ -157,28 +158,57 @@ export async function GET(_req: NextRequest, { params }: Params) {
   }
 }
 
-/** Dismiss a finished job so it stops reappearing after refresh. */
+/**
+ * Cancel a live render, or dismiss a finished one so it stops coming back
+ * after refresh. Cancelling also asks Seedance to drop the provider task.
+ */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
     // Destructive — viewers are read-only.
-    const { response: authError } = await requireCreator();
-    if (authError) return authError;
+    const auth = await requireCreator();
+    if (auth.response) return auth.response;
+    const sessionUser = auth.user;
 
     const { id } = await params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
 
+    const existing = await getJob(id);
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (
+      existing.user_id &&
+      existing.user_id !== sessionUser.id &&
+      sessionUser.role !== "admin"
+    ) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    if (existing.status === "cancelled") {
+      return NextResponse.json({ job: existing });
+    }
+
     const job = await markJobCancelled(id);
     if (!job) {
-      return NextResponse.json(
-        { error: "Job not found or still running" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+
+    if (job.provider_task_id && !isImageJob(job)) {
+      after(() => arkCancelVideoTask(job.provider_task_id!).catch(() => {}));
+    }
+
+    await logAudit({
+      userId: sessionUser.id,
+      userEmail: sessionUser.email,
+      action: "job_cancel",
+      subjectType: "generation_job",
+      subjectId: job.id,
+    });
+
     return NextResponse.json({ job });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Dismiss failed";
+    const message = err instanceof Error ? err.message : "Cancel failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
