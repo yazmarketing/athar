@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
 import { db } from "@/lib/db";
 import { ensureFeedbackTable } from "@/lib/generation-feedback";
-import { ensureLibraryIndex } from "@/lib/generations-store";
+import { ensureGenerationColumns, ensureLibraryIndex } from "@/lib/generations-store";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -47,6 +47,7 @@ export async function GET(req: NextRequest) {
     // Feedback table is tiny; the expensive work is indexing generations,
     // which must not block this request.
     await ensureFeedbackTable();
+    await ensureGenerationColumns();
     void ensureLibraryIndex().catch((err) => {
       console.error("library index guard failed", err);
     });

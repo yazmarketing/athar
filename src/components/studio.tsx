@@ -93,9 +93,7 @@ import { UsagePanel } from "@/components/usage-panel";
 import { VideoDetail } from "@/components/video-detail";
 import {
   GenerationPlaceholderCard,
-  ProgressBar,
-  easedProgress,
-  stageLabel,
+  JobPlaceholderCard,
 } from "@/components/generation-progress";
 import {
   VariationsPanel,
@@ -110,7 +108,6 @@ import {
   imageModelCost,
   imageModelIdFromEndpoint,
   imageModelRequest,
-  friendlyModelName,
   asGoogleImageModel,
   DEFAULT_IMAGE_MODEL_ID,
   type Capability,
@@ -435,7 +432,6 @@ export function Studio() {
   >(null);
   const [assetsReload, setAssetsReload] = useState(0);
   const [assetCatalog, setAssetCatalog] = useState<ReferenceAssetRecord[]>([]);
-  const [jobsClock, setJobsClock] = useState(0);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
@@ -1155,14 +1151,6 @@ export function Studio() {
     [clientStyles, style]
   );
 
-  const activeVideoJobs = useMemo(
-    () =>
-      videoJobs.filter(
-        (j) => j.status === "running" || j.status === "queued"
-      ),
-    [videoJobs]
-  );
-
   // Restore in-flight / recently failed video renders after a refresh
   useEffect(() => {
     void (async () => {
@@ -1200,16 +1188,12 @@ export function Studio() {
     if (!activeJobsKey) return;
     const ids = activeJobsKey.split(",");
     const tick = async () => {
-      setJobsClock(Date.now());
       for (const id of ids) {
         try {
           const res = await fetch(`/api/jobs/${id}`);
           const json = await res.json();
           if (!res.ok || !json.job) continue;
           const next = json.job as GenerationJobRecord;
-          setVideoJobs((prev) =>
-            prev.map((j) => (j.id === next.id ? next : j))
-          );
           if (next.status === "completed") {
             const image = isImageJob(next);
             toast.success(image ? "Image ready" : "Video ready");
@@ -1224,27 +1208,32 @@ export function Studio() {
                   undefined)
                 : undefined,
             });
-            if (image && json.generation) {
+            if (json.generation) {
               const g = json.generation as GenerationRecord;
               setLastRun((prev) =>
-                prev.some((r) => r.id === g.id) ? prev : [...prev, g]
+                prev.some((r) => r.id === g.id) ? prev : [g, ...prev]
               );
-              setDetailTarget(g);
             }
+            setVideoJobs((prev) => prev.filter((j) => j.id !== next.id));
             void loadGallery();
-          } else if (next.status === "failed") {
-            const image = isImageJob(next);
-            toast.error(
-              `${image ? "Image" : "Video"} render failed: ${next.error ?? "unknown error"}`
-            );
-            pushNotification({
-              kind: image ? "image" : "video",
-              status: "error",
-              title: image ? "Image render failed" : "Video render failed",
-              body: next.error ?? next.final_prompt,
-            });
           } else if (next.status === "cancelled") {
             setVideoJobs((prev) => prev.filter((j) => j.id !== next.id));
+          } else {
+            setVideoJobs((prev) =>
+              prev.map((j) => (j.id === next.id ? next : j))
+            );
+            if (next.status === "failed") {
+              const image = isImageJob(next);
+              toast.error(
+                `${image ? "Image" : "Video"} render failed: ${next.error ?? "unknown error"}`
+              );
+              pushNotification({
+                kind: image ? "image" : "video",
+                status: "error",
+                title: image ? "Image render failed" : "Video render failed",
+                body: next.error ?? next.final_prompt,
+              });
+            }
           }
         } catch {
           // transient poll error — try again next tick
@@ -1426,6 +1415,15 @@ export function Studio() {
         : generations;
   const libraryFiltersOn =
     Boolean(query.trim()) || typeFilter !== "all" || favoritesOnly;
+
+  const createGallery = useMemo(() => {
+    const match = (g: GenerationRecord) =>
+      mode === "t2v" ? isVideo(g) : !isVideo(g);
+    const fromLib = (generations ?? []).filter(match);
+    const seen = new Set(fromLib.map((g) => g.id));
+    const extras = lastRun.filter((g) => match(g) && !seen.has(g.id));
+    return [...extras, ...fromLib];
+  }, [generations, lastRun, mode]);
 
   /**
    * Library's own view of the world — renders plus voice-overs and
@@ -4326,243 +4324,126 @@ export function Studio() {
             >
               {view === "create" ? (
                 <>
-                  {videoJobs.length > 0 && (
-                    <div className="mx-auto mb-6 w-full max-w-2xl space-y-2.5">
-                      <p className="px-1 text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-                        {videoJobs.some(isImageJob) &&
-                        videoJobs.some((j) => !isImageJob(j))
-                          ? "Renders"
-                          : videoJobs.some(isImageJob)
-                            ? "Image renders"
-                            : "Video renders"}
-                      </p>
-                      {videoJobs.map((job) => {
-                        const active =
-                          job.status === "running" || job.status === "queued";
-                        // The most recent active render gets a bit more
-                        // presence — it's the one thing actually happening
-                        // right now, so it shouldn't read as just another
-                        // log line.
-                        const hero = active && job.id === activeVideoJobs[0]?.id;
-                        const referenceTs = job.completed_at
-                          ? new Date(job.completed_at).getTime()
-                          : jobsClock || new Date(job.updated_at).getTime();
-                        const elapsedS = Math.max(
-                          0,
-                          Math.round(
-                            (referenceTs - new Date(job.created_at).getTime()) /
-                              1000
-                          )
-                        );
-                        return (
-                          <div
-                            key={job.id}
-                            className={cn(
-                              "relative flex items-center gap-3 overflow-hidden rounded-xl bg-card px-4 py-3 ring-1 ring-border",
-                              hero && "py-4 ring-gold/25"
-                            )}
-                          >
-                            {hero && (
-                              <div className="pointer-events-none absolute inset-0 animate-pulse bg-gold/[0.04]" />
-                            )}
-                            {active ? (
-                              hero ? (
-                                <span className="relative flex size-10 shrink-0 items-center justify-center rounded-xl bg-gold-soft ring-1 ring-gold/25">
-                                  <Loader2 className="size-5 animate-spin text-gold" />
-                                </span>
-                              ) : (
-                                <Loader2 className="size-4 shrink-0 animate-spin text-gold" />
-                              )
-                            ) : job.status === "completed" ? (
-                              isImageJob(job) ? (
-                                <ImageIcon className="size-4 shrink-0 text-gold" />
-                              ) : (
-                                <Clapperboard className="size-4 shrink-0 text-gold" />
-                              )
+                  {(() => {
+                    const jobTiles = videoJobs.filter(
+                      (j) =>
+                        j.status === "queued" ||
+                        j.status === "running" ||
+                        j.status === "failed"
+                    );
+                    const pendingPlaceholders =
+                      generating &&
+                      !jobTiles.some(
+                        (j) => j.status === "queued" || j.status === "running"
+                      )
+                        ? mode === "t2i"
+                          ? numOutputs
+                          : 1
+                        : 0;
+                    const hasGrid =
+                      jobTiles.length > 0 ||
+                      createGallery.length > 0 ||
+                      pendingPlaceholders > 0;
+                    if (!hasGrid) {
+                      return (
+                        <div className="flex h-[min(52vh,420px)] flex-col items-center justify-center text-center">
+                          <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gold-soft ring-1 ring-gold/25">
+                            {mode === "t2v" ? (
+                              <Clapperboard className="size-6 text-gold" />
                             ) : (
-                              <X className="size-4 shrink-0 text-muted-foreground" />
-                            )}
-                            <div className="relative min-w-0 flex-1">
-                              <p
-                                className={cn(
-                                  "truncate text-sm",
-                                  hero && "font-medium"
-                                )}
-                              >
-                                {job.final_prompt}
-                              </p>
-                              <p className="mt-0.5 text-xs text-muted-foreground">
-                                {active
-                                  ? `${stageLabel(
-                                      isImageJob(job)
-                                        ? "image"
-                                        : job.kind === "v2v"
-                                          ? "edit"
-                                          : "video",
-                                      elapsedS
-                                    )} ${elapsedS}s`
-                                  : job.status === "completed"
-                                    ? "Done — saved to Library"
-                                    : (job.error ?? "Failed")}
-                                {" · "}
-                                {isImageJob(job)
-                                  ? friendlyModelName(
-                                      (job.input as { imageModel?: string })
-                                        .imageModel
-                                    )
-                                  : job.duration_s != null
-                                    ? `${Number(job.duration_s)}s clip`
-                                    : job.tier}
-                              </p>
-                              {active && (
-                                <ProgressBar
-                                  value={easedProgress(
-                                    isImageJob(job)
-                                      ? "image"
-                                      : job.kind === "v2v"
-                                        ? "edit"
-                                        : "video",
-                                    elapsedS
-                                  )}
-                                  className="mt-1.5"
-                                />
-                              )}
-                            </div>
-                            {active && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 shrink-0 text-xs"
-                                disabled={cancellingJobIds.has(job.id)}
-                                onClick={() => void cancelJob(job)}
-                              >
-                                {cancellingJobIds.has(job.id)
-                                  ? "Cancelling…"
-                                  : "Cancel"}
-                              </Button>
-                            )}
-                            {job.status === "failed" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 shrink-0 text-xs"
-                                onClick={() => void retryJob(job)}
-                              >
-                                Retry
-                              </Button>
-                            )}
-                            {job.status === "completed" &&
-                              job.generation_id && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-7 shrink-0 text-xs"
-                                  onClick={() => {
-                                    const g = generations?.find(
-                                      (r) => r.id === job.generation_id
-                                    );
-                                    if (g) {
-                                      openDetail(g);
-                                    } else {
-                                      setView("library");
-                                    }
-                                  }}
-                                >
-                                  View
-                                </Button>
-                              )}
-                            {!active && (
-                              <button
-                                type="button"
-                                aria-label="Dismiss"
-                                onClick={() => dismissJob(job)}
-                                className="shrink-0 rounded-md p-1 text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
-                              >
-                                <X className="size-3.5" />
-                              </button>
+                              <ImageIcon className="size-6 text-gold" />
                             )}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {generating ? (
-                    <div
-                      className={cn(
-                        "mx-auto grid w-full gap-4 pt-2",
-                        mode === "t2i" && numOutputs > 1
-                          ? "max-w-4xl grid-cols-1 sm:grid-cols-2"
-                          : "max-w-2xl grid-cols-1"
+                          <p className="athar-headline">
+                            {mode === "t2v"
+                              ? "Describe a shot"
+                              : "Describe an image"}
+                          </p>
+                          <p className="mt-2 max-w-md text-sm text-muted-foreground">
+                            Paste a prompt in the dock. Your results stay here
+                            and in the Library.
+                          </p>
+                        </div>
+                      );
+                    }
+                    return (
+                      <>
+                      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-4">
+                        {jobTiles.map((job) => {
+                          const kind = isImageJob(job)
+                            ? "image"
+                            : job.kind === "v2v"
+                              ? "edit"
+                              : "video";
+                          const status =
+                            job.status === "failed"
+                              ? "failed"
+                              : job.status === "queued"
+                                ? "queued"
+                                : "running";
+                          return (
+                            <JobPlaceholderCard
+                              key={job.id}
+                              kind={kind}
+                              aspect={job.aspect || aspect}
+                              startedAtMs={new Date(job.created_at).getTime()}
+                              status={status}
+                              prompt={job.final_prompt}
+                              error={job.error}
+                              cancelling={cancellingJobIds.has(job.id)}
+                              onCancel={
+                                status !== "failed"
+                                  ? () => void cancelJob(job)
+                                  : undefined
+                              }
+                              onRetry={
+                                status === "failed"
+                                  ? () => void retryJob(job)
+                                  : undefined
+                              }
+                              onDismiss={
+                                status === "failed"
+                                  ? () => dismissJob(job)
+                                  : undefined
+                              }
+                            />
+                          );
+                        })}
+                        {Array.from({ length: pendingPlaceholders }).map(
+                          (_, i) => (
+                            <GenerationPlaceholderCard
+                              key={`pending-${i}`}
+                              kind={
+                                mode === "t2i"
+                                  ? "image"
+                                  : videoEditSource
+                                    ? "edit"
+                                    : "video"
+                              }
+                              aspect={aspect}
+                            />
+                          )
+                        )}
+                        {createGallery.map((g, i) => renderCard(g, i))}
+                      </div>
+                      {galleryHasMore && (
+                        <div className="mt-6 flex justify-center">
+                          <button
+                            type="button"
+                            disabled={galleryLoadingMore}
+                            onClick={() => void loadMoreGallery()}
+                            className="inline-flex h-10 items-center gap-1.5 rounded-full bg-card px-5 text-xs text-muted-foreground ring-1 ring-border transition hover:text-foreground disabled:opacity-60"
+                          >
+                            {galleryLoadingMore && (
+                              <Loader2 className="size-3.5 animate-spin" />
+                            )}
+                            Load more
+                          </button>
+                        </div>
                       )}
-                    >
-                      {Array.from({
-                        length: mode === "t2i" ? numOutputs : 1,
-                      }).map((_, i) => (
-                        <GenerationPlaceholderCard
-                          key={i}
-                          kind={
-                            mode === "t2i"
-                              ? "image"
-                              : videoEditSource
-                                ? "edit"
-                                : "video"
-                          }
-                          aspect={aspect}
-                        />
-                      ))}
-                    </div>
-                  ) : lastRun.length > 0 ? (
-                    /* This run stays put. It is the thing you just paid for —
-                       rating it, refining it or downloading it should not
-                       start with a search. */
-                    <div className="mx-auto w-full max-w-4xl pt-1">
-                      <div className="mb-3 flex items-center gap-2 px-1">
-                        <p className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-                          This run
-                        </p>
-                        <span className="text-[11px] text-muted-foreground">
-                          {lastRun.length}{" "}
-                          {lastRun.length === 1 ? "result" : "results"} · also
-                          saved to the Library
-                        </span>
-                        <div className="flex-1" />
-                        <button
-                          type="button"
-                          onClick={() => setLastRun([])}
-                          className="text-[11px] text-muted-foreground transition hover:text-foreground"
-                        >
-                          Clear
-                        </button>
-                      </div>
-                      <div
-                        className={cn(
-                          "grid gap-4",
-                          lastRun.length > 1
-                            ? "grid-cols-1 sm:grid-cols-2"
-                            : "grid-cols-1"
-                        )}
-                      >
-                        {lastRun.map((g, i) => renderCard(g, i))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex h-[min(52vh,420px)] flex-col items-center justify-center text-center">
-                      <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-gold-soft ring-1 ring-gold/25">
-                        {mode === "t2v" ? (
-                          <Clapperboard className="size-6 text-gold" />
-                        ) : (
-                          <ImageIcon className="size-6 text-gold" />
-                        )}
-                      </div>
-                      <p className="athar-headline">
-                        {mode === "t2v" ? "Describe a shot" : "Describe an image"}
-                      </p>
-                      <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                        Paste a prompt in the dock. Your results stay here and
-                        in the Library.
-                      </p>
-                    </div>
-                  )}
+                      </>
+                    );
+                  })()}
                 </>
               ) : (
                 <>

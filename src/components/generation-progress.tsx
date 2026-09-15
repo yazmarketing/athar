@@ -144,3 +144,106 @@ export function GenerationPlaceholderCard({
     </div>
   );
 }
+
+/**
+ * In-grid tile for a queued/running/failed job — sits next to finished
+ * images instead of a separate text list.
+ */
+export function JobPlaceholderCard({
+  kind,
+  aspect,
+  startedAtMs,
+  status,
+  prompt,
+  error,
+  cancelling,
+  onCancel,
+  onRetry,
+  onDismiss,
+}: {
+  kind: GenerationKind;
+  aspect: string;
+  startedAtMs?: number;
+  status: "queued" | "running" | "failed";
+  prompt?: string;
+  error?: string | null;
+  cancelling?: boolean;
+  onCancel?: () => void;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+}) {
+  const elapsedS = useElapsedS(startedAtMs);
+  const failed = status === "failed";
+  const label = failed
+    ? (error?.trim() || "Failed")
+    : stageLabel(kind, elapsedS);
+
+  return (
+    <div
+      className="relative w-full overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      style={{ aspectRatio: aspect.replace(":", " / ") }}
+    >
+      <div
+        className={cn(
+          "absolute inset-0",
+          failed ? "bg-secondary/80" : "animate-pulse bg-secondary"
+        )}
+      />
+      <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-2.5">
+        <span className="rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/80 backdrop-blur-sm">
+          {failed ? "Failed" : status === "queued" ? "Queued" : "Rendering"}
+        </span>
+        {failed ? (
+          <div className="flex items-center gap-1">
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-full bg-white/12 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm transition hover:bg-white/18"
+              >
+                Retry
+              </button>
+            )}
+            {onDismiss && (
+              <button
+                type="button"
+                aria-label="Dismiss"
+                onClick={onDismiss}
+                className="flex size-7 items-center justify-center rounded-full bg-black/45 text-white/70 backdrop-blur-sm transition hover:bg-black/60 hover:text-white"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        ) : (
+          onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={cancelling}
+              className="rounded-full bg-white/12 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm transition hover:bg-white/18 disabled:opacity-60"
+            >
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          )
+        )}
+      </div>
+      <div className="absolute inset-x-0 bottom-0 z-10 space-y-2 p-3">
+        {prompt && (
+          <p className="line-clamp-2 text-[12px] leading-snug text-white/80">
+            {prompt}
+          </p>
+        )}
+        <p className="text-[11px] text-white/45">
+          {failed ? label : `${label} · ${elapsedS}s`}
+        </p>
+        {!failed && (
+          <ProgressBar
+            value={easedProgress(kind, elapsedS)}
+            className="bg-white/10"
+          />
+        )}
+      </div>
+    </div>
+  );
+}

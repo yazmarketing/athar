@@ -8,6 +8,7 @@ import { ensureBrowserMp4 } from "@/lib/video-compat";
 export async function getGeneration(
   id: string
 ): Promise<GenerationRecord | null> {
+  await ensureGenerationColumns();
   const { rows } = await db().query(
     `select * from generations where id = $1 and deleted_at is null`,
     [id]
@@ -75,11 +76,31 @@ export async function ensureGenerationModes() {
 let favoriteColumnReady: Promise<void> | null = null;
 
 /**
+ * Columns later migrations added. A local/fresh database only ran
+ * `db/schema.sql`, so gallery queries and inserts fail until these exist.
+ */
+export const ensureGenerationColumns = onceProcess(async () => {
+  await db().query(`
+    alter table public.generations
+      add column if not exists deleted_at timestamptz
+  `);
+  await db().query(`
+    alter table public.generations
+      add column if not exists render_ms integer
+  `);
+  await db().query(`
+    alter table public.generations
+      add column if not exists is_favorite boolean not null default false
+  `);
+});
+
+/**
  * Lets the library page by created_at instead of sorting every generation
  * (including fat jsonb) on each GET. Best-effort — a missing column on a
  * brand-new database must not block the gallery.
  */
 export const ensureLibraryIndex = onceProcess(async () => {
+  await ensureGenerationColumns();
   await db().query(`
     create index if not exists generations_library_idx
       on public.generations (is_favorite desc, created_at desc)
@@ -135,6 +156,7 @@ export type InsertGenerationInput = {
 export async function insertGeneration(
   input: InsertGenerationInput
 ): Promise<GenerationRecord> {
+  await ensureGenerationColumns();
   const { rows } = await db().query(
     `insert into generations
        (mode, tier, model_endpoint, input_payload, final_prompt,
