@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
     ),
     primary.maxDuration || 30
   );
-  // 4K only exists on Nano Banana 2/Pro and GPT Image 2; Seedream renders it at 2K.
+  // 4K only exists on Nano Banana 2/Pro and GPT Image; Seedream renders it at 2K.
   const resolution: "1K" | "2K" | "4K" =
     body.resolution === "1K"
       ? "1K"

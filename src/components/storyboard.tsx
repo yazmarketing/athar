@@ -1150,6 +1150,24 @@ ${panels}
                   Strongest reference matching — pricier
                 </span>
               </SelectItem>
+              <SelectItem value="gpt-image-2">
+                <span className="block">GPT Image 2</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Photorealism, readable text, precise edits
+                </span>
+              </SelectItem>
+              <SelectItem value="gpt-image-2.5-flare">
+                <span className="block">GPT Image 2.5 Flare</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  GPT Image 2 quality at about half the wait
+                </span>
+              </SelectItem>
+              <SelectItem value="gpt-image-2.5-sunburst">
+                <span className="block">GPT Image 2.5 Sunburst</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  Tightest edit control — slower, premium stills
+                </span>
+              </SelectItem>
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" className="gap-1.5" onClick={copyShotList}>

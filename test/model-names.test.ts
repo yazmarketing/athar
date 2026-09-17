@@ -14,6 +14,12 @@ describe("friendlyModelName", () => {
     expect(friendlyModelName("nano-banana")).toBe("Nano Banana");
     expect(friendlyModelName("nano-banana-2")).toBe("Nano Banana 2");
     expect(friendlyModelName("openai:gpt-image-2")).toBe("GPT Image 2");
+    expect(friendlyModelName("openai:gpt-image-2.5-flare")).toBe(
+      "GPT Image 2.5 Flare"
+    );
+    expect(friendlyModelName("openai:gpt-image-2.5-sunburst")).toBe(
+      "GPT Image 2.5 Sunburst"
+    );
   });
 
   it("tidies an unknown slug instead of leaking the raw id", () => {

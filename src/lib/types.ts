@@ -67,7 +67,7 @@ export type PromptInputs = {
 export type GenerateRequest = {
   mode: Capability;
   tier: Tier;
-  /** Image provider/model override — "nano-banana" / "nano-banana-2" / "nano-banana-pro" routes to Google Gemini; "gpt-image-2" routes to OpenAI. */
+  /** Image provider/model override — "nano-banana" / "nano-banana-2" / "nano-banana-pro" routes to Google Gemini; "gpt-image-2" / "gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" routes to OpenAI. */
   imageModel?: string;
   prompt: PromptInputs;
   aspect: AspectRatio;
@@ -384,8 +384,9 @@ export type StoryboardRecord = {
   reference_style: ReferenceStyleFingerprint | null;
   /**
    * Which engine renders the frames: null/"seedream" for the tiered Seedream
-   * registry, or a Google image model id ("nano-banana" / "nano-banana-pro" —
-   * the latter holds style across references best).
+   * registry, a Google image model id ("nano-banana" / "nano-banana-pro"),
+   * or an OpenAI image model id ("gpt-image-2" / "gpt-image-2.5-flare" /
+   * "gpt-image-2.5-sunburst").
    */
   image_model: string | null;
   created_by: string | null;

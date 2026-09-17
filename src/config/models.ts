@@ -5,7 +5,7 @@
  * Never hardcode model IDs in components or routes; always resolve through here.
  *
  * Provider strategy: BytePlus ModelArk (Seedream / Seedance) for the core
- * studio, plus Google Gemini and OpenAI GPT Image 2 for stills.
+ * studio, plus Google Gemini and OpenAI GPT Image for stills.
  *
  * Verify BytePlus model IDs in the ModelArk console (they carry version
  * suffixes like seedream-5-0-pro-260628) before wiring.
@@ -452,16 +452,20 @@ export function googleAllows4K(id: GoogleImageModelId | null): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI GPT Image 2 — priced per image (token-billed; estimates below)
+// OpenAI GPT Image — priced per image (token-billed; estimates below)
 // ---------------------------------------------------------------------------
 
-export type OpenAIImageModelId = "gpt-image-2";
+export type OpenAIImageModelId =
+  | "gpt-image-2"
+  | "gpt-image-2.5-flare"
+  | "gpt-image-2.5-sunburst";
 
 /**
  * OpenAI still models the studio can route to.
  *
- * `defaultSlug` is the published API id; OPENAI_IMAGE_MODEL can override it
- * without a deploy (see lib/openai-image-server.ts).
+ * `defaultSlug` is the published API id. OPENAI_IMAGE_MODEL /
+ * OPENAI_IMAGE_FLARE_MODEL / OPENAI_IMAGE_SUNBURST_MODEL can override a
+ * slug without a deploy (see lib/openai-image-server.ts).
  */
 export const OPENAI_IMAGE_MODELS: Record<
   OpenAIImageModelId,
@@ -488,6 +492,29 @@ export const OPENAI_IMAGE_MODELS: Record<
     notes:
       "OpenAI GPT Image 2 — photorealism, readable text, instruction-following edits, 1K/2K/4K",
   },
+  "gpt-image-2.5-flare": {
+    label: "GPT Image 2.5 Flare",
+    defaultSlug: "gpt-image-2.5-flare",
+    // Same token rates as GPT Image 2 ($5 text in / $8 image in /
+    // $30 image out per 1M). Flare is faster; estimates stay the GPT
+    // Image 2 planner until OpenAI publishes 2.5-specific token counts.
+    costPerImage: 0.211,
+    costPerImage2K: 0.35,
+    costPerImage4K: 0.5,
+    maxReferenceImages: 16,
+    notes:
+      "OpenAI GPT Image 2.5 Flare — higher quality than GPT Image 2 at ~50% lower latency, 1K/2K/4K, transparent backgrounds",
+  },
+  "gpt-image-2.5-sunburst": {
+    label: "GPT Image 2.5 Sunburst",
+    defaultSlug: "gpt-image-2.5-sunburst",
+    costPerImage: 0.211,
+    costPerImage2K: 0.35,
+    costPerImage4K: 0.5,
+    maxReferenceImages: 16,
+    notes:
+      "OpenAI GPT Image 2.5 Sunburst — premium edits and tighter subject control, 1K/2K/4K, transparent backgrounds",
+  },
 };
 
 export function asOpenAIImageModel(
@@ -513,7 +540,7 @@ export function openaiAllows4K(id: OpenAIImageModelId | null): boolean {
   return id != null && OPENAI_IMAGE_MODELS[id].costPerImage4K != null;
 }
 
-/** 4K exists on Nano Banana 2/Pro and GPT Image 2. */
+/** 4K exists on Nano Banana 2/Pro and GPT Image 2 / 2.5. */
 export function imageAllows4K(id: string | null | undefined): boolean {
   const google = asGoogleImageModel(id);
   if (google) return googleAllows4K(google);
@@ -526,8 +553,8 @@ export function imageAllows4K(id: string | null | undefined): boolean {
  * How many reference images one request may carry.
  *
  * Seedream fuses up to 8; Nano Banana 2 and Pro hold consistency across 14;
- * GPT Image 2 accepts 16. The dock and the API agree on this number so the
- * UI never accepts an image the request would silently drop.
+ * GPT Image 2 / 2.5 accept 16. The dock and the API agree on this number so
+ * the UI never accepts an image the request would silently drop.
  */
 export const MAX_REFERENCE_IMAGES = 8;
 
@@ -663,6 +690,32 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
     bestFor:
       "photorealism, readable on-image text, precise instruction-following edits, and brand stills fused from many references (up to 16)",
   },
+  {
+    id: "gpt-image-2.5-flare",
+    label: OPENAI_IMAGE_MODELS["gpt-image-2.5-flare"].label,
+    slug: OPENAI_IMAGE_MODELS["gpt-image-2.5-flare"].defaultSlug,
+    provider: "openai",
+    tier: null,
+    imageModel: "gpt-image-2.5-flare",
+    maxReferenceImages:
+      OPENAI_IMAGE_MODELS["gpt-image-2.5-flare"].maxReferenceImages,
+    resolutions: ["1K", "2K", "4K"],
+    bestFor:
+      "everyday stills that need GPT Image 2 quality at about half the wait — product shots, social, rapid iteration, and many-reference edits (up to 16)",
+  },
+  {
+    id: "gpt-image-2.5-sunburst",
+    label: OPENAI_IMAGE_MODELS["gpt-image-2.5-sunburst"].label,
+    slug: OPENAI_IMAGE_MODELS["gpt-image-2.5-sunburst"].defaultSlug,
+    provider: "openai",
+    tier: null,
+    imageModel: "gpt-image-2.5-sunburst",
+    maxReferenceImages:
+      OPENAI_IMAGE_MODELS["gpt-image-2.5-sunburst"].maxReferenceImages,
+    resolutions: ["1K", "2K", "4K"],
+    bestFor:
+      "premium campaign and product imagery where edit precision and subject preservation matter more than speed",
+  },
 ];
 
 export const DEFAULT_IMAGE_MODEL_ID = "standard";
@@ -722,6 +775,8 @@ export function imageModelIdFromEndpoint(
     return /pro/i.test(slug) ? "nano-pro" : "nano";
   }
   if (/^openai:/i.test(endpoint ?? "") || /^gpt-image/i.test(slug)) {
+    if (/2\.5-sunburst/i.test(slug)) return "gpt-image-2.5-sunburst";
+    if (/2\.5-flare/i.test(slug)) return "gpt-image-2.5-flare";
     return "gpt-image-2";
   }
   return imageModelIdFrom(tier);
@@ -869,6 +924,8 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-3-pro-image": "Nano Banana Pro",
   "nano-banana-pro": "Nano Banana Pro",
   "gpt-image-2": "GPT Image 2",
+  "gpt-image-2.5-flare": "GPT Image 2.5 Flare",
+  "gpt-image-2.5-sunburst": "GPT Image 2.5 Sunburst",
   "whisper-1": "Whisper",
   "faseeh-v1-preview": "Athar Voice",
 };

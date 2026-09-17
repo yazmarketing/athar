@@ -34,6 +34,8 @@ describe("maxReferenceImages", () => {
     expect(maxReferenceImages("nano-banana-2")).toBe(14);
     expect(maxReferenceImages("nano-banana")).toBe(MAX_REFERENCE_IMAGES);
     expect(maxReferenceImages("gpt-image-2")).toBe(16);
+    expect(maxReferenceImages("gpt-image-2.5-flare")).toBe(16);
+    expect(maxReferenceImages("gpt-image-2.5-sunburst")).toBe(16);
     expect(maxReferenceImages("seedream")).toBe(MAX_REFERENCE_IMAGES);
     expect(maxReferenceImages(null)).toBe(MAX_REFERENCE_IMAGES);
   });
@@ -97,5 +99,11 @@ describe("Google model registry", () => {
       "Nano Banana 2"
     );
     expect(friendlyModelName("openai:gpt-image-2")).toBe("GPT Image 2");
+    expect(friendlyModelName("openai:gpt-image-2.5-flare")).toBe(
+      "GPT Image 2.5 Flare"
+    );
+    expect(friendlyModelName("openai:gpt-image-2.5-sunburst")).toBe(
+      "GPT Image 2.5 Sunburst"
+    );
   });
 });

@@ -5,20 +5,36 @@ import { isAspectRatio, openaiSizeFor } from "@/config/aspects";
 import type { AspectRatio } from "@/lib/types";
 
 /**
- * OpenAI GPT Image 2 — text-to-image and image edits. SERVER ONLY.
+ * OpenAI GPT Image — text-to-image and image edits. SERVER ONLY.
  * Key from OPENAI_API_KEY (the same one chat/Whisper already use).
  * Returns a data URI so it flows through persistDataUriImage like Gemini.
  *
  * Docs: https://developers.openai.com/api/docs/models/gpt-image-2
+ *       https://developers.openai.com/api/docs/models/gpt-image-2.5-flare
+ *       https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst
  */
 
 const OPENAI_BASE = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
 
+/**
+ * Published ids, overridable per model without a deploy — same pattern as
+ * Gemini's NANO_BANANA_*_MODEL env knobs.
+ */
 export const GPT_IMAGE_2_MODEL =
   process.env.OPENAI_IMAGE_MODEL?.trim() ||
   OPENAI_IMAGE_MODELS["gpt-image-2"].defaultSlug;
 
-export function openaiImageSlug(_id: OpenAIImageModelId = "gpt-image-2"): string {
+export const GPT_IMAGE_25_FLARE_MODEL =
+  process.env.OPENAI_IMAGE_FLARE_MODEL?.trim() ||
+  OPENAI_IMAGE_MODELS["gpt-image-2.5-flare"].defaultSlug;
+
+export const GPT_IMAGE_25_SUNBURST_MODEL =
+  process.env.OPENAI_IMAGE_SUNBURST_MODEL?.trim() ||
+  OPENAI_IMAGE_MODELS["gpt-image-2.5-sunburst"].defaultSlug;
+
+export function openaiImageSlug(id: OpenAIImageModelId = "gpt-image-2"): string {
+  if (id === "gpt-image-2.5-flare") return GPT_IMAGE_25_FLARE_MODEL;
+  if (id === "gpt-image-2.5-sunburst") return GPT_IMAGE_25_SUNBURST_MODEL;
   return GPT_IMAGE_2_MODEL;
 }
 
@@ -57,7 +73,7 @@ async function urlToBlob(url: string): Promise<Blob> {
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.byteLength > 25_000_000) {
     throw new Error(
-      "Reference image is too large for GPT Image 2 (max about 25MB). Compress the PNG and retry."
+      "Reference image is too large for OpenAI image models (max about 25MB). Compress the PNG and retry."
     );
   }
   const mimeType = res.headers.get("content-type") ?? "image/png";

@@ -28,6 +28,8 @@ describe("the image-model list", () => {
     expect(ids).toContain("nano-2");
     expect(ids).toContain("nano-pro");
     expect(ids).toContain("gpt-image-2");
+    expect(ids).toContain("gpt-image-2.5-flare");
+    expect(ids).toContain("gpt-image-2.5-sunburst");
   });
 
   it("gives every choice a usable request shape", () => {
@@ -61,7 +63,13 @@ describe("the image-model list", () => {
   });
 
   it("charges more for 4K than 2K on models that offer it", () => {
-    for (const id of ["nano-2", "nano-pro", "gpt-image-2"] as const) {
+    for (const id of [
+      "nano-2",
+      "nano-pro",
+      "gpt-image-2",
+      "gpt-image-2.5-flare",
+      "gpt-image-2.5-sunburst",
+    ] as const) {
       const at2K = imageModelCost(id, "2K", 1);
       const at4K = imageModelCost(id, "4K", 1);
       expect(at4K).toBeGreaterThan(at2K as number);
@@ -121,7 +129,7 @@ describe("recovering the model from a stored generation", () => {
     );
   });
 
-  it("reads an OpenAI endpoint back to GPT Image 2, not a tier", () => {
+  it("reads an OpenAI endpoint back to its GPT Image model, not a tier", () => {
     expect(
       imageModelIdFromEndpoint(
         `openai:${OPENAI_IMAGE_MODELS["gpt-image-2"].defaultSlug}`,
@@ -131,6 +139,27 @@ describe("recovering the model from a stored generation", () => {
     expect(imageModelIdFromEndpoint("openai:gpt-image-2-2026-04-21", "hero")).toBe(
       "gpt-image-2"
     );
+    expect(
+      imageModelIdFromEndpoint(
+        `openai:${OPENAI_IMAGE_MODELS["gpt-image-2.5-flare"].defaultSlug}`,
+        "standard"
+      )
+    ).toBe("gpt-image-2.5-flare");
+    expect(
+      imageModelIdFromEndpoint("openai:gpt-image-2.5-flare-2026-09-08", "hero")
+    ).toBe("gpt-image-2.5-flare");
+    expect(
+      imageModelIdFromEndpoint(
+        `openai:${OPENAI_IMAGE_MODELS["gpt-image-2.5-sunburst"].defaultSlug}`,
+        "standard"
+      )
+    ).toBe("gpt-image-2.5-sunburst");
+    expect(
+      imageModelIdFromEndpoint(
+        "openai:gpt-image-2.5-sunburst-2026-09-08",
+        "hero"
+      )
+    ).toBe("gpt-image-2.5-sunburst");
   });
 
   it("falls back to the default for anything unknown", () => {
