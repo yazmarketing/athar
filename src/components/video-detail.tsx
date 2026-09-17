@@ -23,6 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MediaDetailNav } from "@/components/media-detail-nav";
 import { ShareDialog, ShareOption } from "@/components/share-dialog";
 import { GenerationRating } from "@/components/generation-rating";
 import { cn } from "@/lib/utils";
@@ -58,6 +59,10 @@ type Props = {
     g: GenerationRecord,
     projectId: string | null
   ) => Promise<void>;
+  /** Gallery prev/next — omitted when this item isn't in the current list. */
+  showNav?: boolean;
+  onPrevious?: () => void;
+  onNext?: () => void;
 };
 
 /** "4.2s" / "1m 18s" — render time, omitted when it wasn't recorded. */
@@ -93,6 +98,9 @@ export function VideoDetail({
   projects = [],
   clients = [],
   onMoveToProject,
+  showNav,
+  onPrevious,
+  onNext,
 }: Props) {
   const [favorited, setFavorited] = useState(Boolean(g.is_favorite));
   const [busy, setBusy] = useState(false);
@@ -188,6 +196,10 @@ export function VideoDetail({
     setPrevKey(genKey);
     setFavorited(Boolean(g.is_favorite));
   }
+
+  useEffect(() => {
+    setShareOpen(false);
+  }, [g.id]);
 
   const toggleFavorite = async () => {
     if (busy) return;
@@ -295,6 +307,11 @@ export function VideoDetail({
         ) : (
           <p className="text-sm text-muted-foreground">No video</p>
         )}
+        <MediaDetailNav
+          show={showNav}
+          onPrevious={onPrevious}
+          onNext={onNext}
+        />
       </div>
 
       {/* Right panel */}

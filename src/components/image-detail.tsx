@@ -29,6 +29,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MediaDetailNav } from "@/components/media-detail-nav";
 import { ShareDialog, ShareOption } from "@/components/share-dialog";
 import { GenerationRating } from "@/components/generation-rating";
 import { cn } from "@/lib/utils";
@@ -88,6 +89,10 @@ type Props = {
     g: GenerationRecord,
     projectId: string | null
   ) => Promise<void>;
+  /** Gallery prev/next — omitted when this item isn't in the current list. */
+  showNav?: boolean;
+  onPrevious?: () => void;
+  onNext?: () => void;
 };
 
 function promptInputs(g: GenerationRecord): PromptInputs | null {
@@ -173,6 +178,9 @@ export function ImageDetail({
   projects = [],
   clients = [],
   onMoveToProject,
+  showNav,
+  onPrevious,
+  onNext,
 }: Props) {
   const [shareOpen, setShareOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
@@ -277,6 +285,13 @@ export function ImageDetail({
   }, [g.id, g.is_favorite]);
 
   useEffect(() => {
+    setDownloadOpen(false);
+    setConfirmBgOpen(false);
+    setNewProjectOpen(false);
+    setShareOpen(false);
+  }, [g.id]);
+
+  useEffect(() => {
     if (!downloadOpen) return;
     const onPointer = (e: MouseEvent) => {
       if (
@@ -376,6 +391,7 @@ export function ImageDetail({
         {imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
+            key={g.id}
             src={imageUrl}
             alt={g.final_prompt}
             className="max-h-[52vh] max-w-full rounded-lg object-contain shadow-2xl md:max-h-[85vh]"
@@ -383,6 +399,11 @@ export function ImageDetail({
         ) : (
           <p className="text-sm text-muted-foreground">No image</p>
         )}
+        <MediaDetailNav
+          show={showNav}
+          onPrevious={onPrevious}
+          onNext={onNext}
+        />
       </div>
 
       {/* Right panel */}

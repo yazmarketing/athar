@@ -1489,6 +1489,15 @@ export function Studio() {
     });
   }, [filtered, libraryVoices, libraryTranscripts, typeFilter, query, sortOrder]);
 
+  /** Image/video renders in the same order as the visible grid, for overlay prev/next. */
+  const browseQueue = useMemo((): GenerationRecord[] => {
+    const ready = (g: GenerationRecord) => Boolean(g.output_url);
+    if (view === "create") return createGallery.filter(ready);
+    return libraryEntries.flatMap((entry) =>
+      entry.kind === "render" && ready(entry.data) ? [entry.data] : []
+    );
+  }, [view, createGallery, libraryEntries]);
+
 
   const submit = useCallback(
     async (
@@ -2005,6 +2014,21 @@ export function Studio() {
     setVideoDetailTarget(null);
     setDetailTarget(g);
     void hydrateGeneration(g.id, "image");
+  };
+
+  const detailNavFor = (currentId: string) => {
+    const i = browseQueue.findIndex((g) => g.id === currentId);
+    if (i < 0 || browseQueue.length < 2) {
+      return { showNav: false as const };
+    }
+    return {
+      showNav: true as const,
+      onPrevious: i > 0 ? () => openDetail(browseQueue[i - 1]) : undefined,
+      onNext:
+        i < browseQueue.length - 1
+          ? () => openDetail(browseQueue[i + 1])
+          : undefined,
+    };
   };
 
   /**
@@ -3667,6 +3691,7 @@ export function Studio() {
             }
             generation={detailTarget}
             onClose={() => setDetailTarget(null)}
+            {...detailNavFor(detailTarget.id)}
             onEdit={openEdit}
             onVary={openVary}
             onReuse={reuseGeneration}
@@ -3767,6 +3792,7 @@ export function Studio() {
             }
             generation={videoDetailTarget}
             onClose={() => setVideoDetailTarget(null)}
+            {...detailNavFor(videoDetailTarget.id)}
             onReuse={reuseGeneration}
             onUsePrompt={(g) => {
               const inputs = promptInputsOf(g);
