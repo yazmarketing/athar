@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ShieldCheck, X, Boxes } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export function moveItem<T>(list: T[], from: number, to: number): T[] {
   if (
@@ -62,15 +67,6 @@ export function SortableThumbs({
   itemsRef.current = items;
   const onReorderRef = useRef(onReorder);
   onReorderRef.current = onReorder;
-
-  useEffect(() => {
-    if (!viewing) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setViewing(null);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [viewing]);
 
   const indexFromPoint = (x: number, y: number) => {
     for (const [id, el] of nodes.current) {
@@ -200,42 +196,35 @@ export function SortableThumbs({
         ))}
       </div>
 
-      {viewing && (
-        <div
-          className="dark fixed inset-0 z-[80] flex items-center justify-center bg-black/90 p-6 text-foreground backdrop-blur-sm"
-          onClick={() => setViewing(null)}
-        >
-          <button
-            type="button"
-            aria-label="Close"
-            className="absolute top-4 right-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
-            onClick={() => setViewing(null)}
-          >
-            <X className="size-5" />
-          </button>
-          {viewing.previewUrl ? (
+      <Dialog
+        open={viewing != null}
+        onOpenChange={(open) => {
+          if (!open) setViewing(null);
+        }}
+      >
+        <DialogContent className="dark z-[70] w-[min(32rem,calc(100vw-2rem))] max-w-lg gap-3 overflow-hidden border-white/10 bg-[#161616] p-3 text-foreground ring-white/10 sm:max-w-lg">
+          <DialogTitle className="pr-8 text-sm font-medium">
+            {viewing?.alt ?? "Reference"}
+          </DialogTitle>
+          {viewing?.previewUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={viewing.previewUrl}
               alt={viewing.alt}
-              className="max-h-[88vh] max-w-full rounded-lg object-contain shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
+              className="max-h-[min(70vh,36rem)] w-full rounded-lg bg-black/40 object-contain"
             />
           ) : (
-            <div
-              className="flex flex-col items-center gap-3 text-center"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <span className="flex size-20 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-white/10">
-                <ShieldCheck className="size-8 text-gold" />
+            <div className="flex flex-col items-center gap-3 py-10 text-center">
+              <span className="flex size-16 items-center justify-center rounded-2xl bg-white/5 ring-1 ring-white/10">
+                <ShieldCheck className="size-7 text-gold" />
               </span>
               <p className="text-sm text-muted-foreground">
                 Preview isn&apos;t ready yet
               </p>
             </div>
           )}
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
