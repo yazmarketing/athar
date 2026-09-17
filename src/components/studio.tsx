@@ -91,6 +91,7 @@ import {
 } from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
 import { VideoDetail } from "@/components/video-detail";
+import { SortableThumbs, moveItem } from "@/components/sortable-thumbs";
 import {
   GenerationPlaceholderCard,
   JobPlaceholderCard,
@@ -5162,43 +5163,23 @@ export function Studio() {
               {!composerCollapsed && mode === "t2v" && videoSources.length > 0 && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <div className="flex max-w-[60%] flex-wrap items-center gap-1.5">
-                    {videoSources.map((s, i) => {
-                      const preview = attachedPreview(s.url);
-                      return (
-                      <div key={`${s.url}-${i}`} className="relative">
-                        {preview ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={preview}
-                            alt={`Attached image ${i + 1}`}
-                            className="size-11 rounded-lg object-cover ring-1 ring-white/10"
-                          />
-                        ) : (
-                          <span
-                            title={s.url}
-                            className="flex size-11 items-center justify-center rounded-lg bg-white/5 ring-1 ring-gold/30"
-                          >
-                            <ShieldCheck className="size-4 text-gold" />
-                          </span>
-                        )}
-                        <span className="pointer-events-none absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[9px] leading-4 text-white">
-                          {i + 1}
-                        </span>
-                        <button
-                          type="button"
-                          aria-label={`Remove image ${i + 1}`}
-                          onClick={() =>
-                            setVideoSources((prev) =>
-                              prev.filter((_, idx) => idx !== i)
-                            )
-                          }
-                          className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full bg-foreground text-background shadow transition hover:scale-110"
-                        >
-                          <X className="size-2.5" />
-                        </button>
-                      </div>
-                      );
-                    })}
+                    <SortableThumbs
+                      items={videoSources.map((s, i) => ({
+                        id: s.url,
+                        previewUrl: attachedPreview(s.url),
+                        alt: s.url.startsWith("asset://")
+                          ? `Verified face ${i + 1}`
+                          : `Reference ${i + 1}`,
+                      }))}
+                      onReorder={(from, to) =>
+                        setVideoSources((prev) => moveItem(prev, from, to))
+                      }
+                      onRemove={(i) =>
+                        setVideoSources((prev) =>
+                          prev.filter((_, idx) => idx !== i)
+                        )
+                      }
+                    />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">
@@ -5213,7 +5194,7 @@ export function Studio() {
                         ? videoSources[0].url.startsWith("asset://")
                           ? "Real-person asset — refer to it as “Image 1” in the prompt"
                           : "Image → video (Seedance animates this still)"
-                        : "Seedance blends these subjects into the clip"}
+                        : "Drag to reorder · Seedance blends these subjects into the clip"}
                     </p>
                   </div>
                   <button
@@ -5300,49 +5281,23 @@ export function Studio() {
 
               {mode === "t2i" && referenceUrls.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-2 px-1">
-                  {referenceUrls.map((url, refIndex) => (
-                    <div
-                      key={url}
-                      title={referenceNames[url] ?? `Image ${refIndex + 1}`}
-                      className="group relative size-12 overflow-hidden rounded-lg border border-white/10 bg-black/40"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={url}
-                        alt="Reference"
-                        className="size-full object-cover"
-                      />
-                      {/* The number is the whole point of the badge: it is what
-                          you type after @ to tag this image in the prompt. */}
-                      <span className="pointer-events-none absolute top-0.5 left-0.5 rounded bg-black/70 px-1 font-mono text-[9px] leading-4 text-white">
-                        {refIndex + 1}
-                      </span>
-                      <div className="absolute inset-0 flex items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
-                        <button
-                          type="button"
-                          aria-label="Save to library"
-                          title="Save to library"
-                          onClick={() => openSaveReference(url)}
-                          className="flex size-6 items-center justify-center rounded-md bg-white/15 text-white transition hover:bg-white/30"
-                        >
-                          <Boxes className="size-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label="Remove reference"
-                          title="Remove"
-                          onClick={() =>
-                            setReferenceUrls((prev) =>
-                              prev.filter((u) => u !== url)
-                            )
-                          }
-                          className="flex size-6 items-center justify-center rounded-md bg-white/15 text-white transition hover:bg-white/30"
-                        >
-                          <X className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                  <SortableThumbs
+                    sizeClassName="size-12"
+                    items={referenceUrls.map((url, i) => ({
+                      id: url,
+                      previewUrl: url,
+                      alt: referenceNames[url] ?? `Image ${i + 1}`,
+                    }))}
+                    onReorder={(from, to) =>
+                      setReferenceUrls((prev) => moveItem(prev, from, to))
+                    }
+                    onRemove={(i) =>
+                      setReferenceUrls((prev) =>
+                        prev.filter((_, idx) => idx !== i)
+                      )
+                    }
+                    onSave={(i) => openSaveReference(referenceUrls[i])}
+                  />
                 </div>
               )}
 
