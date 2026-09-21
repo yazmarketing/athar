@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { inferOutputSettings } from "@/lib/prompt-output";
+import {
+  inferOutputSettings,
+  lockPromptAspect,
+  resolveGenerateAspect,
+} from "@/lib/prompt-output";
 
 const LIWA = `
 SCENE CONTEXT
@@ -79,5 +83,47 @@ describe("inferOutputSettings", () => {
 
   it("does not treat a single 5s mention as clip length", () => {
     expect(inferOutputSettings("hold for 5s then cut").durationS).toBeUndefined();
+  });
+
+  it("keeps 16:9 when the prompt names it and only mentions ultra-wide to avoid it", () => {
+    const prompt = `
+Reference exception: recompose for a 16:9 frame.
+framed for 16:9 with the horizontal field tighter than an ultra-wide.
+OUTPUT SETTINGS
+Aspect ratio 16:9, 8K resolution, full colour output.
+POSITIVE LOCKS
+The frame stays 16:9 for the entire take.
+`;
+    expect(inferOutputSettings(prompt).aspect).toBe("16:9");
+    expect(resolveGenerateAspect("16:9", prompt)).toBe("16:9");
+  });
+});
+
+describe("resolveGenerateAspect", () => {
+  it("keeps the dock ratio even when the prompt names a different one", () => {
+    expect(
+      resolveGenerateAspect("16:9", "OUTPUT SETTINGS 21:9 ultrawide, 16:9 mentioned")
+    ).toBe("16:9");
+    expect(resolveGenerateAspect("16:9", "shot vertical 9:16")).toBe("16:9");
+  });
+
+  it("falls back to the prompt, then 16:9, when the request has no ratio", () => {
+    expect(resolveGenerateAspect(undefined, "OUTPUT SETTINGS 9:16")).toBe("9:16");
+    expect(resolveGenerateAspect("not-a-ratio", "a camel on a dune")).toBe("16:9");
+  });
+});
+
+describe("lockPromptAspect", () => {
+  it("pins 16:9 at the end and bans ultrawide", () => {
+    const out = lockPromptAspect("a man in a field", "low quality", "16:9");
+    expect(out.finalPrompt).toMatch(/16:9 aspect ratio/);
+    expect(out.negativePrompt).toMatch(/21:9/);
+    expect(out.negativePrompt).toMatch(/anamorphic/);
+  });
+
+  it("does not ban 21:9 when that is the requested frame", () => {
+    const out = lockPromptAspect("cinemascope hero", "", "21:9");
+    expect(out.finalPrompt).toMatch(/21:9 aspect ratio/);
+    expect(out.negativePrompt).not.toMatch(/21:9/);
   });
 });

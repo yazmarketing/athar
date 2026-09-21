@@ -4,6 +4,7 @@ import {
   arkCreateVideoTask,
   type ArkVideoRequest,
 } from "@/lib/byteplus-server";
+import { fitVideoRequestFirstFrame } from "@/lib/fit-video-first-frame";
 import { resolveModel, seedanceRealCost, type Tier } from "@/config/models";
 import { ASPECT_TO_VIDEO_RATIO, isAspectRatio } from "@/config/aspects";
 import {
@@ -128,7 +129,8 @@ export async function submitVideoJob(jobId: string): Promise<void> {
   const job = await claimJobForSubmit(jobId);
   if (!job) return; // already submitted, or someone else is submitting it
   try {
-    const { taskId } = await arkCreateVideoTask(videoRequestForJob(job));
+    const req = await fitVideoRequestFirstFrame(videoRequestForJob(job));
+    const { taskId } = await arkCreateVideoTask(req);
     await attachProviderTask(job.id, taskId);
     // Cancelled while we were talking to Seedance — drop the paid task.
     const latest = await getJob(job.id);

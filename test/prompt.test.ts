@@ -91,6 +91,8 @@ describe("buildPrompt", () => {
     });
     expect(finalPrompt).toContain("film grain");
     expect(finalPrompt).toContain("cinematic film still");
+    // Anamorphic is a 2.39:1 / 21:9 cue — it must not ride along on 16:9 shots.
+    expect(finalPrompt).not.toMatch(/anamorphic/i);
   });
 
   it("Studio product look adds no grain", () => {

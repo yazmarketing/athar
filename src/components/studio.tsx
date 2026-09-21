@@ -348,6 +348,10 @@ export function Studio() {
   const [saveStyleTokens, setSaveStyleTokens] = useState("");
   const [savingStyle, setSavingStyle] = useState(false);
   const [aspect, setAspect] = useState<AspectRatio>("16:9");
+  // Last ratio inferred from the prompt. We only move the chip when this
+  // *changes* (a pasted 9:16 director block), so a manual 16:9 pick survives
+  // further typing in a prompt that still mentions another ratio.
+  const lastInferredAspect = useRef<AspectRatio | undefined>(undefined);
   // 1K by default — cheaper and quicker; 2K/4K are a deliberate choice.
   const [resolution, setResolution] = useState<ImageResolution>("1K");
   const [numOutputs, setNumOutputs] = useState(1);
@@ -817,12 +821,17 @@ export function Studio() {
   };
 
   // Keep the ratio chip in step with a director prompt that already names
-  // it ("9:16 vertical"). Duration stays whatever the dock chip is set to —
-  // camera timestamps in the prompt are direction for the model, not a
-  // length override.
+  // it ("9:16 vertical"). Only update when the inferred ratio *changes*, so
+  // picking 16:9 by hand is not undone by the next keystroke. Duration stays
+  // on the dock chip — camera timestamps are direction, not a length override.
   useEffect(() => {
     const inferred = inferOutputSettings(subject);
-    if (inferred.aspect) setAspect(inferred.aspect);
+    if (inferred.aspect && inferred.aspect !== lastInferredAspect.current) {
+      lastInferredAspect.current = inferred.aspect;
+      setAspect(inferred.aspect);
+    } else if (!inferred.aspect) {
+      lastInferredAspect.current = undefined;
+    }
   }, [subject]);
 
   useEffect(() => {
@@ -1531,16 +1540,8 @@ export function Studio() {
       const activeVideoSources = opts.sourceImages ?? videoSources;
       const activeVideoEditSource =
         opts.sourceVideo !== undefined ? opts.sourceVideo : videoEditSource;
-      const inferred = inferOutputSettings(
-        [prompt.subject, prompt.action, prompt.lighting]
-          .filter(Boolean)
-          .join("\n")
-      );
-      const sendAspect = inferred.aspect ?? aspect;
+      const sendAspect = aspect;
       const sendDuration = opts.durationS ?? durationS;
-      if (inferred.aspect && inferred.aspect !== aspect) {
-        setAspect(inferred.aspect);
-      }
       try {
         const res = await postFetch("/api/generate", {
           method: "POST",

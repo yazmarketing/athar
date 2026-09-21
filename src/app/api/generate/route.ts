@@ -6,7 +6,11 @@ import { imageJobModelEndpoint, submitImageJob } from "@/lib/image-jobs";
 import { submitVideoJob } from "@/lib/video-jobs";
 import { projectExists } from "@/lib/projects";
 import { buildPrompt } from "@/lib/prompt";
-import { inferOutputSettings } from "@/lib/prompt-output";
+import {
+  inferOutputSettings,
+  lockPromptAspect,
+  resolveGenerateAspect,
+} from "@/lib/prompt-output";
 import {
   resolveModel,
   asGoogleImageModel,
@@ -81,16 +85,19 @@ export async function POST(req: NextRequest) {
 
   const mode = body.mode;
   const tier = body.tier ?? "draft";
-  // Director prompts name the frame in the text ("9:16 vertical"); the dock
-  // defaults to 16:9, so honour the prompt when it is explicit.
-  // Duration is the opposite: the dock chip is what the person picked, so it
-  // wins over camera timestamps in the prompt (`0.0s to 10.0s`).
-  const inferred = inferOutputSettings(
-    [body.prompt.subject, body.prompt.action, body.prompt.lighting]
-      .filter(Boolean)
-      .join("\n")
-  );
-  const aspect = inferred.aspect ?? body.aspect ?? "16:9";
+  // Dock chip wins. Inference only fills in a missing/invalid aspect — the
+  // studio already mirrors director-prompt ratios onto the chip as you type,
+  // so a later "21:9" token must not override a 16:9 the person just picked.
+  // Duration stays the same rule: the chip beats camera timestamps.
+  const promptText = [
+    body.prompt.subject,
+    body.prompt.action,
+    body.prompt.lighting,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const inferred = inferOutputSettings(promptText);
+  const aspect = resolveGenerateAspect(body.aspect, promptText);
   const numOutputs = Math.min(body.numOutputs ?? 1, mode === "t2v" ? 2 : 4);
   const baseSeed = body.seed ?? Math.floor(Math.random() * 2 ** 31);
   // Nano Banana Pro and GPT Image 2 hold consistency across more references
@@ -105,7 +112,12 @@ export async function POST(req: NextRequest) {
     .filter(Boolean)
     .slice(0, maxReferenceImages(routedImageModel));
 
-  const { finalPrompt, negativePrompt } = buildPrompt(body.prompt);
+  const built = buildPrompt(body.prompt);
+  const { finalPrompt, negativePrompt } = lockPromptAspect(
+    built.finalPrompt,
+    built.negativePrompt,
+    aspect
+  );
   // Prefer Seedream standard+ for edits (better i2i than draft / fal)
   const editTier = referenceUrls.length > 0 && tier === "draft" ? "standard" : tier;
   const primary = resolveModel(mode, editTier);

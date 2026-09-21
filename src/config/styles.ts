@@ -32,7 +32,7 @@ export const STYLE_PRESETS: StylePreset[] = [
     label: "Cinematic",
     description: "Moody, colour-graded, film-like. Campaign hero shots.",
     positive:
-      "cinematic film still, shallow depth of field, dramatic directional lighting, colour graded, subtle 35mm film grain, anamorphic",
+      "cinematic film still, shallow depth of field, dramatic directional lighting, colour graded, subtle 35mm film grain",
   },
   {
     id: "studio_product",

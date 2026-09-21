@@ -1,17 +1,16 @@
 import type { AspectRatio } from "@/lib/types";
-import { ASPECT_RATIOS } from "@/config/aspects";
+import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
 
 /**
  * Pull output format out of a director-style prompt.
  *
- * Seedance's `ratio` field is what actually sizes the frame — "shot vertical"
- * in the text is ignored when the dock is still on 16:9. These prompts usually
- * name the format in an OUTPUT SETTINGS block; we read that so the request
- * matches what the person wrote.
+ * Used to keep the dock chip in step as someone pastes a director prompt
+ * ("OUTPUT SETTINGS 9:16 vertical"). The chip they last picked is what
+ * generate sends — inference must not override a manual 16:9 with a 21:9
+ * token hiding later in the text, which is how ultrawide frames leaked out.
  *
  * Duration is inferred only as a fallback when the request omits `durationS`.
- * The dock chip is the source of truth; camera timestamps (`0.0s to 10.0s`)
- * stay in the prompt as direction for the model.
+ * Camera timestamps (`0.0s to 10.0s`) stay in the prompt as direction.
  */
 
 export type InferredOutputSettings = {
@@ -117,4 +116,47 @@ export function inferOutputSettings(text: string): InferredOutputSettings {
     aspect: lastRatioToken(trimmed) ?? orientationAspect(trimmed),
     durationS: inferDuration(trimmed),
   };
+}
+
+/**
+ * The aspect the request asked for wins. Prompt text is only a fallback when
+ * the caller sent nothing (or junk) — same rule as duration.
+ */
+export function resolveGenerateAspect(
+  requested: string | null | undefined,
+  promptText: string
+): AspectRatio {
+  if (isAspectRatio(requested)) return requested;
+  return inferOutputSettings(promptText).aspect ?? "16:9";
+}
+
+const ULTRAWIDE = new Set<AspectRatio>(["21:9", "9:21"]);
+
+/**
+ * Models (especially Gemini cinematic prompts) follow frame language in the
+ * text more than the API size field. Pin the chosen ratio at the end, and
+ * ban 21:9 when the dock is anything else so "anamorphic" / "cinematic"
+ * cannot reopen an ultrawide frame.
+ */
+export function lockPromptAspect(
+  finalPrompt: string,
+  negativePrompt: string,
+  aspect: AspectRatio
+): { finalPrompt: string; negativePrompt: string } {
+  const lock = `Output exactly ${aspect} aspect ratio. Fill the entire ${aspect} frame.`;
+  const lockedPrompt = finalPrompt.includes(lock)
+    ? finalPrompt
+    : `${finalPrompt}. ${lock}`;
+
+  if (ULTRAWIDE.has(aspect)) {
+    return { finalPrompt: lockedPrompt, negativePrompt };
+  }
+
+  const ban =
+    "21:9, 9:21, ultrawide, ultra-wide, anamorphic 2.39, cinemascope letterbox";
+  const lockedNegative = negativePrompt.includes("21:9, 9:21, ultrawide")
+    ? negativePrompt
+    : [negativePrompt, ban].filter(Boolean).join(", ");
+
+  return { finalPrompt: lockedPrompt, negativePrompt: lockedNegative };
 }

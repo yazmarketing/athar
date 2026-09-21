@@ -89,7 +89,16 @@ async function callGemini(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        ...(imageConfig ? { generationConfig: { imageConfig } } : {}),
+        ...(imageConfig
+          ? {
+              generationConfig: {
+                // Without this, Gemini 3 image models often ignore imageConfig
+                // and fall back to a cinematic 21:9 frame.
+                responseModalities: ["TEXT", "IMAGE"],
+                imageConfig,
+              },
+            }
+          : {}),
       }),
     }
   );
@@ -129,8 +138,8 @@ export async function geminiGenerateImage(opts: {
   }
 
   // Size/aspect are only sent when asked for. Gemini rejects the whole request
-  // on an unknown generationConfig field, so a rejected imageConfig is retried
-  // once without it rather than failing a render the model could have done.
+  // on an unknown generationConfig field. Drop size first (keep the aspect),
+  // then drop the config entirely — never lose 16:9 on the first 400.
   const imageConfig: ImageConfig | null =
     opts.imageSize || opts.aspectRatio
       ? {
@@ -142,8 +151,28 @@ export async function geminiGenerateImage(opts: {
   let res = await callGemini(key, model, parts, imageConfig);
   if (!res.ok && imageConfig && res.status === 400) {
     const detail = await errorDetail(res);
-    if (/image_?config|image_?size|aspect_?ratio/i.test(detail)) {
-      res = await callGemini(key, model, parts, null);
+    if (/image_?config|image_?size|aspect_?ratio|response_?modalit/i.test(detail)) {
+      const aspectOnly =
+        imageConfig.imageSize && imageConfig.aspectRatio
+          ? { aspectRatio: imageConfig.aspectRatio }
+          : null;
+      if (aspectOnly) {
+        res = await callGemini(key, model, parts, aspectOnly);
+        if (!res.ok && res.status === 400) {
+          const retryDetail = await errorDetail(res);
+          if (
+            /image_?config|image_?size|aspect_?ratio|response_?modalit/i.test(
+              retryDetail
+            )
+          ) {
+            res = await callGemini(key, model, parts, null);
+          } else {
+            throw new Error(`Gemini ${400}: ${retryDetail.slice(0, 300)}`);
+          }
+        }
+      } else {
+        res = await callGemini(key, model, parts, null);
+      }
     } else {
       throw new Error(`Gemini ${400}: ${detail.slice(0, 300)}`);
     }
