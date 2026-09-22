@@ -26,6 +26,21 @@ export function needsAspectCrop(
   return Math.abs(src - dst) / dst > epsilon;
 }
 
+function evenSize(
+  srcW: number,
+  srcH: number,
+  width: number,
+  height: number
+): { width: number; height: number } | null {
+  width = Math.max(2, width - (width % 2));
+  height = Math.max(2, height - (height % 2));
+  if (width > srcW) width = srcW - (srcW % 2);
+  if (height > srcH) height = srcH - (srcH % 2);
+  if (width < 2 || height < 2) return null;
+  if (width === srcW && height === srcH) return null;
+  return { width, height };
+}
+
 /** Pixel crop that keeps the source's shorter side. Even edges for ffmpeg. */
 export function centerCropForAspect(
   srcW: number,
@@ -45,11 +60,24 @@ export function centerCropForAspect(
     width = srcW;
     height = Math.round(srcW / dstAR);
   }
-  width = Math.max(2, width - (width % 2));
-  height = Math.max(2, height - (height % 2));
-  if (width > srcW) width = srcW - (srcW % 2);
-  if (height > srcH) height = srcH - (srcH % 2);
-  if (width < 2 || height < 2) return null;
-  if (width === srcW && height === srcH) return null;
-  return { width, height };
+  return evenSize(srcW, srcH, width, height);
+}
+
+/**
+ * Seedance (and CreateAsset) reject stills outside ~0.39–2.50. Trim the
+ * smallest strip that lands inside [minAR, maxAR].
+ */
+export function centerCropToAspectRange(
+  srcW: number,
+  srcH: number,
+  minAR: number,
+  maxAR: number
+): { width: number; height: number } | null {
+  if (srcW < 2 || srcH < 2 || minAR <= 0 || maxAR < minAR) return null;
+  const ar = srcW / srcH;
+  if (ar >= minAR && ar <= maxAR) return null;
+  if (ar > maxAR) {
+    return evenSize(srcW, srcH, Math.round(srcH * maxAR), srcH);
+  }
+  return evenSize(srcW, srcH, srcW, Math.round(srcW / minAR));
 }

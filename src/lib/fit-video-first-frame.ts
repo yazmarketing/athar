@@ -8,8 +8,10 @@ import { promisify } from "node:util";
 import ffmpegStatic from "ffmpeg-static";
 import { uploadPublicObject } from "@/lib/storage";
 import type { ArkVideoRequest } from "@/lib/byteplus-server";
+import { ASSET_MAX_AR, ASSET_MIN_AR } from "@/lib/byteplus-asset-size";
 import {
   centerCropForAspect,
+  centerCropToAspectRange,
   parseAspect,
 } from "@/lib/crop-to-aspect";
 
@@ -32,20 +34,38 @@ function isFirstFrameRequest(req: ArkVideoRequest): boolean {
   );
 }
 
+function cropForImage(
+  srcW: number,
+  srcH: number,
+  ratio: string,
+  firstFrame: boolean
+): { width: number; height: number } | null {
+  if (firstFrame) {
+    const parsed = parseAspect(ratio);
+    if (parsed) {
+      const dock = centerCropForAspect(srcW, srcH, parsed.w, parsed.h);
+      if (dock) return dock;
+    }
+  }
+  // Reference stills keep their own frame, but Seedance 2.5 rejects anything
+  // outside 0.39–2.50 (the 3.30 panoramic / EXIF-unrotated phone photo).
+  return centerCropToAspectRange(srcW, srcH, ASSET_MIN_AR, ASSET_MAX_AR);
+}
+
 /**
- * Center-crop a still so it matches `aspect` (e.g. "16:9"), then re-upload.
- * No-op when ffmpeg is missing or the source is already that ratio.
+ * Center-crop a still so Seedance will accept it, then re-upload.
+ * No-op when ffmpeg is missing or the source is already in range.
  */
 export async function publishFittedFrameImage(
   sourceUrl: string,
-  aspect: string
+  aspect: string,
+  firstFrame = true
 ): Promise<string> {
-  const parsed = parseAspect(aspect);
-  if (!parsed || !ffmpegStatic) return sourceUrl;
+  if (!ffmpegStatic) return sourceUrl;
 
   const res = await fetch(sourceUrl);
   if (!res.ok) {
-    throw new Error(`Could not read the first-frame image (${res.status})`);
+    throw new Error(`Could not read the attached image (${res.status})`);
   }
   const input = Buffer.from(await res.arrayBuffer());
   const dir = await mkdtemp(join(tmpdir(), "athar-frame-"));
@@ -69,7 +89,7 @@ export async function publishFittedFrameImage(
     }
     const size = parseVideoSize(probe);
     if (!size) return sourceUrl;
-    const crop = centerCropForAspect(size.width, size.height, parsed.w, parsed.h);
+    const crop = cropForImage(size.width, size.height, aspect, firstFrame);
     if (!crop) return sourceUrl;
 
     await execFileAsync(
@@ -103,16 +123,25 @@ export async function publishFittedFrameImage(
 }
 
 /**
- * First-frame Seedance tasks inherit the still's aspect. Crop a 21:9 (or
- * other) still to the requested ratio before submit so the clip is 16:9
- * when the dock says 16:9.
+ * Make every attached still legal for Seedance before submit.
+ *
+ * One image (first frame) is cropped to the dock ratio, because output
+ * follows that still. Several images are references: keep their frame, but
+ * clamp anything outside 0.39–2.50 so ModelArk does not reject the download.
  */
 export async function fitVideoRequestFirstFrame(
   req: ArkVideoRequest
 ): Promise<ArkVideoRequest> {
-  if (!isFirstFrameRequest(req)) return req;
-  const source = req.imageUrls![0];
-  const fitted = await publishFittedFrameImage(source, req.ratio);
-  if (fitted === source) return req;
-  return { ...req, imageUrls: [fitted] };
+  const images = req.imageUrls ?? [];
+  if (!images.length) return req;
+  const firstFrame = isFirstFrameRequest(req);
+  const fitted = await Promise.all(
+    images.map((url) =>
+      url.startsWith("asset://")
+        ? url
+        : publishFittedFrameImage(url, req.ratio, firstFrame)
+    )
+  );
+  if (fitted.every((url, i) => url === images[i])) return req;
+  return { ...req, imageUrls: fitted };
 }
