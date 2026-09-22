@@ -4,6 +4,7 @@ import {
   centerCropToAspectRange,
   needsAspectCrop,
   parseAspect,
+  readRasterSize,
 } from "@/lib/crop-to-aspect";
 
 describe("crop-to-aspect", () => {
@@ -51,5 +52,21 @@ describe("crop-to-aspect", () => {
 
   it("leaves a 9:16 still inside the Seedance window alone", () => {
     expect(centerCropToAspectRange(1080, 1920, 0.4, 2.5)).toBeNull();
+  });
+
+  it("crops the 1024×310 ferris-wheel panorama that Seedance rejected as 3.30", () => {
+    expect(1024 / 310).toBeCloseTo(3.3, 2);
+    const crop = centerCropToAspectRange(1024, 310, 0.4, 2.5);
+    expect(crop).not.toBeNull();
+    expect(crop!.width / crop!.height).toBeLessThanOrEqual(2.5);
+    expect(crop!.height).toBe(310);
+  });
+
+  it("reads PNG size from the IHDR", () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    expect(readRasterSize(png)).toEqual({ width: 1, height: 1 });
   });
 });

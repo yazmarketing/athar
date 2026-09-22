@@ -52,7 +52,7 @@ const nextConfig: NextConfig = {
 
   // Keep native/binary packages out of the route bundle so Turbopack does
   // not trace process.cwd() / spawnSync as "the whole project".
-  serverExternalPackages: ["youtubei.js", "youtube-dl-exec"],
+  serverExternalPackages: ["youtubei.js", "youtube-dl-exec", "ffmpeg-static"],
 
   // Don't advertise the framework/version to attackers.
   poweredByHeader: false,

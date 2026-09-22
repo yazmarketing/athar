@@ -13,6 +13,7 @@ import {
   centerCropForAspect,
   centerCropToAspectRange,
   parseAspect,
+  readRasterSize,
 } from "@/lib/crop-to-aspect";
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +22,10 @@ function parseVideoSize(stderr: string): { width: number; height: number } | nul
   const m = stderr.match(/Video:.*?\b(\d{2,5})x(\d{2,5})\b/);
   if (!m) return null;
   return { width: Number(m[1]), height: Number(m[2]) };
+}
+
+function ffmpegBin(): string | null {
+  return ffmpegStatic || null;
 }
 
 function isFirstFrameRequest(req: ArkVideoRequest): boolean {
@@ -47,53 +52,76 @@ function cropForImage(
       if (dock) return dock;
     }
   }
-  // Reference stills keep their own frame, but Seedance 2.5 rejects anything
-  // outside 0.39–2.50 (the 3.30 panoramic / EXIF-unrotated phone photo).
   return centerCropToAspectRange(srcW, srcH, ASSET_MIN_AR, ASSET_MAX_AR);
+}
+
+function extFor(bytes: Uint8Array): "jpg" | "png" | "webp" {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50) return "png";
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.slice(0, 4)) === "RIFF"
+  ) {
+    return "webp";
+  }
+  return "jpg";
 }
 
 /**
  * Center-crop a still so Seedance will accept it, then re-upload.
- * No-op when ffmpeg is missing or the source is already in range.
+ * Reads JPEG/PNG headers when ffmpeg cannot probe, and never sends an
+ * out-of-range original through "just in case".
  */
 export async function publishFittedFrameImage(
   sourceUrl: string,
   aspect: string,
   firstFrame = true
 ): Promise<string> {
-  if (!ffmpegStatic) return sourceUrl;
-
   const res = await fetch(sourceUrl);
   if (!res.ok) {
     throw new Error(`Could not read the attached image (${res.status})`);
   }
   const input = Buffer.from(await res.arrayBuffer());
+  const headerSize = readRasterSize(input);
+  const bin = ffmpegBin();
+
+  let probed: { width: number; height: number } | null = headerSize;
   const dir = await mkdtemp(join(tmpdir(), "athar-frame-"));
-  const srcPath = join(dir, "in.jpg");
+  const srcPath = join(dir, `in.${extFor(input)}`);
   const outPath = join(dir, "out.jpg");
   try {
     await writeFile(srcPath, input);
-    let probe = "";
-    try {
-      const ran = await execFileAsync(
-        ffmpegStatic,
-        ["-hide_banner", "-i", srcPath],
-        { timeout: 20_000, maxBuffer: 2_000_000 }
-      );
-      probe = String(ran.stderr ?? "");
-    } catch (err) {
-      probe =
-        err && typeof err === "object" && "stderr" in err
-          ? String((err as { stderr: unknown }).stderr ?? "")
-          : "";
+    if (bin) {
+      let probe = "";
+      try {
+        const ran = await execFileAsync(bin, ["-hide_banner", "-i", srcPath], {
+          timeout: 20_000,
+          maxBuffer: 2_000_000,
+        });
+        probe = String(ran.stderr ?? "");
+      } catch (err) {
+        probe =
+          err && typeof err === "object" && "stderr" in err
+            ? String((err as { stderr: unknown }).stderr ?? "")
+            : "";
+      }
+      probed = parseVideoSize(probe) ?? probed;
     }
-    const size = parseVideoSize(probe);
-    if (!size) return sourceUrl;
-    const crop = cropForImage(size.width, size.height, aspect, firstFrame);
+
+    if (!probed) {
+      throw new Error(
+        "Could not read the attached still's size, so it was not sent to Seedance"
+      );
+    }
+    const crop = cropForImage(probed.width, probed.height, aspect, firstFrame);
     if (!crop) return sourceUrl;
+    if (!bin) {
+      throw new Error(
+        `Attached still is ${probed.width}×${probed.height} (aspect ${(probed.width / probed.height).toFixed(2)}). Seedance only accepts 0.39–2.50.`
+      );
+    }
 
     await execFileAsync(
-      ffmpegStatic,
+      bin,
       [
         "-y",
         "-hide_banner",

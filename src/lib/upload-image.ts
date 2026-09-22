@@ -4,7 +4,8 @@ import {
   IMAGE_UPLOAD_MAX_BYTES,
   IMAGE_UPLOAD_TYPES,
 } from "@/lib/image-upload-limits";
-import { fitAssetSize } from "@/lib/byteplus-asset-size";
+import { ASSET_MAX_AR, ASSET_MIN_AR, fitAssetSize } from "@/lib/byteplus-asset-size";
+import { centerCropToAspectRange } from "@/lib/crop-to-aspect";
 
 /** Longest edge after shrinking a huge PNG so models can actually use it. */
 const MAX_EDGE = 4096;
@@ -91,6 +92,49 @@ export async function prepareVerifiedFaceImage(file: File): Promise<File> {
   }
 }
 
+/**
+ * Seedance rejects stills outside 0.39–2.50. A 1024×310 panorama (3.30)
+ * used to upload as-is and fail every video job. Crop here so the stored
+ * URL is already legal, even if server-side ffmpeg never runs.
+ */
+async function clampToSeedanceAspect(file: File): Promise<File> {
+  if (typeof createImageBitmap !== "function") return file;
+  const bitmap = await createImageBitmap(file);
+  try {
+    const crop = centerCropToAspectRange(
+      bitmap.width,
+      bitmap.height,
+      ASSET_MIN_AR,
+      ASSET_MAX_AR
+    );
+    if (!crop) return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = crop.width;
+    canvas.height = crop.height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(
+      bitmap,
+      (bitmap.width - crop.width) / 2,
+      (bitmap.height - crop.height) / 2,
+      crop.width,
+      crop.height,
+      0,
+      0,
+      crop.width,
+      crop.height
+    );
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+    if (!blob) return file;
+    const name = file.name.replace(/\.[^.]+$/, "") || "still";
+    return new File([blob], `${name}.jpg`, { type: "image/jpeg" });
+  } finally {
+    bitmap.close();
+  }
+}
+
 /** PUT the file to a Spaces presigned URL. Same headers the URL was signed with. */
 function putToSpace(url: string, file: File): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -132,6 +176,7 @@ async function uploadViaApp(file: File): Promise<string> {
 export async function uploadImageFile(file: File): Promise<string> {
   assertImageFile(file);
   file = await compressIfNeeded(file);
+  file = await clampToSeedanceAspect(file);
   if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
     throw new Error("Image must be 32MB or smaller");
   }
