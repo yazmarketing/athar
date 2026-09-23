@@ -16,6 +16,7 @@ import {
   Clock,
   Cpu,
   Film,
+  FolderKanban,
   Gem,
   Heart,
   HelpCircle,
@@ -90,6 +91,7 @@ import {
   type UpscaleSource,
 } from "@/components/upscale-dialog";
 import { UsagePanel } from "@/components/usage-panel";
+import { ClientProjectsWorkspace } from "@/components/client-projects-workspace";
 import { VideoDetail } from "@/components/video-detail";
 import { SortableThumbs, moveItem } from "@/components/sortable-thumbs";
 import {
@@ -319,7 +321,8 @@ type View =
   | "storyboard"
   | "transcribe"
   | "tts"
-  | "team";
+  | "team"
+  | "clients";
 
 function isVideo(g: GenerationRecord) {
   return (
@@ -3911,6 +3914,7 @@ export function Studio() {
           {navBtn(view === "tts", () => setView("tts"), <Mic className="size-4" />, "Voice", "tts")}
           {navBtn(view === "transcribe", () => setView("transcribe"), <AudioLines className="size-4" />, "Transcribe", "transcribe")}
           <p className="px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Workspace</p>
+          {navBtn(view === "clients", () => setView("clients"), <FolderKanban className="size-4" />, "Clients & projects")}
           {navBtn(view === "library", () => setView("library"), <Library className="size-4" />, "Library", "library")}
           {navBtn(view === "assets", () => setView("assets"), <Boxes className="size-4" />, "Brand assets", "assets")}
           {isManagement && navBtn(view === "usage", () => setView("usage"), <BarChart3 className="size-4" />, "Usage & cost", "usage")}
@@ -4422,6 +4426,21 @@ export function Studio() {
               />
             </div>
           </>
+        )}
+
+        {view === "clients" && (
+          <ClientProjectsWorkspace
+            clients={clients}
+            projects={projects}
+            activeClientId={activeClientId}
+            activeProjectId={activeProjectId}
+            onClientsChange={setClients}
+            onProjectsChange={setProjects}
+            onActiveClientChange={onActiveClientChange}
+            onActiveProjectChange={setActiveProjectId}
+            onOpenLibrary={() => setView("library")}
+            onOpenCreate={() => setView("create")}
+          />
         )}
 
         {view === "orchestrate" && (
