@@ -1,7 +1,13 @@
 import "server-only";
 import { db, onceProcess } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
-import { createAsset } from "@/lib/byteplus-assets";
+import {
+  ASSET_LIBRARY_LIMIT,
+  createAsset,
+  deleteAsset,
+  listAssets,
+  oldestVerifiedAsset,
+} from "@/lib/byteplus-assets";
 import { publishFittedAssetImage } from "@/lib/fit-byteplus-asset-image";
 
 export type AssetRegistrationRecord = {
@@ -136,6 +142,20 @@ export async function processAssetRegistration(
   row: AssetRegistrationRecord,
   audit?: { userId: string; userEmail: string | null }
 ): Promise<void> {
+  const previous = registrationQueue.atharAssetRegistrationQueue ?? Promise.resolve();
+  const current = previous.then(() => processAssetRegistrationSerial(row, audit));
+  registrationQueue.atharAssetRegistrationQueue = current.catch(() => undefined);
+  await current;
+}
+
+const registrationQueue = globalThis as typeof globalThis & {
+  atharAssetRegistrationQueue?: Promise<void>;
+};
+
+async function processAssetRegistrationSerial(
+  row: AssetRegistrationRecord,
+  audit?: { userId: string; userEmail: string | null }
+): Promise<void> {
   const groupId = row.group_id;
   if (!groupId) {
     await markRegistrationFailed(row.id, "Missing asset group");
@@ -147,6 +167,29 @@ export async function processAssetRegistration(
       url = await publishFittedAssetImage(row.image_url);
     } catch (err) {
       console.error("Could not resize asset photo before BytePlus:", err);
+    }
+    const existing = await listAssets(groupId, { timeoutMs: 12_000 });
+    if (existing.length >= ASSET_LIBRARY_LIMIT) {
+      const rotating = oldestVerifiedAsset(existing);
+      if (!rotating) {
+        throw new Error(
+          "The BytePlus asset library is full, but no verified asset is available to rotate yet. Wait for verification and retry."
+        );
+      }
+      await deleteAsset(rotating.Id);
+      await logAudit({
+        userId: audit?.userId ?? row.created_by,
+        userEmail: audit?.userEmail ?? null,
+        action: "asset_auto_rotate",
+        subjectType: "asset",
+        subjectId: rotating.Id,
+        meta: {
+          reason: "provider_limit",
+          limit: ASSET_LIBRARY_LIMIT,
+          removed_name: rotating.Name ?? null,
+          replacement_registration_id: row.id,
+        },
+      });
     }
     const asset = await createAsset({
       groupId,

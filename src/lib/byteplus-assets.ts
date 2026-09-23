@@ -172,6 +172,25 @@ export type AssetRecord = {
   CreateTime?: string;
 };
 
+export const ASSET_LIBRARY_LIMIT = 50;
+
+/**
+ * The provider returns newest-first in normal operation. Prefer the earliest
+ * valid creation time; if old records have no timestamp, rotate the final
+ * verified item in the returned list. Processing assets are never removed.
+ */
+export function oldestVerifiedAsset(
+  items: AssetRecord[]
+): AssetRecord | null {
+  const active = items.filter((item) => item.Status === "Active");
+  if (!active.length) return null;
+  const dated = active
+    .map((item) => ({ item, time: Date.parse(item.CreateTime ?? "") }))
+    .filter((entry) => Number.isFinite(entry.time))
+    .sort((a, b) => a.time - b.time);
+  return dated[0]?.item ?? active[active.length - 1] ?? null;
+}
+
 const assetCache = globalThis as typeof globalThis & {
   atharBytePlusAssets?: AssetRecord[];
 };
@@ -285,6 +304,11 @@ export async function listAssets(
 export async function deleteAsset(id: string): Promise<void> {
   await assetsCall<Record<string, never>>("DeleteAsset", { Id: id });
   imageUrlById.delete(id);
+  if (assetCache.atharBytePlusAssets) {
+    assetCache.atharBytePlusAssets = assetCache.atharBytePlusAssets.filter(
+      (item) => item.Id !== id
+    );
+  }
 }
 
 /**

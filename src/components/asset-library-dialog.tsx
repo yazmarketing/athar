@@ -476,7 +476,8 @@ export function AssetLibraryDialog({
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   Real-person photos are moderated by BytePlus. Once the
                   status turns Active, the asset can be attached to any
-                  video.
+                  video. The current plan holds 50 verified assets; adding the
+                  next one automatically removes the oldest verified asset.
                 </p>
               </div>
             </div>
