@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Building2,
   FolderKanban,
+  GitMerge,
   Images,
   Loader2,
   Pencil,
@@ -24,6 +25,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { RenameDialog } from "@/components/rename-dialog";
 import { cn } from "@/lib/utils";
 import type { ClientRecord, ProjectRecord } from "@/lib/types";
@@ -39,6 +47,12 @@ type Props = {
   onActiveProjectChange: (id: string | null) => void;
   onOpenLibrary: () => void;
   onOpenCreate: () => void;
+};
+
+type MergeIntent = {
+  kind: "client" | "project";
+  sourceId: string;
+  sourceName: string;
 };
 
 function formatDate(value: string) {
@@ -72,6 +86,9 @@ export function ClientProjectsWorkspace({
   const [newClientName, setNewClientName] = useState("");
   const [newProjectName, setNewProjectName] = useState("");
   const [saving, setSaving] = useState(false);
+  const [mergeIntent, setMergeIntent] = useState<MergeIntent | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState("");
+  const [merging, setMerging] = useState(false);
 
   const activeClient = clients.find((client) => client.id === activeClientId) ?? null;
   const activeProject = projects.find((project) => project.id === activeProjectId) ?? null;
@@ -224,6 +241,84 @@ export function ClientProjectsWorkspace({
     }
   }
 
+  const mergeCandidates = mergeIntent?.kind === "client"
+    ? clients.filter((client) => client.id !== mergeIntent.sourceId)
+    : projects.filter(
+        (project) =>
+          project.id !== mergeIntent?.sourceId && !project.archived_at
+      );
+
+  function openMerge(intent: MergeIntent) {
+    setMergeTargetId("");
+    setMergeIntent(intent);
+  }
+
+  async function runMerge(event: React.FormEvent) {
+    event.preventDefault();
+    if (!mergeIntent || !mergeTargetId) return;
+    setMerging(true);
+    try {
+      const response = await fetch(
+        `/api/${mergeIntent.kind === "client" ? "clients" : "projects"}/${mergeIntent.sourceId}/merge`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetId: mergeTargetId }),
+        }
+      );
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? "Merge failed");
+
+      if (mergeIntent.kind === "client") {
+        const source = clients.find((client) => client.id === mergeIntent.sourceId);
+        onClientsChange(
+          clients
+            .filter((client) => client.id !== mergeIntent.sourceId)
+            .map((client) =>
+              client.id === mergeTargetId
+                ? {
+                    ...client,
+                    project_count:
+                      (client.project_count ?? 0) + (source?.project_count ?? 0),
+                    brand_kit_count:
+                      (client.brand_kit_count ?? 0) + (source?.brand_kit_count ?? 0),
+                  }
+                : client
+            )
+        );
+        onProjectsChange([]);
+        onActiveClientChange(mergeTargetId);
+      } else {
+        const source = projects.find((project) => project.id === mergeIntent.sourceId);
+        onProjectsChange(
+          projects
+            .filter((project) => project.id !== mergeIntent.sourceId)
+            .map((project) =>
+              project.id === mergeTargetId
+                ? {
+                    ...project,
+                    generation_count:
+                      (project.generation_count ?? 0) +
+                      (source?.generation_count ?? 0),
+                  }
+                : project
+            )
+        );
+        onActiveProjectChange(mergeTargetId);
+      }
+
+      setMergeIntent(null);
+      setMergeTargetId("");
+      toast.success(
+        `Merged successfully · ${Number(json.summary?.totalMoved ?? 0)} linked records moved`
+      );
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Merge failed");
+    } finally {
+      setMerging(false);
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex flex-wrap items-end justify-between gap-4 px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
@@ -306,6 +401,17 @@ export function ClientProjectsWorkspace({
                     >
                       <Pencil className="size-3.5" />
                     </button>
+                    {clients.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => openMerge({ kind: "client", sourceId: activeClient.id, sourceName: activeClient.name })}
+                        className="rounded-md p-1.5 text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                        aria-label={`Merge ${activeClient.name} into another client`}
+                        title="Merge client"
+                      >
+                        <GitMerge className="size-3.5" />
+                      </button>
+                    )}
                   </div>
                   <p className="text-xs text-muted-foreground">Projects for this client only</p>
                 </div>
@@ -390,6 +496,17 @@ export function ClientProjectsWorkspace({
                                 </button>
                               </>
                             )}
+                            {projects.some((item) => item.id !== project.id && !item.archived_at) && (
+                              <button
+                                type="button"
+                                onClick={() => openMerge({ kind: "project", sourceId: project.id, sourceName: project.name })}
+                                className={cn("rounded-lg p-2 text-muted-foreground hover:bg-white/5 hover:text-foreground", archived && "ml-auto")}
+                                aria-label={`Merge ${project.name} into another project`}
+                                title="Merge project"
+                              >
+                                <GitMerge className="size-3.5" />
+                              </button>
+                            )}
                             <button type="button" onClick={() => void setArchived(project, !archived)} className={cn("rounded-lg p-2 text-muted-foreground hover:bg-white/5 hover:text-foreground", archived && "ml-auto")} aria-label={archived ? `Restore ${project.name}` : `Archive ${project.name}`}>
                               {archived ? <RotateCcw className="size-3.5" /> : <Archive className="size-3.5" />}
                             </button>
@@ -470,6 +587,60 @@ export function ClientProjectsWorkspace({
             <Input value={newProjectName} onChange={(event) => setNewProjectName(event.target.value)} placeholder="Campaign or project name" autoFocus required />
             <Button type="submit" disabled={saving || !newProjectName.trim() || !activeClient} className="w-full bg-gold text-primary-foreground hover:bg-gold/90">
               {saving ? <><Loader2 className="size-4 animate-spin" /> Creating…</> : "Create project"}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(mergeIntent)}
+        onOpenChange={(open) => {
+          if (!open && !merging) {
+            setMergeIntent(null);
+            setMergeTargetId("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Merge {mergeIntent?.kind === "client" ? "client" : "project"}
+            </DialogTitle>
+            <DialogDescription>
+              Everything linked to “{mergeIntent?.sourceName}” will move to the destination. The source will then be permanently removed.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={runMerge} className="space-y-4">
+            <div className="rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3 text-xs leading-relaxed text-amber-100/80">
+              This cannot be undone. Athar performs the move as one transaction, so a failed merge leaves both records unchanged.
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground">
+                Merge “{mergeIntent?.sourceName}” into
+              </label>
+              <Select value={mergeTargetId} onValueChange={setMergeTargetId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={`Choose destination ${mergeIntent?.kind ?? "record"}`} />
+                </SelectTrigger>
+                <SelectContent>
+                  {mergeCandidates.map((candidate) => (
+                    <SelectItem key={candidate.id} value={candidate.id}>
+                      {candidate.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button
+              type="submit"
+              disabled={!mergeTargetId || merging}
+              className="w-full bg-gold text-primary-foreground hover:bg-gold/90"
+            >
+              {merging ? (
+                <><Loader2 className="size-4 animate-spin" /> Merging…</>
+              ) : (
+                <><GitMerge className="size-4" /> Merge into destination</>
+              )}
             </Button>
           </form>
         </DialogContent>
