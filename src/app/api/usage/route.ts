@@ -207,13 +207,16 @@ export async function GET(req: NextRequest) {
 
     let byProject: unknown[] = [];
     try {
+      // Both sides of this join have a created_at column. Qualify the ledger
+      // timestamp so Postgres does not reject the otherwise valid aggregate.
+      const projectRange = IN_RANGE.replaceAll("created_at", "c.created_at");
       const sql = `
         with combined as (${COMBINED})
         select coalesce(p.name, 'No project') as label,
                coalesce(sum(c.cost), 0)::float as cost, count(*)::int as count
         from combined c
         left join projects p on p.id = c.project_id
-        where ${IN_RANGE}
+        where ${projectRange}
         group by 1 order by cost desc limit 12
       `;
       byProject = (await pool.query(sql, [from, to])).rows;

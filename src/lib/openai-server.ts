@@ -1,6 +1,6 @@
 import "server-only";
 
-/** Shared server client. Astra uses Responses; explicitly selected legacy
+/** Shared server client. Current reasoning models use Responses; legacy
  * chat models keep their compatible endpoint. Model access errors surface
  * unchanged: this layer never silently chooses another model. */
 export function openaiConfigured(): boolean {
@@ -8,7 +8,7 @@ export function openaiConfigured(): boolean {
 }
 
 export function openaiModel(): string {
-  return process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-6-astra";
+  return process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-6-sol";
 }
 
 export type OpenAIContent =

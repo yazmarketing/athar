@@ -21,12 +21,12 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("OpenAI Responses client", () => {
-  it("defaults to Astra with Responses fields and reasoning headroom", async () => {
+  it("defaults to Sol with Responses fields and reasoning headroom", async () => {
     fetchMock.mockResolvedValue(reply("A shot plan"));
-    expect(openaiModel()).toBe("gpt-6-astra");
+    expect(openaiModel()).toBe("gpt-6-sol");
     expect(await openaiChat({ messages: [{ role: "user", content: "Plan" }], maxTokens: 400, temperature: 0.7 })).toBe("A shot plan");
     expect(fetchMock.mock.calls[0][0]).toBe("https://example.test/v1/responses");
-    expect(payload()).toMatchObject({ model: "gpt-6-astra", max_output_tokens: 6400, reasoning: { effort: "medium" }, store: false });
+    expect(payload()).toMatchObject({ model: "gpt-6-sol", max_output_tokens: 6400, reasoning: { effort: "medium" }, store: false });
     expect(payload()).not.toHaveProperty("temperature");
     expect(payload()).not.toHaveProperty("messages");
   });
@@ -73,7 +73,7 @@ describe("OpenAI Responses client", () => {
   });
 });
 
-describe("Astra vision callers", () => {
+describe("OpenAI vision callers", () => {
   it("sends image candidates through Responses with JSON output", async () => {
     fetchMock.mockResolvedValue(reply('{"scores":[{"index":0,"score":91,"reason":"Clear and faithful"}]}'));
     expect(await openaiScoreImages({ prompt: "A product", imageUrls: ["https://example.test/product.png"] })).toHaveLength(1);

@@ -1327,21 +1327,6 @@ export function Studio() {
     [videoJobs]
   );
 
-  // ⌘K/Ctrl+K focuses Home's search — the badge next to it promised a
-  // shortcut that never actually did anything.
-  const homeSearchRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
-        if (view !== "home") return;
-        e.preventDefault();
-        homeSearchRef.current?.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view]);
-
   // Restore in-flight / recently failed video renders after a refresh
   useEffect(() => {
     void (async () => {
@@ -1626,19 +1611,6 @@ export function Studio() {
     const extras = lastRun.filter((g) => match(g) && !seen.has(g.id));
     return [...extras, ...fromLib];
   }, [generations, lastRun, mode]);
-
-  // Home has its own simple search; a previous Library type/favourite filter
-  // must not make recent work disappear without a visible filter control.
-  const homeCreations = useMemo(() => {
-    if (!generations) return null;
-    const text = query.trim().toLowerCase();
-    return generations.filter((generation) =>
-      Boolean(generation.output_url) && (!text ||
-        generation.final_prompt.toLowerCase().includes(text) ||
-        generation.mode.toLowerCase().includes(text) ||
-        generation.model_endpoint.toLowerCase().includes(text))
-    );
-  }, [generations, query]);
 
   /**
    * Library's own view of the world — renders plus voice-overs and
@@ -4298,33 +4270,11 @@ export function Studio() {
           <StudioHome
             firstName={firstName}
             clientName={activeClient?.name}
-            projectName={activeProject?.name}
-            searchRef={homeSearchRef}
-            query={query}
-            onQueryChange={setQuery}
             onRecipe={openRecipe}
-            onVideoModel={(nextTier) => { openTool("t2v"); setTier(nextTier); }}
-            onClearProject={() => setActiveProjectId(null)}
             onOpen={(destination) => {
               if (destination === "t2i" || destination === "t2v") openTool(destination);
               else setView(destination);
             }}
-            recentContent={
-              homeCreations === null || galleryLoading ? galleryLoader : homeCreations.length === 0 ? (
-                <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
-                  <Images className="mb-3 size-6 text-muted-foreground" />
-                  <p className="text-sm font-medium">{query.trim() ? "No matching creations" : "Your next idea starts here"}</p>
-                  <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">{query.trim() ? "Try another phrase or explore your full library." : "Start with a video, image, or reference. Your finished creations will appear here."}</p>
-                  <Button variant="outline" className="mt-5 rounded-lg text-xs" onClick={() => query.trim() ? setQuery("") : openTool("t2v")}>
-                    {query.trim() ? "Clear search" : "Create a video"}
-                  </Button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {homeCreations.slice(0, 6).map((generation, index) => renderCard(generation, index, false))}
-                </div>
-              )
-            }
             progressContent={
               activeVideoJobs.length > 0 && (
               <div className="mx-auto mt-10 max-w-6xl">
