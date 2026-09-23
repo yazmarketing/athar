@@ -5,7 +5,7 @@ import {
   type ArkVideoRequest,
 } from "@/lib/byteplus-server";
 import { fitVideoRequestFirstFrame } from "@/lib/fit-video-first-frame";
-import { resolveModel, seedanceRealCost, type Tier } from "@/config/models";
+import { resolveModel, seedanceRealCost, SEEDANCE_PRICING_VERSION, type Tier } from "@/config/models";
 import { ASPECT_TO_VIDEO_RATIO, isAspectRatio } from "@/config/aspects";
 import {
   ensureGenerationModes,
@@ -240,6 +240,10 @@ export async function finalizeVideoJob(
       userId: job.user_id,
       projectId: job.project_id,
       brandKitId: job.brand_kit_id,
+      providerTokens: usage?.total_tokens ?? usage?.completion_tokens ?? null,
+      resolution: input.videoResolution ?? "720p",
+      hasVideoInput,
+      pricingVersion: SEEDANCE_PRICING_VERSION,
       // Video renders are async, so the real elapsed time is from when the
       // job was queued to now — not a single request round-trip.
       renderMs: job.created_at

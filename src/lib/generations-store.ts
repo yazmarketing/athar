@@ -92,6 +92,13 @@ export const ensureGenerationColumns = onceProcess(async () => {
     alter table public.generations
       add column if not exists is_favorite boolean not null default false
   `);
+  await db().query(`
+    alter table public.generations
+      add column if not exists provider_tokens integer,
+      add column if not exists resolution text,
+      add column if not exists has_video_input boolean not null default false,
+      add column if not exists pricing_version text
+  `);
 });
 
 /**
@@ -150,6 +157,10 @@ export type InsertGenerationInput = {
   brandKitId: string | null;
   /** Measured provider round-trip in ms, for "took Ns" in the detail panel. */
   renderMs?: number | null;
+  providerTokens?: number | null;
+  resolution?: string | null;
+  hasVideoInput?: boolean;
+  pricingVersion?: string | null;
 };
 
 /** Insert a completed `generations` row and return it. */
@@ -162,10 +173,11 @@ export async function insertGeneration(
        (mode, tier, model_endpoint, input_payload, final_prompt,
         negative_prompt, seed, reference_urls, status, output_url,
         fal_url, request_id, cost, aspect, duration_s, client_ready,
-        user_id, project_id, brand_kit_id, render_ms, completed_at)
+        user_id, project_id, brand_kit_id, render_ms, provider_tokens,
+        resolution, has_video_input, pricing_version, completed_at)
      values
        ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, now())
+        $16, $17, $18, $19, $20, $21, $22, $23, $24, now())
      returning *`,
     [
       input.mode,
@@ -188,6 +200,13 @@ export async function insertGeneration(
       input.projectId,
       input.brandKitId,
       input.renderMs ?? null,
+      input.providerTokens ?? null,
+      input.resolution ??
+        (typeof input.inputPayload.resolution === "string"
+          ? input.inputPayload.resolution
+          : null),
+      input.hasVideoInput ?? false,
+      input.pricingVersion ?? "legacy-unversioned",
     ]
   );
   return rows[0] as GenerationRecord;

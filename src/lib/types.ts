@@ -65,6 +65,9 @@ export type PromptInputs = {
 };
 
 export type GenerateRequest = {
+  /** Explicit confirmations returned after a server-side guardrail challenge. */
+  longRenderApproved?: boolean;
+  duplicatePromptApproved?: boolean;
   videoWorkflow?: "create" | "edit";
   videoIntent?: "edit" | "extend" | "vary";
   generateAudio?: boolean;
@@ -85,6 +88,8 @@ export type GenerateRequest = {
   seed?: number;
   /** Assign output to an active project */
   projectId?: string | null;
+  /** Active client used to verify the selected project belongs to it. */
+  clientId?: string | null;
   /** Apply a brand kit: tokens merged server-side, id stamped on the record */
   brandKitId?: string | null;
   /**
@@ -150,6 +155,7 @@ export type GenerationJobRecord = {
   negative_prompt: string;
   aspect: string;
   duration_s: number | null;
+  estimated_cost?: number;
   error: string | null;
   generation_id: string | null;
   user_id: string | null;
@@ -233,6 +239,8 @@ export type ProjectRecord = {
   created_at: string;
   updated_at: string;
   generation_count?: number;
+  /** Null means unlimited. */
+  spend_cap?: number | null;
 };
 
 /** Mirrors the `generations` table (§7). */
@@ -264,6 +272,9 @@ export type GenerationRecord = {
   cost: number | null;
   duration_s: number | null;
   resolution: string | null;
+  provider_tokens?: number | null;
+  has_video_input?: boolean;
+  pricing_version?: string | null;
   aspect: string;
   fps: number | null;
   qc_status: string | null;

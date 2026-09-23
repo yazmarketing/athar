@@ -18,6 +18,7 @@ async function ensureProjectsTableUncached() {
     alter table public.projects add column if not exists client_id uuid
       references public.clients (id) on delete set null
   `);
+  await db().query(`alter table public.projects add column if not exists spend_cap numeric(12, 2)`);
   await db().query(`
     create index if not exists projects_created_at_idx
       on public.projects (created_at desc)
@@ -87,7 +88,7 @@ export async function createProject(
 
 export async function updateProject(
   id: string,
-  patch: { name?: string; client?: string | null; archived?: boolean }
+  patch: { name?: string; client?: string | null; archived?: boolean; spendCap?: number | null }
 ): Promise<ProjectRecord | null> {
   await ensureProjectsTable();
   const sets: string[] = ["updated_at = now()"];
@@ -107,6 +108,13 @@ export async function updateProject(
   if (patch.archived !== undefined) {
     sets.push(`archived_at = $${i++}`);
     values.push(patch.archived ? new Date().toISOString() : null);
+  }
+  if (patch.spendCap !== undefined) {
+    if (patch.spendCap !== null && (!Number.isFinite(patch.spendCap) || patch.spendCap < 0)) {
+      throw new Error("Spend cap must be a positive amount or null");
+    }
+    sets.push(`spend_cap = $${i++}`);
+    values.push(patch.spendCap);
   }
 
   if (sets.length === 1) return getProject(id);

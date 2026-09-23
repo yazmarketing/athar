@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth-session";
+import { requireAdmin } from "@/lib/authz";
 import { logAudit } from "@/lib/audit";
 import {
   deleteProjectIfEmpty,
@@ -52,7 +53,13 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       name?: string;
       client?: string | null;
       archived?: boolean;
+      spendCap?: number | null;
     };
+
+    if (body.spendCap !== undefined) {
+      const admin = await requireAdmin();
+      if (admin.response) return admin.response;
+    }
 
     const project = await updateProject(id, body);
     if (!project) {

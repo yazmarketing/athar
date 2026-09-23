@@ -15,6 +15,8 @@ export type DirectorPreset = {
   fragment: string;
   /** Extra negative terms for this choice. */
   negative?: string;
+  preview?: string;
+  swatches?: string[];
 };
 
 const RAW: DirectorPreset = {
@@ -120,12 +122,14 @@ export const LIGHT_LOOK_PRESETS: DirectorPreset[] = [
     description: "Warm low sun, long shadows.",
     fragment:
       "golden-hour sunlight, warm low sun, long shadows, gentle backlight rim",
+    preview: "/cinema/lighting/golden-hour.webp",
   },
   {
     id: "overcast",
     label: "Overcast",
     description: "Soft, even, no hard sun.",
     fragment: "overcast softbox sky, even diffused light, low contrast shadows",
+    preview: "/cinema/lighting/overcast.webp",
   },
   {
     id: "studio",
@@ -133,6 +137,7 @@ export const LIGHT_LOOK_PRESETS: DirectorPreset[] = [
     description: "Keyed commercial lighting.",
     fragment:
       "studio key and fill, controlled commercial lighting, clean catchlights",
+    preview: "/cinema/lighting/studio.webp",
   },
   {
     id: "chiaroscuro",
@@ -140,6 +145,7 @@ export const LIGHT_LOOK_PRESETS: DirectorPreset[] = [
     description: "Hard key, deep falloff.",
     fragment:
       "chiaroscuro lighting, hard key from one side, deep falloff into shadow",
+    preview: "/cinema/lighting/chiaroscuro.webp",
   },
   {
     id: "neon",
@@ -147,12 +153,14 @@ export const LIGHT_LOOK_PRESETS: DirectorPreset[] = [
     description: "City night, coloured practicals.",
     fragment:
       "night exterior, neon practicals, coloured bounce on wet surfaces",
+    preview: "/cinema/lighting/neon.webp",
   },
   {
     id: "moonlight",
     label: "Moonlight",
     description: "Cool night, silver edge.",
     fragment: "moonlit night, cool silver edge light, deep blue shadows",
+    preview: "/cinema/lighting/moonlight.webp",
   },
 ];
 
@@ -163,36 +171,48 @@ export const GRADE_PRESETS: DirectorPreset[] = [
     label: "Natural",
     description: "True colour, mild contrast.",
     fragment: "natural colour grade, true skin tones, mild cinematic contrast",
+    preview: "/cinema/grade/natural.webp",
+    swatches: ["#29322d", "#68766b", "#b9a990", "#eee1ca", "#687c86"],
   },
   {
     id: "teal_orange",
     label: "Teal & orange",
     description: "Blockbuster complementary grade.",
     fragment: "teal-and-orange cinematic grade, warm skin against cool shadows",
+    preview: "/cinema/grade/teal-orange.webp",
+    swatches: ["#082e34", "#17616a", "#cf7139", "#f0ae70", "#2c1712"],
   },
   {
     id: "kodak_warm",
     label: "Warm film",
     description: "Kodak-like warmth and grain.",
     fragment: "warm analog film grade, Kodak-like amber highlights, gentle grain",
+    preview: "/cinema/grade/warm-film.webp",
+    swatches: ["#302419", "#725037", "#b77a4a", "#e0b17a", "#d8c19b"],
   },
   {
     id: "cool_steel",
     label: "Cool steel",
     description: "Desaturated, modern, cold.",
     fragment: "cool steel grade, slightly desaturated, crisp modern contrast",
+    preview: "/cinema/grade/cool-steel.webp",
+    swatches: ["#16232a", "#354d59", "#67818c", "#aab7b7", "#d9d8cf"],
   },
   {
     id: "bleach",
     label: "Bleach bypass",
     description: "Harsh contrast, silvered mids.",
     fragment: "bleach-bypass grade, crushed blacks, silvered midtones, high contrast",
+    preview: "/cinema/grade/bleach.webp",
+    swatches: ["#111211", "#353936", "#6e7168", "#aaa99b", "#e0ddc9"],
   },
   {
     id: "desert",
     label: "Desert heat",
     description: "Dust, amber, Gulf heat.",
     fragment: "desert-heat grade, amber dust in the air, sun-bleached highlights",
+    preview: "/cinema/grade/desert.webp",
+    swatches: ["#3b2a1b", "#765033", "#b77a49", "#dcae73", "#ead5ad"],
   },
 ];
 

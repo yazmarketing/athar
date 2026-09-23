@@ -63,6 +63,7 @@ import {
   EmotionWheel,
   PacingCards,
   PresetList,
+  VisualPresetGrid,
 } from "@/components/cinema-studio/controls";
 import { AspectIcon } from "@/components/aspect-icon";
 import { Slider } from "@/components/ui/slider";
@@ -270,6 +271,27 @@ const SHOW_COST_ESTIMATE = false;
 
 
 type StudioMode = Extract<Capability, "t2i" | "t2v">;
+type SubmitOptions = {
+  seed?: number;
+  tier?: Tier;
+  mode?: StudioMode;
+  durationS?: number;
+  sourceImages?: { url: string; generationId: string | null }[];
+  sourceVideo?: { url: string; generationId: string | null; durationS?: number | null; intent?: "edit" | "extend" | "vary" } | null;
+  stayOnView?: boolean;
+  imageModel?: GoogleImageModelId | OpenAIImageModelId | "seedream";
+  resolution?: ImageResolution;
+  longRenderApproved?: boolean;
+  duplicatePromptApproved?: boolean;
+};
+
+type RenderApproval = {
+  kind: "long" | "duplicate";
+  prompt: PromptInputs;
+  opts: SubmitOptions;
+  estimatedCost?: number;
+  similarCount?: number;
+};
 type View =
   | "motion"
   | "home"
@@ -399,8 +421,9 @@ export function Studio() {
   const [durationS, setDurationS] = useState(5);
   const [videoResolution, setVideoResolution] = useState<
     "480p" | "720p" | "1080p"
-  >("720p");
+  >("480p");
   const [generating, setGenerating] = useState(false);
+  const [renderApproval, setRenderApproval] = useState<RenderApproval | null>(null);
   /**
    * Collapses the prompt editor to a slim summary row once Generate is
    * clicked, for the life of the render — not just the ~1s request that
@@ -921,8 +944,12 @@ export function Studio() {
         if (!choice.resolutions.includes(resolution as ImageResolutionOption)) setResolution(choice.resolutions[choice.resolutions.length - 1]);
       }
     }
-    if (next === "t2v" && tier === "draft") setTier("standard");
     if (next === "t2v") {
+      // Iteration is intentionally cheap and quick by default. Longer,
+      // premium settings remain an explicit choice and are guarded server-side.
+      setTier("draft");
+      setDurationS(5);
+      setVideoResolution("480p");
       setGoogleModel(null);
       setImageModelId(DEFAULT_IMAGE_MODEL_ID);
       // 4K rides with Nano Banana Pro; video has its own resolution control.
@@ -1066,9 +1093,12 @@ export function Studio() {
       // Keep the sidebar's per-project item counts in sync with the gallery,
       // scoped to the active client so the project list stays consistent.
       try {
-        const pQs = activeClientId
-          ? `?clientId=${encodeURIComponent(activeClientId)}`
-          : "";
+        if (!activeClientId) {
+          setProjects([]);
+          setActiveProjectId(null);
+          return;
+        }
+        const pQs = `?clientId=${encodeURIComponent(activeClientId)}`;
         const resProjects = await fetch(`/api/projects${pQs}`);
         const jsonProjects = await resProjects.json();
         if (resProjects.ok && seq === gallerySeq.current) {
@@ -1689,27 +1719,7 @@ export function Studio() {
   const submit = useCallback(
     async (
       prompt: PromptInputs,
-      opts: {
-        seed?: number;
-        tier?: Tier;
-        mode?: StudioMode;
-        durationS?: number;
-        /** Override the dock's attached images (e.g. Reproduce lineage) */
-        sourceImages?: { url: string; generationId: string | null }[];
-        /** Override the dock's attached source video; null = force none */
-        sourceVideo?: {
-          url: string;
-          generationId: string | null;
-          durationS?: number | null;
-          intent?: "edit" | "extend" | "vary";
-        } | null;
-        /** Stay on Home/Library instead of jumping to Create */
-        stayOnView?: boolean;
-        /** Explicit image-model override — a Google/OpenAI model id or "seedream". */
-        imageModel?: GoogleImageModelId | OpenAIImageModelId | "seedream";
-        /** Override the dock's resolution (model switch clamps 4K → 2K). */
-        resolution?: ImageResolution;
-      } = {}
+      opts: SubmitOptions = {}
     ) => {
       const startedInView = currentViewRef.current;
       setGenerating(true);
@@ -1762,6 +1772,7 @@ export function Studio() {
                 ? referenceUrls
                 : undefined,
             projectId: activeProjectId,
+            clientId: activeClientId,
             brandKitId: activeBrandKitId,
             sourceImageUrls:
               activeMode === "t2v" ? activeVideoSources.map((s) => s.url) : [],
@@ -1786,10 +1797,24 @@ export function Studio() {
               activeMode === "t2v" && audioSources.length > 0
                 ? audioSources.map((a) => a.url)
                 : undefined,
+            longRenderApproved: opts.longRenderApproved,
+            duplicatePromptApproved: opts.duplicatePromptApproved,
           }),
         });
         const json = await readJson(res);
+        if (res.status === 409 && (json.code === "long_render_approval_required" || json.code === "duplicate_prompt_warning")) {
+          setComposerCollapsed(false);
+          setRenderApproval({
+            kind: json.code === "long_render_approval_required" ? "long" : "duplicate",
+            prompt,
+            opts,
+            estimatedCost: Number(json.estimatedCost) || undefined,
+            similarCount: Number(json.similarCount) || undefined,
+          });
+          return;
+        }
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
+        for (const alert of (json.spendAlerts as string[] | undefined) ?? []) toast.warning(alert);
         let batch: GenerationRecord[];
         if (json.job) {
           // Every image model now returns durable jobs. Keep this invocation's
@@ -1974,6 +1999,7 @@ export function Studio() {
       generateAudio,
       referenceUrls,
       activeProjectId,
+      activeClientId,
       activeBrandKitId,
       videoSources,
       videoEditSource,
@@ -2586,6 +2612,10 @@ export function Studio() {
       toast.error("Pick a client first — it's the chip at the top of this dock");
       setClientNudge(true);
       window.setTimeout(() => setClientNudge(false), 1600);
+      return;
+    }
+    if (mode === "t2v" && !activeProjectId) {
+      toast.error("Choose a project for this client before starting a video render");
       return;
     }
     // Asking a diffusion model to draw a known logo or a specific person from
@@ -5238,6 +5268,31 @@ export function Studio() {
         />
 
         <ConfirmDialog
+          open={renderApproval != null}
+          onOpenChange={(open) => {
+            if (!open) setRenderApproval(null);
+          }}
+          title={renderApproval?.kind === "long" ? "Approve a longer Seedance render?" : "Render a similar prompt again?"}
+          description={
+            renderApproval?.kind === "long"
+              ? "This render is 13–30 seconds, so it takes longer and costs more than the short iteration default."
+              : `This prompt is similar to ${renderApproval?.similarCount ?? 3} recent video renders in this project. Continue only if another take is intentional.`
+          }
+          cost={renderApproval?.estimatedCost}
+          confirmLabel={renderApproval?.kind === "long" ? "Approve render" : "Render another take"}
+          onConfirm={async () => {
+            const pending = renderApproval;
+            if (!pending) return;
+            setRenderApproval(null);
+            await submit(pending.prompt, {
+              ...pending.opts,
+              longRenderApproved: pending.kind === "long" ? true : pending.opts.longRenderApproved,
+              duplicatePromptApproved: pending.kind === "duplicate" ? true : pending.opts.duplicatePromptApproved,
+            });
+          }}
+        />
+
+        <ConfirmDialog
           open={assetToDelete != null}
           onOpenChange={(open) => {
             if (!open) setAssetToDelete(null);
@@ -5711,9 +5766,9 @@ export function Studio() {
                   label="Color palette"
                   value={presetLabel(GRADE_PRESETS, cinema.gradeId)}
                   active={cinema.gradeId !== "raw"}
-                  width="w-72"
+                  width="w-cinema-grid"
                 >
-                  <PresetList
+                  <VisualPresetGrid
                     presets={GRADE_PRESETS}
                     value={cinema.gradeId}
                     onChange={(gradeId) => setCinema((c) => ({ ...c, gradeId }))}
@@ -5724,9 +5779,9 @@ export function Studio() {
                   label="Lighting"
                   value={presetLabel(LIGHT_LOOK_PRESETS, cinema.lightLookId)}
                   active={cinema.lightLookId !== "raw"}
-                  width="w-72"
+                  width="w-cinema-grid"
                 >
-                  <PresetList
+                  <VisualPresetGrid
                     presets={LIGHT_LOOK_PRESETS}
                     value={cinema.lightLookId}
                     onChange={(lightLookId) =>
@@ -6091,6 +6146,8 @@ export function Studio() {
                       projects={projects}
                       onProjectsChange={setProjects}
                       clientId={activeClientId}
+                      required={mode === "t2v"}
+                      canManageSpend={session?.user?.role === "admin"}
                       compact
                     />
                   </span>

@@ -38,6 +38,10 @@ async function ensureJobsTableUncached() {
     alter table public.generation_jobs
       add column if not exists finalizing_at timestamptz
   `);
+  await db().query(`
+    alter table public.generation_jobs
+      add column if not exists estimated_cost numeric(12, 4) not null default 0
+  `);
   // Existing tables predate the 'v2v' kind — relax the check. Idempotent.
   await db().query(`
     do $$
@@ -76,15 +80,16 @@ export async function createJob(input: {
   userId: string | null;
   projectId: string | null;
   brandKitId: string | null;
+  estimatedCost?: number;
 }): Promise<GenerationJobRecord> {
   await ensureJobsTable();
   const { rows } = await db().query<GenerationJobRecord>(
     `insert into generation_jobs
        (kind, status, provider, model_endpoint, tier, input,
         final_prompt, negative_prompt, aspect, duration_s,
-        user_id, project_id, brand_kit_id)
+        user_id, project_id, brand_kit_id, estimated_cost)
      values
-       ($1, 'queued', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ($1, 'queued', $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      returning *`,
     [
       input.kind,
@@ -99,6 +104,7 @@ export async function createJob(input: {
       input.userId,
       input.projectId,
       input.brandKitId,
+      input.estimatedCost ?? 0,
     ]
   );
   return rows[0];

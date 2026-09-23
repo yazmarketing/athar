@@ -24,6 +24,7 @@ import type { CameraPreset } from "@/config/camera";
 const WIDTH_PX: Record<string, number> = {
   "w-72": 288,
   "w-80": 320,
+  "w-cinema-grid": 704,
 };
 
 /**
@@ -136,16 +137,44 @@ export function ChipPopover({
         createPortal(
           <div
             ref={panelRef}
-            style={{ left: pos.left, bottom: pos.bottom }}
+            style={{ left: pos.left, bottom: pos.bottom, width: Math.min(WIDTH_PX[width] ?? 320, window.innerWidth - 16) }}
             className={cn(
               "fixed z-[100] max-h-80 overflow-y-auto rounded-xl bg-popover p-2 shadow-2xl ring-1 ring-border",
-              width
             )}
           >
             {children}
           </div>,
           document.body
         )}
+    </div>
+  );
+}
+
+/** Image-led palette/lighting cards: the look is visible before it is named. */
+export function VisualPresetGrid({ presets, value, onChange }: { presets: DirectorPreset[]; value: string; onChange: (id: string) => void }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 p-1 sm:grid-cols-3">
+      {presets.map((preset) => {
+        const selected = preset.id === value;
+        return (
+          <button key={preset.id} type="button" onClick={() => onChange(preset.id)} className={cn("overflow-hidden rounded-xl border bg-white/[0.03] text-left transition", selected ? "border-gold ring-1 ring-gold/30" : "border-white/10 hover:border-white/25")}>
+            <span className="relative block aspect-video overflow-hidden bg-gradient-to-br from-white/10 to-black/40">
+              {preset.preview ? (
+                // These are tiny bundled WebP thumbnails; serving them directly
+                // avoids the optimizer round-trip inside the portalled picker.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preset.preview} alt="" className="absolute inset-0 size-full object-cover" />
+              ) : <span className="absolute inset-0 grid place-items-center text-xs text-muted-foreground">Auto</span>}
+              {preset.swatches && <span className="absolute inset-x-0 bottom-0 flex h-4">{preset.swatches.map((color) => <span key={color} className="flex-1" style={{ backgroundColor: color }} />)}</span>}
+              {selected && <span className="absolute right-2 top-2 grid size-6 place-items-center rounded-full bg-gold text-black"><Check className="size-3.5" /></span>}
+            </span>
+            <span className="block px-2.5 py-2">
+              <span className={cn("block text-xs font-medium", selected && "text-gold")}>{preset.id === "raw" ? "Auto" : preset.label}</span>
+              <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{preset.description}</span>
+            </span>
+          </button>
+        );
+      })}
     </div>
   );
 }

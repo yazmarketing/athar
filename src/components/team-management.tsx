@@ -23,6 +23,7 @@ type TeamUser = {
   team: string | null;
   active: boolean;
   last_login_at: string | null;
+  spend_cap: number | null;
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -101,12 +102,13 @@ export function TeamManagement({
   }, []);
 
   useEffect(() => {
-    void load();
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   async function patchUser(
     id: string,
-    patch: { role?: string; active?: boolean; team?: string | null }
+    patch: { role?: string; active?: boolean; team?: string | null; spendCap?: number | null }
   ) {
     setBusyId(id);
     try {
@@ -161,10 +163,11 @@ export function TeamManagement({
       ) : (
         <div className="overflow-hidden rounded-2xl ring-1 ring-border">
           {/* header */}
-          <div className="hidden grid-cols-[1fr_9rem_8rem_7rem_6rem] gap-3 bg-secondary/60 px-4 py-2.5 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase sm:grid">
+          <div className="hidden grid-cols-[1fr_8rem_7rem_7rem_7rem_6rem] gap-3 bg-secondary/60 px-4 py-2.5 text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase sm:grid">
             <span>Member</span>
             <span>Team</span>
             <span>Role</span>
+            <span>Spend cap</span>
             <span>Last login</span>
             <span className="text-right">Access</span>
           </div>
@@ -176,7 +179,7 @@ export function TeamManagement({
               <div
                 key={u.id}
                 className={cn(
-                  "grid grid-cols-1 gap-3 border-t border-border bg-card px-4 py-3 sm:grid-cols-[1fr_9rem_8rem_7rem_6rem] sm:items-center",
+                  "grid grid-cols-1 gap-3 border-t border-border bg-card px-4 py-3 sm:grid-cols-[1fr_8rem_7rem_7rem_7rem_6rem] sm:items-center",
                   !u.active && "opacity-60"
                 )}
               >
@@ -259,6 +262,25 @@ export function TeamManagement({
                     <SelectItem value="viewer">Viewer</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {/* all-time cap; blank stays unlimited */}
+                <label className="relative block">
+                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    defaultValue={u.spend_cap ?? ""}
+                    placeholder="Unlimited"
+                    onBlur={(e) => {
+                      const raw = e.currentTarget.value.trim();
+                      const next = raw === "" ? null : Number(raw);
+                      if ((u.spend_cap ?? null) !== next) void patchUser(u.id, { spendCap: next });
+                    }}
+                    className="h-8 w-full rounded-md border border-border bg-background pr-1 pl-5 text-xs outline-none focus:border-gold/50"
+                    aria-label={`Spend cap for ${u.name || u.email}`}
+                  />
+                </label>
 
                 {/* last login */}
                 <div

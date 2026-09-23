@@ -4,7 +4,8 @@ import { getBrandKit } from "@/lib/brand-kits";
 import { createJob } from "@/lib/jobs";
 import { imageJobModelEndpoint, submitImageJob } from "@/lib/image-jobs";
 import { submitVideoJob } from "@/lib/video-jobs";
-import { projectExists } from "@/lib/projects";
+import { getProject } from "@/lib/projects";
+import { checkSpendControls, similarVideoRenderCount } from "@/lib/render-guardrails";
 import { buildPrompt } from "@/lib/prompt";
 import {
   inferOutputSettings,
@@ -17,6 +18,8 @@ import {
   asOpenAIImageModel,
   imageAllows4K,
   maxReferenceImages,
+  googleImageCost,
+  openaiImageCost,
 } from "@/config/models";
 import type { GenerateRequest } from "@/lib/types";
 
@@ -48,13 +51,16 @@ export async function POST(req: NextRequest) {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   const projectId: string | null = body.projectId ?? null;
+  let projectClientId: string | null = null;
   if (projectId) {
     if (!UUID_RE.test(projectId)) {
       return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
     }
-    if (!(await projectExists(projectId))) {
+    const project = await getProject(projectId);
+    if (!project) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
+    projectClientId = project.client_id;
   }
 
   // Brand kit: merge its prompt guidance server-side so every client applies
@@ -142,6 +148,24 @@ export async function POST(req: NextRequest) {
   // Attached images switch the capability to i2v: one image is the exact
   // first frame, several become reference images blended into the clip.
   if (mode === "t2v") {
+    if (!projectId) {
+      return NextResponse.json(
+        { error: "Choose a client project before starting a video render", code: "project_required" },
+        { status: 400 }
+      );
+    }
+    if (!projectClientId) {
+      return NextResponse.json(
+        { error: "Video renders must use a project linked to a client", code: "client_project_required" },
+        { status: 400 }
+      );
+    }
+    if (body.clientId !== projectClientId) {
+      return NextResponse.json(
+        { error: "Choose a project linked to the selected client", code: "project_client_mismatch" },
+        { status: 400 }
+      );
+    }
     // Seedance 2.0 series accepts up to 9 reference images
     const sourceImageUrls = (body.sourceImageUrls ?? [])
       .map((u) => u.trim())
@@ -170,6 +194,36 @@ export async function POST(req: NextRequest) {
           Math.max(durationS, 4),
           videoModel.maxDuration || 30
         );
+    const estimatedCost = videoModel.costPerUnit * (videoDuration ?? 5);
+    if ((videoDuration ?? 0) >= 13 && (videoDuration ?? 0) <= 30 && !body.longRenderApproved) {
+      return NextResponse.json(
+        {
+          error: "Approval is required for Seedance renders from 13 to 30 seconds.",
+          code: "long_render_approval_required",
+          estimatedCost,
+          durationS: videoDuration,
+        },
+        { status: 409 }
+      );
+    }
+    if (!body.duplicatePromptApproved) {
+      const similarCount = await similarVideoRenderCount(sessionUser.id, projectId, finalPrompt);
+      if (similarCount >= 3) {
+        return NextResponse.json(
+          {
+            error: `This is similar to ${similarCount} recent renders in this project.`,
+            code: "duplicate_prompt_warning",
+            similarCount,
+            estimatedCost,
+          },
+          { status: 409 }
+        );
+      }
+    }
+    const spend = await checkSpendControls({ userId: sessionUser.id, projectId, proposedCost: estimatedCost });
+    if (!spend.allowed) {
+      return NextResponse.json({ error: spend.error, code: "spend_cap_exceeded" }, { status: 409 });
+    }
     try {
       const job = await createJob({
         kind,
@@ -183,6 +237,7 @@ export async function POST(req: NextRequest) {
         userId: sessionUser.id,
         projectId,
         brandKitId,
+        estimatedCost,
       });
       /**
        * Submitting is not the quick handshake it reads as: ModelArk fetches
@@ -194,7 +249,7 @@ export async function POST(req: NextRequest) {
        * and a poll re-submits it if this process dies first.
        */
       after(() => submitVideoJob(job.id));
-      return NextResponse.json({ job }, { status: 202 });
+      return NextResponse.json({ job, spendAlerts: spend.alerts }, { status: 202 });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Could not queue the render";
@@ -211,6 +266,16 @@ export async function POST(req: NextRequest) {
    * /api/jobs/[id] the same way as video.
    */
   const provider = openaiModel ? "openai" : googleModel ? "google" : "byteplus";
+  const imageUnitCost = openaiModel
+    ? openaiImageCost(openaiModel, resolution)
+    : googleModel
+      ? googleImageCost(googleModel, resolution)
+      : primary.costPerUnit;
+  const estimatedCost = imageUnitCost * numOutputs;
+  const spend = await checkSpendControls({ userId: sessionUser.id, projectId, proposedCost: estimatedCost });
+  if (!spend.allowed) {
+    return NextResponse.json({ error: spend.error, code: "spend_cap_exceeded" }, { status: 409 });
+  }
   try {
     const jobs: Awaited<ReturnType<typeof createJob>>[] = [];
     for (let i = 0; i < numOutputs; i++) {
@@ -236,12 +301,13 @@ export async function POST(req: NextRequest) {
         userId: sessionUser.id,
         projectId,
         brandKitId,
+        estimatedCost: imageUnitCost,
       });
       jobs.push(job);
       after(() => submitImageJob(job.id));
     }
     return NextResponse.json(
-      { job: jobs[0], jobs },
+      { job: jobs[0], jobs, spendAlerts: spend.alerts },
       { status: 202 }
     );
   } catch (err) {

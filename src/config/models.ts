@@ -268,6 +268,9 @@ const V2V: CapabilityConfig = {
 type SeedanceRate = { withoutVideo: number; withVideo: number };
 type SeedanceRateRow = SeedanceRate & { promo?: SeedanceRate & { until: string } };
 
+export const SEEDANCE_PRICING_VERSION = "2026-08-27";
+export const IMAGE_PRICING_VERSION = "2026-09-04";
+
 const SEEDANCE_TOKEN_RATES: Record<
   string,
   Partial<Record<"480p" | "720p" | "1080p", SeedanceRateRow>>

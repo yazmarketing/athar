@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   GOOGLE_IMAGE_MODELS,
+  IMAGE_PRICING_VERSION,
   asGoogleImageModel,
   asOpenAIImageModel,
   googleImageCost,
@@ -176,6 +177,9 @@ async function runArkJob(
       projectId: job.project_id,
       brandKitId: job.brand_kit_id,
       renderMs: Date.now() - renderStart,
+      resolution,
+      hasVideoInput: false,
+      pricingVersion: IMAGE_PRICING_VERSION,
     });
 
     await markJobCompleted(job.id, generation.id);
@@ -244,6 +248,9 @@ async function runGeminiJob(
       projectId: job.project_id,
       brandKitId: job.brand_kit_id,
       renderMs: Date.now() - renderStart,
+      resolution,
+      hasVideoInput: false,
+      pricingVersion: IMAGE_PRICING_VERSION,
     });
 
     await markJobCompleted(job.id, generation.id);
@@ -304,6 +311,9 @@ async function runOpenAIJob(
       projectId: job.project_id,
       brandKitId: job.brand_kit_id,
       renderMs: Date.now() - renderStart,
+      resolution,
+      hasVideoInput: false,
+      pricingVersion: IMAGE_PRICING_VERSION,
     });
 
     await markJobCompleted(job.id, generation.id);

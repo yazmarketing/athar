@@ -30,16 +30,19 @@ export const ACTIVE_PROJECT_STORAGE_KEY = "yaz-motion-active-project";
 const NEW = "__new__";
 const RENAME = "__rename__";
 const DELETE = "__delete__";
+const CAP = "__cap__";
 
 type Props = {
   activeProjectId: string | null;
   onActiveProjectChange: (id: string | null) => void;
   projects: ProjectRecord[];
   onProjectsChange: (projects: ProjectRecord[]) => void;
-  /** Scope the list + new projects to this client (null = all clients). */
+  /** Scope the list + new projects to this client. No client means no projects. */
   clientId?: string | null;
   /** Dock variant: a single pill sized for the generate bar's chip row. */
   compact?: boolean;
+  required?: boolean;
+  canManageSpend?: boolean;
   className?: string;
 };
 
@@ -50,16 +53,25 @@ export function ProjectPicker({
   onProjectsChange,
   clientId,
   compact = false,
+  required = false,
+  canManageSpend = false,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [name, setName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [capOpen, setCapOpen] = useState(false);
+  const [cap, setCap] = useState("");
 
   const loadProjects = useCallback(async () => {
+    if (!clientId) {
+      onProjectsChange([]);
+      onActiveProjectChange(null);
+      return;
+    }
     try {
-      const qs = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
+      const qs = `?clientId=${encodeURIComponent(clientId)}`;
       const res = await fetch(`/api/projects${qs}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -67,7 +79,7 @@ export function ProjectPicker({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Load failed");
     }
-  }, [onProjectsChange, clientId]);
+  }, [onProjectsChange, onActiveProjectChange, clientId]);
 
   useEffect(() => {
     void loadProjects();
@@ -169,6 +181,42 @@ export function ProjectPicker({
           </form>
         </DialogContent>
       </Dialog>
+      <Dialog open={capOpen} onOpenChange={setCapOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Project spend cap</DialogTitle>
+            <DialogDescription>
+              Leave this blank for unlimited. Alerts still appear at $100, $200, and $300.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="space-y-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              if (!activeProject) return;
+              const spendCap = cap.trim() === "" ? null : Number(cap);
+              try {
+                const res = await fetch(`/api/projects/${activeProject.id}`, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ spendCap }),
+                });
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.error ?? "Update failed");
+                const project = json.project as ProjectRecord;
+                onProjectsChange(projects.map((p) => p.id === project.id ? project : p));
+                setCapOpen(false);
+                toast.success(spendCap == null ? "Project spend is unlimited" : `Project capped at $${spendCap.toFixed(2)}`);
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : "Update failed");
+              }
+            }}
+          >
+            <Input type="number" min="0" step="1" value={cap} onChange={(e) => setCap(e.target.value)} placeholder="Unlimited" autoFocus />
+            <Button type="submit" className="w-full bg-gold text-primary-foreground hover:bg-gold/90">Save cap</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
   );
 
@@ -207,6 +255,11 @@ export function ProjectPicker({
       void onDelete();
       return;
     }
+    if (v === CAP) {
+      setCap(activeProject?.spend_cap == null ? "" : String(activeProject.spend_cap));
+      setCapOpen(true);
+      return;
+    }
     onActiveProjectChange(v === "all" ? null : v);
   };
 
@@ -223,19 +276,24 @@ export function ProjectPicker({
             )}
           >
             <FolderKanban className="size-3.5 shrink-0" />
-            <SelectValue>{activeProject?.name ?? "No project"}</SelectValue>
+            <SelectValue>{activeProject?.name ?? (clientId ? "Choose project" : "Choose client first")}</SelectValue>
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">No project</SelectItem>
+            <SelectItem value="all" disabled={required}>
+              {clientId ? "Choose project" : "Choose client first"}
+            </SelectItem>
             {projects.map((p) => (
               <SelectItem key={p.id} value={p.id}>
                 {p.name}
               </SelectItem>
             ))}
             <SelectSeparator />
-            <SelectItem value={NEW}>＋ New project…</SelectItem>
+            <SelectItem value={NEW} disabled={!clientId}>＋ New project…</SelectItem>
             {activeProject && (
               <SelectItem value={RENAME}>✎ Rename “{activeProject.name}”…</SelectItem>
+            )}
+            {activeProject && canManageSpend && (
+              <SelectItem value={CAP}>$ Set spend cap…</SelectItem>
             )}
             {activeProject && (
               <SelectItem value={DELETE}>🗑 Delete “{activeProject.name}”…</SelectItem>

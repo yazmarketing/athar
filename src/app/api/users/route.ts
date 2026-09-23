@@ -33,8 +33,9 @@ export async function GET() {
   if (auth.response) return auth.response;
 
   await db().query(`alter table public.users add column if not exists team text`);
+  await db().query(`alter table public.users add column if not exists spend_cap numeric(12, 2)`);
   const { rows } = await db().query(
-    `select id, email, name, role, team, active, created_at, last_login_at
+    `select id, email, name, role, team, spend_cap, active, created_at, last_login_at
      from public.users
      order by created_at asc`
   );
@@ -52,6 +53,7 @@ export async function PATCH(req: NextRequest) {
     role?: string;
     active?: boolean;
     team?: string | null;
+    spendCap?: number | null;
   };
   try {
     body = (await req.json()) as typeof body;
@@ -85,6 +87,13 @@ export async function PATCH(req: NextRequest) {
     values.push(body.team?.trim() || null);
     sets.push(`team = $${values.length}`);
   }
+  if (body.spendCap !== undefined) {
+    if (body.spendCap !== null && (!Number.isFinite(body.spendCap) || body.spendCap < 0)) {
+      return NextResponse.json({ error: "Spend cap must be a positive amount or null" }, { status: 400 });
+    }
+    values.push(body.spendCap);
+    sets.push(`spend_cap = $${values.length}`);
+  }
   if (sets.length === 0) {
     return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
   }
@@ -93,7 +102,7 @@ export async function PATCH(req: NextRequest) {
   const { rows } = await db().query(
     `update public.users set ${sets.join(", ")}
      where id = $${values.length}
-     returning id, email, name, role, team, active, created_at, last_login_at`,
+     returning id, email, name, role, team, spend_cap, active, created_at, last_login_at`,
     values
   );
   if (!rows[0]) {
