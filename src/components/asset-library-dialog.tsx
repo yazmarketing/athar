@@ -189,7 +189,7 @@ export function AssetLibraryDialog({
           </DialogTitle>
           <p className="text-xs text-muted-foreground">
             {view === "grid"
-              ? "Verified faces & characters — click one to attach it to the video"
+              ? "People — verify once, then click anyone to reuse them in a video"
               : "Upload a clear photo. BytePlus verifies it before it can be used (about a minute)."}
           </p>
         </DialogHeader>
@@ -455,7 +455,7 @@ export function AssetLibraryDialog({
                     </SelectContent>
                   </Select>
                   <span className="text-[10px] text-muted-foreground">
-                    How it's grouped in this library. Auto files it under
+                    How it&apos;s grouped in this library. Auto files it under
                     Characters.
                   </span>
                 </div>

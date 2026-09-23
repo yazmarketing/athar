@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  CircleDot,
+  AlertCircle,
+  Building2,
   FileAudio,
   Film,
   Link2,
@@ -29,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { TranscriptDetail } from "@/components/transcript-detail";
+import { SearchPicker } from "@/components/search-picker";
 import { formatClock } from "@/lib/subtitles";
 import {
   UnsupportedMediaError,
@@ -448,7 +450,8 @@ export function Transcribe({
 
   return (
     <div className="space-y-6">
-      {/* Engine */}
+      {/* Only surface engine status when the user needs to act. */}
+      {engine && !engine.ok && (
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <span
           // The vendor/model string (e.g. "Whisper · whisper-1 · OpenAI") is
@@ -461,27 +464,19 @@ export function Transcribe({
           }
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
-            engine?.ok
-              ? "bg-emerald-400/10 text-emerald-300"
-              : "bg-amber-400/10 text-amber-300"
+            "bg-amber-400/10 text-amber-300"
           )}
         >
-          <CircleDot className="size-3" />
-          {engine?.ok
-            ? "Transcription ready"
-            : engine?.configured === false
+          <AlertCircle className="size-3" />
+          {engine.configured === false
               ? "Transcription not set up — ask an admin"
-              : "Transcription offline"}
+              : "Transcription is temporarily unavailable"}
         </span>
-        {engine?.ok && !engine.capabilities?.diarization && (
-          <span className="text-muted-foreground">
-            One transcript per file — not split out by speaker
-          </span>
-        )}
-        {engine && !engine.ok && engine.error && (
+        {engine.error && (
           <span className="text-muted-foreground">{engine.error}</span>
         )}
       </div>
+      )}
 
       {/* New transcription */}
       <div
@@ -608,27 +603,23 @@ export function Transcribe({
 
           <div className="space-y-1.5">
             <label className="text-[11px] text-muted-foreground">Client</label>
-            <Select
+            <SearchPicker
               value={options.clientId ?? NO_CLIENT}
               onValueChange={(value) =>
-                setOptions((o) => ({
-                  ...o,
+                setOptions((current) => ({
+                  ...current,
                   clientId: value === NO_CLIENT ? null : value,
                 }))
               }
-            >
-              <SelectTrigger className="h-9 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NO_CLIENT}>No client</SelectItem>
-                {clients.map((client) => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={[
+                { value: NO_CLIENT, label: "No client" },
+                ...clients.map((client) => ({ value: client.id, label: client.name })),
+              ]}
+              label="Choose client"
+              placeholder="No client"
+              icon={<Building2 className="size-3.5" />}
+              className="h-9 w-full justify-start rounded-lg"
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -727,6 +718,12 @@ export function Transcribe({
       )}
 
       {/* The list */}
+      <div>
+        <h2 className="text-sm font-semibold">Previous transcriptions</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Audio and video files you transcribed before.
+        </p>
+      </div>
       {loading ? (
         <div className="flex h-32 items-center justify-center text-muted-foreground">
           <Loader2 className="size-5 animate-spin" />

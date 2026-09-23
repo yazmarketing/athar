@@ -46,7 +46,7 @@ export function ChipPopover({
   width = "w-80",
 }: {
   /** The control's name — "Film setup". */
-  label: string;
+  label?: string;
   /** The current selection — "Auto" or the preset label. */
   value: string;
   /** Anything non-default is active and reads gold. */
@@ -139,9 +139,9 @@ export function ChipPopover({
           </span>
         )}
         <span className="min-w-0">
-          <span className="block text-[9px] tracking-[0.14em] text-muted-foreground uppercase">
+          {label && <span className="block text-[9px] tracking-[0.14em] text-muted-foreground uppercase">
             {label}
-          </span>
+          </span>}
           <span
             className={cn(
               "block max-w-28 truncate text-xs",

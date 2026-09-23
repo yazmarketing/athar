@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { SearchPicker } from "@/components/search-picker";
 import { uploadImageFile } from "@/lib/upload-image";
 import type { ReferenceAssetRecord } from "@/lib/types";
 
@@ -336,19 +337,17 @@ export function ReferenceLibrary({
           </SelectContent>
         </Select>
         {mode === "manage" && projects && projects.length > 0 && (
-          <Select value={projectFilter} onValueChange={setProjectFilter}>
-            <SelectTrigger className="h-8 w-auto min-w-[8rem] rounded-full border-border bg-card px-3 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All projects</SelectItem>
-              {projects.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchPicker
+            value={projectFilter}
+            onValueChange={setProjectFilter}
+            options={[
+              { value: "all", label: "All projects" },
+              ...projects.map((project) => ({ value: project.id, label: project.name })),
+            ]}
+            label="Filter by project"
+            placeholder="All projects"
+            className="border-border bg-card"
+          />
         )}
         <div className="flex-1" />
         <Button

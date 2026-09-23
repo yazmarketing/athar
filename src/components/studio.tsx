@@ -69,6 +69,7 @@ import {
 } from "@/components/cinema-studio/controls";
 import { AspectIcon } from "@/components/aspect-icon";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { Storyboards } from "@/components/storyboard";
@@ -173,6 +174,7 @@ import {
 import { ReferenceLibrary } from "@/components/reference-library";
 import { Orchestrator } from "@/components/orchestrator";
 import { StudioHome } from "@/components/studio-home";
+import { SearchPicker } from "@/components/search-picker";
 import { VideoExplore } from "@/components/video-explore";
 import { VideoWorkspaceControls, type VideoWorkflow } from "@/components/video-workspace-controls";
 import { videoCapabilities, videoUsesFirstFrame, validateVideoSettings } from "@/config/video-capabilities";
@@ -682,6 +684,7 @@ export function Studio() {
     return () => window.cancelAnimationFrame(frame);
   }, [generateMenuOpen]);
   const [refLibOpen, setRefLibOpen] = useState(false);
+  const [referenceChooserOpen, setReferenceChooserOpen] = useState(false);
   const [saveRefUrl, setSaveRefUrl] = useState<string | null>(null);
   const [saveRefName, setSaveRefName] = useState("");
   const [saveRefKind, setSaveRefKind] = useState("character");
@@ -3294,7 +3297,7 @@ export function Studio() {
         setSidebarOpen(false);
       }}
       className={cn(
-        "athar-nav relative flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition",
+        "athar-nav relative flex min-h-7 w-full items-center gap-2.5 rounded-lg px-3 py-1 text-left text-xs transition",
         active
           ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_var(--sidebar-border)]"
           : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
@@ -3781,7 +3784,7 @@ export function Studio() {
         aria-modal={sidebarOpen && !isDesktopSidebar ? true : undefined}
         inert={!sidebarOpen && !isDesktopSidebar}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-3 pt-6 pb-4 transition-transform duration-200 ease-out",
+          "fixed inset-y-0 left-0 z-50 flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-3 pt-4 pb-3 transition-transform duration-200 ease-out",
           "md:relative md:z-10 md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
@@ -3805,9 +3808,7 @@ export function Studio() {
           </a>
         </div>
         <button type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" className="absolute right-2 top-2 rounded-lg p-1.5 text-muted-foreground hover:bg-sidebar-accent md:hidden"><X className="size-4" /></button>
-        <div className="mt-2" />
-
-        <div data-tour="new-generation" className="relative mt-4 mb-4">
+        <div data-tour="new-generation" className="relative mt-3 mb-2.5">
           <Button
             ref={generateButtonRef}
             className="h-10 w-full justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
@@ -3924,19 +3925,24 @@ export function Studio() {
           )}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-        <nav aria-label="Studio" className="space-y-1">
+        <div className="min-h-0 flex-1">
+        <nav aria-label="Studio" className="space-y-0.5">
           {navBtn(view === "home", () => setView("home"), <Home className="size-4" />, "Explore")}
-          <p className="px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Create</p>
+          <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Video</p>
           {navBtn(view === "create" && mode === "t2v" && !cinemaOn, () => openTool("t2v"), <Clapperboard className="size-4" />, "Video")}
           {navBtn(view === "create" && cinemaOn, () => { openTool("t2v"); setCinemaOn(true); }, <Aperture className="size-4" />, "Cinema Studio")}
           {navBtn(view === "motion", () => setView("motion"), <Film className="size-4" />, "Motion design")}
           {navBtn(view === "effects", () => setView("effects"), <Sparkles className="size-4" />, "Looks & motion")}
-          {navBtn(view === "create" && mode === "t2i", () => openTool("t2i"), <ImageIcon className="size-4" />, "Image")}
           {navBtn(view === "storyboard", () => setView("storyboard"), <Film className="size-4" />, "Storyboard", "storyboard")}
+
+          <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Image</p>
+          {navBtn(view === "create" && mode === "t2i", () => openTool("t2i"), <ImageIcon className="size-4" />, "Image")}
+
+          <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Audio</p>
           {navBtn(view === "tts", () => setView("tts"), <Mic className="size-4" />, "Voice", "tts")}
           {navBtn(view === "transcribe", () => setView("transcribe"), <AudioLines className="size-4" />, "Transcribe", "transcribe")}
-          <p className="px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Workspace</p>
+
+          <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Workspace</p>
           {navBtn(view === "clients", () => setView("clients"), <FolderKanban className="size-4" />, "Clients & projects")}
           {navBtn(view === "library", () => setView("library"), <Library className="size-4" />, "Library", "library")}
           {navBtn(view === "assets", () => setView("assets"), <Boxes className="size-4" />, "Brand assets", "assets")}
@@ -3947,7 +3953,7 @@ export function Studio() {
             to the other things you set before pressing Generate. */}
         </div>
 
-        <div className="relative mt-3 shrink-0 border-t border-sidebar-border pt-3">
+        <div className="relative mt-2 flex shrink-0 items-center gap-1 border-t border-sidebar-border pt-2">
           {connectionsOpen && (
             <div className="absolute bottom-full left-0 right-0 mb-2 rounded-xl border border-sidebar-border bg-popover p-3 shadow-lg">
               <p className="mb-2 text-xs font-medium text-foreground">
@@ -4012,7 +4018,7 @@ export function Studio() {
             </div>
           )}
 
-          <div className="flex items-center gap-1 px-1">
+          <div className="flex shrink-0 items-center gap-0.5">
             <button
               type="button"
               aria-label="Take the tour"
@@ -4065,7 +4071,7 @@ export function Studio() {
               </span>
             </button>
           </div>
-          <SidebarUser onManageTeam={() => setView("team")} />
+          <SidebarUser className="flex-1" onManageTeam={() => setView("team")} />
         </div>
       </aside>
 
@@ -4354,7 +4360,6 @@ export function Studio() {
         {view === "home" && (
           <StudioHome
             firstName={firstName}
-            clientName={activeClient?.name}
             onRecipe={openRecipe}
             onOpen={(destination) => {
               if (destination === "t2i" || destination === "t2v") openTool(destination);
@@ -4958,48 +4963,28 @@ export function Studio() {
                     </Select>
                     {/* The dock's client/project chips only exist in Create,
                         so Library carries its own scope control. */}
-                    <Select
+                    <SearchPicker
                       value={activeClientId ?? "all"}
-                      onValueChange={(v) =>
-                        onActiveClientChange(v === "all" ? null : v)
-                      }
-                    >
-                      <SelectTrigger
-                        aria-label="Filter by client"
-                        className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All clients</SelectItem>
-                        {clients.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Select
+                      onValueChange={(value) => onActiveClientChange(value === "all" ? null : value)}
+                      options={[
+                        { value: "all", label: "All clients" },
+                        ...clients.map((client) => ({ value: client.id, label: client.name })),
+                      ]}
+                      label="Filter by client"
+                      placeholder="All clients"
+                      className="h-10 min-w-[7rem] shrink-0 border-border bg-card px-4"
+                    />
+                    <SearchPicker
                       value={activeProjectId ?? "all"}
-                      onValueChange={(v) =>
-                        setActiveProjectId(v === "all" ? null : v)
-                      }
-                    >
-                      <SelectTrigger
-                        aria-label="Filter by project"
-                        className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs"
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All projects</SelectItem>
-                        {projects.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onValueChange={(value) => setActiveProjectId(value === "all" ? null : value)}
+                      options={[
+                        { value: "all", label: "All projects" },
+                        ...projects.map((project) => ({ value: project.id, label: project.name })),
+                      ]}
+                      label="Filter by project"
+                      placeholder="All projects"
+                      className="h-10 min-w-[7rem] shrink-0 border-border bg-card px-4"
+                    />
                     <Select
                       value={sortOrder}
                       onValueChange={(v) =>
@@ -6269,28 +6254,22 @@ export function Studio() {
                   {mode === "t2v" && videoWorkflow === "create" && (
                     <button
                       type="button"
-                      disabled={
-                        uploadingVideoSource ||
-                        videoSources.length >= MAX_VIDEO_IMAGES
-                      }
-                      onClick={() => videoFileInput.current?.click()}
-                      aria-label="Attach images"
+                      onClick={() => setReferenceChooserOpen(true)}
+                      aria-label="Add references"
                       className={cn(
-                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50",
-                        videoSources.length > 0 &&
+                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground",
+                        (videoSources.length > 0 || videoRefSources.length > 0) &&
                           "border-gold/30 text-foreground"
                       )}
                     >
-                      {uploadingVideoSource ? (
+                      {uploadingVideoSource || uploadingVideoRef ? (
                         <Loader2 className="size-3.5 animate-spin" />
                       ) : (
                         <Paperclip className="size-3.5" />
                       )}
-                      {videoSources.length === 0
-                        ? "Attach"
-                        : firstFrame
-                          ? "First frame"
-                          : `${videoSources.length} images`}
+                      {videoSources.length + videoRefSources.length > 0
+                        ? `${videoSources.length + videoRefSources.length} references`
+                        : "References"}
                     </button>
                   )}
 
@@ -6320,34 +6299,7 @@ export function Studio() {
                     </button>
                   )}
 
-                  {mode === "t2v" && videoWorkflow === "create" && !videoEditSource && (
-                    <button
-                      type="button"
-                      disabled={
-                        uploadingVideoRef ||
-                        videoRefSources.length >= MAX_REFERENCE_VIDEOS
-                      }
-                      onClick={() => videoRefFileInput.current?.click()}
-                      aria-label="Attach reference video"
-                      title="Subject, motion or style reference — not an edit source"
-                      className={cn(
-                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50",
-                        videoRefSources.length > 0 &&
-                          "border-gold/30 text-foreground"
-                      )}
-                    >
-                      {uploadingVideoRef ? (
-                        <Loader2 className="size-3.5 animate-spin" />
-                      ) : (
-                        <Film className="size-3.5" />
-                      )}
-                      {videoRefSources.length === 0
-                        ? "Ref video"
-                        : `${videoRefSources.length} ref video`}
-                    </button>
-                  )}
-
-                  <button
+                  {mode === "t2i" && <button
                     type="button"
                     onClick={() => setRefLibOpen(true)}
                     aria-label="Pick from reference library"
@@ -6355,27 +6307,7 @@ export function Studio() {
                   >
                     <Boxes className="size-3.5" />
                     References
-                  </button>
-
-                  {mode === "t2v" && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setAssetIdOpen((o) => {
-                          if (!o) void loadAssets();
-                          return !o;
-                        })
-                      }
-                      aria-label="Attach verified asset"
-                      className={cn(
-                        "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground",
-                        assetIdOpen && "border-gold/30 text-foreground"
-                      )}
-                    >
-                      <ShieldCheck className="size-3.5" />
-                      Verified faces
-                    </button>
-                  )}
+                  </button>}
 
                   {mode === "t2v" && (
                     <button
@@ -6548,21 +6480,22 @@ export function Studio() {
               )}
 
               {mode === "t2v" && (
-                <button
-                  type="button"
-                  aria-pressed={generateAudio || audioSources.length > 0}
-                  disabled={audioSources.length > 0}
-                  onClick={() => setGenerateAudio((value) => !value)}
+                <label
                   title={
                     audioSources.length
                       ? "Reference audio requires sound output"
                       : "Generate sound with the video"
                   }
-                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs disabled:opacity-60"
+                  className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
                 >
-                  <AudioLines className="size-3.5" />
-                  {generateAudio || audioSources.length ? "Sound on" : "Sound off"}
-                </button>
+                  <span>Sound</span>
+                  <Switch
+                    checked={generateAudio || audioSources.length > 0}
+                    disabled={audioSources.length > 0}
+                    onCheckedChange={setGenerateAudio}
+                    aria-label="Generate sound"
+                  />
+                </label>
               )}
               <span data-tour="output" className="inline-flex items-center gap-2">
               {mode === "t2i" && googleModel === "nano-banana" ? (
@@ -6575,7 +6508,6 @@ export function Studio() {
                 </span>
               ) : (
               <ChipPopover
-                label="Ratio"
                 value={aspect}
                 active={false}
                 icon={<AspectIcon ratio={aspect} />}
@@ -6656,7 +6588,6 @@ export function Studio() {
                   </span>
                 ) : mode === "t2v" ? (
                     <ChipPopover
-                      label="Duration"
                       value={`${durationS}s`}
                       icon={<Clock className="size-3.5" />}
                       active={false}
@@ -6839,54 +6770,44 @@ export function Studio() {
                     <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                       Client
                     </span>
-                    <Select
+                    <SearchPicker
                       value={saveRefClientId ?? "none"}
-                      onValueChange={(v) => {
-                        setSaveRefClientId(v === "none" ? null : v);
+                      onValueChange={(value) => {
+                        setSaveRefClientId(value === "none" ? null : value);
                         setSaveRefProjectId(null);
                       }}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Shared (no client)</SelectItem>
-                        {clients.map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={[
+                        { value: "none", label: "Shared (no client)" },
+                        ...clients.map((client) => ({ value: client.id, label: client.name })),
+                      ]}
+                      label="Choose client"
+                      placeholder="Shared"
+                      className="h-9 w-full justify-start rounded-lg"
+                    />
                   </div>
                   <div className="space-y-1">
                     <span className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                       Project
                     </span>
-                    <Select
+                    <SearchPicker
                       value={saveRefProjectId ?? "none"}
-                      onValueChange={(v) =>
-                        setSaveRefProjectId(v === "none" ? null : v)
+                      onValueChange={(value) =>
+                        setSaveRefProjectId(value === "none" ? null : value)
                       }
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">Client-wide</SelectItem>
-                        {projects
+                      options={[
+                        { value: "none", label: "Client-wide" },
+                        ...projects
                           .filter(
                             (p) =>
                               !saveRefClientId ||
                               p.client_id === saveRefClientId
                           )
-                          .map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                          .map((project) => ({ value: project.id, label: project.name })),
+                      ]}
+                      label="Choose project"
+                      placeholder="Client-wide"
+                      className="h-9 w-full justify-start rounded-lg"
+                    />
                   </div>
                 </div>
 
@@ -7047,6 +6968,78 @@ export function Studio() {
                   }
                 }}
               />
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={referenceChooserOpen} onOpenChange={setReferenceChooserOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Add references</DialogTitle>
+              </DialogHeader>
+              <p className="text-xs text-muted-foreground">
+                Add what the video should look like, who appears in it, or how it should move.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  disabled={videoSources.length >= MAX_VIDEO_IMAGES}
+                  onClick={() => {
+                    setReferenceChooserOpen(false);
+                    videoFileInput.current?.click();
+                  }}
+                  className="rounded-xl border border-border p-4 text-left transition hover:bg-white/5 disabled:opacity-40"
+                >
+                  <ImageIcon className="size-5 text-gold" />
+                  <strong className="mt-3 block text-sm">Images</strong>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    First frame, character, product, place, or visual style.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={videoRefSources.length >= MAX_REFERENCE_VIDEOS}
+                  onClick={() => {
+                    setReferenceChooserOpen(false);
+                    videoRefFileInput.current?.click();
+                  }}
+                  className="rounded-xl border border-border p-4 text-left transition hover:bg-white/5 disabled:opacity-40"
+                >
+                  <Film className="size-5 text-gold" />
+                  <strong className="mt-3 block text-sm">Video clip</strong>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Copy movement, camera language, timing, or style from a clip.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReferenceChooserOpen(false);
+                    setRefLibOpen(true);
+                  }}
+                  className="rounded-xl border border-border p-4 text-left transition hover:bg-white/5"
+                >
+                  <Boxes className="size-5 text-gold" />
+                  <strong className="mt-3 block text-sm">Saved references</strong>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Reuse images already saved for this client.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReferenceChooserOpen(false);
+                    void loadAssets();
+                    setAssetIdOpen(true);
+                  }}
+                  className="rounded-xl border border-border p-4 text-left transition hover:bg-white/5"
+                >
+                  <ShieldCheck className="size-5 text-gold" />
+                  <strong className="mt-3 block text-sm">People</strong>
+                  <span className="mt-1 block text-xs text-muted-foreground">
+                    Verify a person once, then reuse them in future videos.
+                  </span>
+                </button>
+              </div>
             </DialogContent>
           </Dialog>
 

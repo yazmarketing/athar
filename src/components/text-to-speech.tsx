@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   BookOpen,
   Briefcase,
+  Building2,
   Clapperboard,
   ChevronDown,
   Clock,
@@ -24,16 +25,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { VoiceLibraryDialog } from "@/components/voice-library-dialog";
+import { SearchPicker } from "@/components/search-picker";
 import { Waveform } from "@/components/waveform";
 import { ProgressBar } from "@/components/generation-progress";
 import {
@@ -736,24 +731,17 @@ export function TextToSpeech({
               <label className="text-[11px] text-muted-foreground">
                 Client{clients.length > 0 && <span className="text-red-400"> *</span>}
               </label>
-              <Select
+              <SearchPicker
                 value={clientId ?? NO_CLIENT}
-                onValueChange={(v) => setClientId(v === NO_CLIENT ? null : v)}
-              >
-                <SelectTrigger className="h-9 text-xs">
-                  <SelectValue placeholder="Pick a client" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.length === 0 && (
-                    <SelectItem value={NO_CLIENT}>No clients yet</SelectItem>
-                  )}
-                  {clients.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(value) => setClientId(value === NO_CLIENT ? null : value)}
+                options={clients.length
+                  ? clients.map((client) => ({ value: client.id, label: client.name }))
+                  : [{ value: NO_CLIENT, label: "No clients yet" }]}
+                label="Choose client"
+                placeholder="Pick a client"
+                icon={<Building2 className="size-3.5" />}
+                className="h-9 w-full justify-start rounded-lg"
+              />
             </div>
 
             <div className="space-y-1.5">

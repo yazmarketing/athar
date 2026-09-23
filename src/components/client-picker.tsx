@@ -12,24 +12,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { RenameDialog } from "@/components/rename-dialog";
+import { SearchPicker } from "@/components/search-picker";
 import { cn } from "@/lib/utils";
 import type { ClientRecord } from "@/lib/types";
 
 export const ACTIVE_CLIENT_STORAGE_KEY = "yaz-motion-active-client";
-
-/** Sentinels for the actions folded into the dropdown in compact mode. */
-const NEW = "__new__";
-const RENAME = "__rename__";
-const DELETE = "__delete__";
 
 type Props = {
   activeClientId: string | null;
@@ -125,18 +113,6 @@ export function ClientPicker({
   };
 
   const handleValueChange = (v: string) => {
-    if (v === NEW) {
-      setCreateOpen(true);
-      return;
-    }
-    if (v === RENAME) {
-      setRenameOpen(true);
-      return;
-    }
-    if (v === DELETE) {
-      void onDelete();
-      return;
-    }
     onActiveClientChange(v === "all" ? null : v);
   };
 
@@ -202,38 +178,33 @@ export function ClientPicker({
     const unset = !activeClient;
     return (
       <>
-        <Select value={activeClientId ?? ""} onValueChange={handleValueChange}>
-          <SelectTrigger
-            aria-label="Client"
-            className={cn(
-              "h-8 w-auto gap-1.5 rounded-full border px-3 text-xs transition",
-              unset
-                ? "border-gold/40 bg-gold/10 text-foreground"
-                : "border-white/10 bg-white/5 text-muted-foreground hover:text-foreground",
-              className
-            )}
-          >
-            <Building2 className="size-3.5 shrink-0" />
-            <SelectValue placeholder="Select client">
-              {activeClient?.name}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {clients.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-            {clients.length > 0 && <SelectSeparator />}
-            <SelectItem value={NEW}>＋ New client…</SelectItem>
-            {activeClient && (
-              <SelectItem value={RENAME}>✎ Rename “{activeClient.name}”…</SelectItem>
-            )}
-            {activeClient && (
-              <SelectItem value={DELETE}>🗑 Delete “{activeClient.name}”…</SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        <SearchPicker
+          value={activeClientId}
+          onValueChange={handleValueChange}
+          options={clients.map((client) => ({
+            value: client.id,
+            label: client.name,
+            description: client.project_count == null
+              ? undefined
+              : `${client.project_count} project${client.project_count === 1 ? "" : "s"}`,
+          }))}
+          label="Choose client"
+          placeholder="Select client"
+          icon={<Building2 className="size-3.5 shrink-0" />}
+          className={cn(
+            unset && "border-gold/40 bg-gold/10 text-foreground",
+            className
+          )}
+          actions={[
+            { label: "＋ New client", onSelect: () => setCreateOpen(true) },
+            ...(activeClient
+              ? [
+                  { label: `✎ Rename “${activeClient.name}”`, onSelect: () => setRenameOpen(true) },
+                  { label: `Delete “${activeClient.name}”`, onSelect: () => void onDelete(), destructive: true },
+                ]
+              : []),
+          ]}
+        />
         {dialogs}
       </>
     );
@@ -269,41 +240,25 @@ export function ClientPicker({
         </div>
       </div>
 
-      <Select
+      <SearchPicker
         value={activeClientId ?? "all"}
-        onValueChange={(v) => onActiveClientChange(v === "all" ? null : v)}
-      >
-        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
-          <div className="flex min-w-0 items-center gap-2">
-            <Building2 className="size-3.5 shrink-0 text-muted-foreground" />
-            <SelectValue placeholder="All clients">
-              {activeClient ? activeClient.name : "All clients"}
-            </SelectValue>
-          </div>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All clients</SelectItem>
-          {clients.map((c) => (
-            <SelectItem key={c.id} value={c.id}>
-              <span className="flex flex-col items-start gap-0.5 py-0.5">
-                <span>{c.name}</span>
-                <span className="text-[10px] text-muted-foreground">
-                  {[
-                    c.project_count != null
-                      ? `${c.project_count} project${c.project_count === 1 ? "" : "s"}`
-                      : null,
-                    c.brand_kit_count != null
-                      ? `${c.brand_kit_count} kit${c.brand_kit_count === 1 ? "" : "s"}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        onValueChange={(value) => onActiveClientChange(value === "all" ? null : value)}
+        options={[
+          { value: "all", label: "All clients" },
+          ...clients.map((client) => ({
+            value: client.id,
+            label: client.name,
+            description: [
+              client.project_count != null ? `${client.project_count} projects` : null,
+              client.brand_kit_count != null ? `${client.brand_kit_count} kits` : null,
+            ].filter(Boolean).join(" · "),
+          })),
+        ]}
+        label="Choose client"
+        placeholder="All clients"
+        icon={<Building2 className="size-3.5 shrink-0" />}
+        className="h-9 w-full justify-start rounded-lg border-sidebar-border bg-sidebar-accent/50"
+      />
 
       {dialogs}
     </div>

@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import { toast } from "sonner";
 import {
   ArrowLeft,
+  Building2,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -38,6 +39,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ReferenceLibrary } from "@/components/reference-library";
+import { SearchPicker } from "@/components/search-picker";
 import {
   composeFrameNegative,
   composeFramePrompt,
@@ -1055,10 +1057,10 @@ ${panels}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Select
+          <SearchPicker
             value={board.client_id ?? NO_CLIENT}
-            onValueChange={(v) => {
-              const id = v === NO_CLIENT ? null : v;
+            onValueChange={(value) => {
+              const id = value === NO_CLIENT ? null : value;
               void patchBoard(
                 { clientId: id },
                 {
@@ -1068,19 +1070,14 @@ ${panels}
                 }
               );
             }}
-          >
-            <SelectTrigger className="h-8 w-auto min-w-[8rem] text-xs">
-              <SelectValue placeholder="Client" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_CLIENT}>No client</SelectItem>
-              {clients.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={[
+              { value: NO_CLIENT, label: "No client" },
+              ...clients.map((client) => ({ value: client.id, label: client.name })),
+            ]}
+            label="Choose client"
+            placeholder="Client"
+            icon={<Building2 className="size-3.5" />}
+          />
           <Select
             value={board.aspect}
             onValueChange={(v) => void patchBoard({ aspect: v })}
@@ -1612,19 +1609,17 @@ function BoardList({
         </p>
         {/* An explicit filter, defaulting to everything — the board list is
             never silently narrowed by whatever client the dock has active. */}
-        <Select value={filterClientId} onValueChange={onFilterClientChange}>
-          <SelectTrigger className="h-8 w-auto min-w-[9rem] text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All clients</SelectItem>
-            {clients.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {c.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchPicker
+          value={filterClientId}
+          onValueChange={onFilterClientChange}
+          options={[
+            { value: "all", label: "All clients" },
+            ...clients.map((client) => ({ value: client.id, label: client.name })),
+          ]}
+          label="Filter by client"
+          placeholder="All clients"
+          icon={<Building2 className="size-3.5" />}
+        />
         <div className="flex-1" />
         <Button
           className="gap-2 bg-gold text-primary-foreground hover:bg-gold/90"
@@ -1762,22 +1757,18 @@ function CreateDialog({
               <label className="text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
                 Client
               </label>
-              <Select
+              <SearchPicker
                 value={clientId ?? NO_CLIENT}
-                onValueChange={(v) => setClientId(v === NO_CLIENT ? null : v)}
-              >
-                <SelectTrigger className="mt-1.5 w-full">
-                  <SelectValue placeholder="Client" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_CLIENT}>No client</SelectItem>
-                  {clients.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onValueChange={(value) => setClientId(value === NO_CLIENT ? null : value)}
+                options={[
+                  { value: NO_CLIENT, label: "No client" },
+                  ...clients.map((client) => ({ value: client.id, label: client.name })),
+                ]}
+                label="Choose client"
+                placeholder="Client"
+                icon={<Building2 className="size-3.5" />}
+                className="mt-1.5 h-9 w-full justify-start rounded-lg"
+              />
             </div>
           </div>
 

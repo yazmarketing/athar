@@ -16,16 +16,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { MediaDetailNav } from "@/components/media-detail-nav";
 import { ShareDialog, ShareOption } from "@/components/share-dialog";
 import { GenerationRating } from "@/components/generation-rating";
+import { SearchPicker } from "@/components/search-picker";
 import { cn } from "@/lib/utils";
 import type {
   ClientRecord,
@@ -515,28 +509,22 @@ export function VideoDetail({
                       </>
                     )}
                   </p>
-                  <Select
+                  <SearchPicker
                     value={g.project_id ?? "none"}
-                    onValueChange={(v) => void handleProjectChange(v)}
+                    onValueChange={(value) => void handleProjectChange(value)}
                     disabled={movingProject}
-                  >
-                    <SelectTrigger className="h-9 w-full max-w-xs border-white/10 bg-white/5 text-xs">
-                      <SelectValue>
-                        {movingProject
-                          ? "Moving…"
-                          : (currentProject?.name ?? "No project")}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No project</SelectItem>
-                      {projects.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                          {p.client ? ` · ${p.client}` : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    options={[
+                      { value: "none", label: "No project" },
+                      ...projects.map((project) => ({
+                        value: project.id,
+                        label: project.name,
+                        description: project.client ?? undefined,
+                      })),
+                    ]}
+                    label="Move to project"
+                    placeholder={movingProject ? "Moving…" : currentProject?.name ?? "No project"}
+                    className="h-9 w-full max-w-xs justify-start rounded-lg"
+                  />
                 </div>
               )}
             </section>

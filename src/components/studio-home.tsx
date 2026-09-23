@@ -9,17 +9,16 @@ import styles from "./studio-home.module.css";
 export type StudioHomeDestination = "storyboard" | "t2i" | "t2v" | "tts" | "transcribe" | "library" | "assets";
 type StudioHomeProps = {
   firstName: string;
-  clientName?: string;
   onOpen: (destination: StudioHomeDestination) => void;
   onRecipe: (recipe: VideoRecipe) => void;
   progressContent?: ReactNode;
 };
 
-export function StudioHome({ firstName, clientName, onOpen, onRecipe, progressContent }: StudioHomeProps) {
+export function StudioHome({ firstName, onOpen, onRecipe, progressContent }: StudioHomeProps) {
   return <div className={styles.scroll}><div className={styles.page}>
-    <header className={styles.header}><div><h1>Explore</h1><p>{firstName ? `${firstName}, find your next direction.` : "Find your next direction."}{clientName ? ` · ${clientName}` : ""}</p></div></header>
+    <header className={styles.header}><div><h1>Explore</h1><p>{firstName ? `${firstName}, find your next direction.` : "Find your next direction."}</p></div></header>
     <section className={styles.hero} aria-label="Create with Athar">
-      <div className={styles.heroCopy}><span className={styles.tag}>ATHAR / VIDEO STUDIO</span><h2>Make something<br /><em>worth watching.</em></h2><p>From the first frame to the final take.<br />Generate video with your references, your look, your control.</p><button type="button" onClick={() => onOpen("t2v")}>Create a video <ArrowRight size={17} /></button></div>
+      <div className={styles.heroCopy}><h2>Make something<br /><em>worth watching.</em></h2><button type="button" onClick={() => onOpen("t2v")}>Create a video <ArrowRight size={17} /></button></div>
     </section>
     <div className={styles.shortcuts} aria-label="Creative tools">{[
       { id: "t2v", title: "Video", detail: "Text, image & video references", icon: Clapperboard },

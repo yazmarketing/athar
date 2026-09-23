@@ -12,25 +12,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectSeparator,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { RenameDialog } from "@/components/rename-dialog";
+import { SearchPicker } from "@/components/search-picker";
 import { cn } from "@/lib/utils";
 import type { ProjectRecord } from "@/lib/types";
 
 export const ACTIVE_PROJECT_STORAGE_KEY = "yaz-motion-active-project";
-
-/** Sentinels for the actions folded into the dropdown in compact mode. */
-const NEW = "__new__";
-const RENAME = "__rename__";
-const DELETE = "__delete__";
-const CAP = "__cap__";
 
 type Props = {
   activeProjectId: string | null;
@@ -243,63 +230,47 @@ export function ProjectPicker({
   };
 
   const handleValueChange = (v: string) => {
-    if (v === NEW) {
-      setCreateOpen(true);
-      return;
-    }
-    if (v === RENAME) {
-      setRenameOpen(true);
-      return;
-    }
-    if (v === DELETE) {
-      void onDelete();
-      return;
-    }
-    if (v === CAP) {
-      setCap(activeProject?.spend_cap == null ? "" : String(activeProject.spend_cap));
-      setCapOpen(true);
-      return;
-    }
     onActiveProjectChange(v === "all" ? null : v);
   };
 
   if (compact) {
     return (
       <>
-        <Select value={activeProjectId ?? "all"} onValueChange={handleValueChange}>
-          <SelectTrigger
-            aria-label="Project"
-            className={cn(
-              "h-8 w-auto gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground",
-              activeProject && "text-foreground",
-              className
-            )}
-          >
-            <FolderKanban className="size-3.5 shrink-0" />
-            <SelectValue>{activeProject?.name ?? (clientId ? "Choose project" : "Choose client first")}</SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all" disabled={required}>
-              {clientId ? "Choose project" : "Choose client first"}
-            </SelectItem>
-            {projects.map((p) => (
-              <SelectItem key={p.id} value={p.id}>
-                {p.name}
-              </SelectItem>
-            ))}
-            <SelectSeparator />
-            <SelectItem value={NEW} disabled={!clientId}>＋ New project…</SelectItem>
-            {activeProject && (
-              <SelectItem value={RENAME}>✎ Rename “{activeProject.name}”…</SelectItem>
-            )}
-            {activeProject && canManageSpend && (
-              <SelectItem value={CAP}>$ Set spend cap…</SelectItem>
-            )}
-            {activeProject && (
-              <SelectItem value={DELETE}>🗑 Delete “{activeProject.name}”…</SelectItem>
-            )}
-          </SelectContent>
-        </Select>
+        <SearchPicker
+          value={activeProjectId}
+          onValueChange={handleValueChange}
+          options={projects.map((project) => ({
+            value: project.id,
+            label: project.name,
+            description: project.generation_count == null
+              ? undefined
+              : `${project.generation_count} item${project.generation_count === 1 ? "" : "s"}`,
+          }))}
+          label="Choose project"
+          placeholder={clientId ? "Choose project" : "Choose client first"}
+          icon={<FolderKanban className="size-3.5 shrink-0" />}
+          disabled={!clientId}
+          className={cn(activeProject && "text-foreground", className)}
+          actions={[
+            ...(!required ? [{ label: "No project", onSelect: () => onActiveProjectChange(null) }] : []),
+            { label: "＋ New project", onSelect: () => setCreateOpen(true), disabled: !clientId },
+            ...(activeProject
+              ? [
+                  { label: `✎ Rename “${activeProject.name}”`, onSelect: () => setRenameOpen(true) },
+                  ...(canManageSpend
+                    ? [{
+                        label: "$ Set spend cap",
+                        onSelect: () => {
+                          setCap(activeProject.spend_cap == null ? "" : String(activeProject.spend_cap));
+                          setCapOpen(true);
+                        },
+                      }]
+                    : []),
+                  { label: `Delete “${activeProject.name}”`, onSelect: () => void onDelete(), destructive: true },
+                ]
+              : []),
+          ]}
+        />
         {dialogs}
       </>
     );
@@ -335,36 +306,25 @@ export function ProjectPicker({
         </div>
       </div>
 
-      <Select
+      <SearchPicker
         value={activeProjectId ?? "all"}
-        onValueChange={(v) => onActiveProjectChange(v === "all" ? null : v)}
-      >
-        <SelectTrigger className="h-9 w-full border-sidebar-border bg-sidebar-accent/50 px-3 text-xs">
-          <div className="flex min-w-0 items-center gap-2">
-            <FolderKanban className="size-3.5 shrink-0 text-muted-foreground" />
-            <SelectValue placeholder="All projects">
-              {activeProject ? activeProject.name : "All projects"}
-            </SelectValue>
-          </div>
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">All projects</SelectItem>
-          {projects.map((p) => (
-            <SelectItem key={p.id} value={p.id}>
-              <span className="flex flex-col items-start gap-0.5 py-0.5">
-                <span>{p.name}</span>
-                {(p.client || p.generation_count != null) && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {[p.client, p.generation_count != null ? `${p.generation_count} items` : null]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                )}
-              </span>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        onValueChange={(value) => onActiveProjectChange(value === "all" ? null : value)}
+        options={[
+          { value: "all", label: "All projects" },
+          ...projects.map((project) => ({
+            value: project.id,
+            label: project.name,
+            description: [
+              project.client,
+              project.generation_count != null ? `${project.generation_count} items` : null,
+            ].filter(Boolean).join(" · "),
+          })),
+        ]}
+        label="Choose project"
+        placeholder="All projects"
+        icon={<FolderKanban className="size-3.5 shrink-0" />}
+        className="h-9 w-full justify-start rounded-lg border-sidebar-border bg-sidebar-accent/50"
+      />
 
       {dialogs}
     </div>
