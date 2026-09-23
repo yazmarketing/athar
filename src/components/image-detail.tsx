@@ -623,7 +623,7 @@ export function ImageDetail({
                   onClick={() => onUpscale(g)}
                 >
                   <ArrowUpToLine className="size-4" />
-                  Upscale
+                  Resize / enhance
                 </Button>
               )}
               {onSaveReference && (
@@ -648,7 +648,7 @@ export function ImageDetail({
                   ) : (
                     <Eraser className="size-4" />
                   )}
-                  Remove background
+                  White backdrop
                 </Button>
               )}
               <Button
@@ -748,10 +748,10 @@ export function ImageDetail({
         <ConfirmDialog
           open={confirmBgOpen}
           onOpenChange={setConfirmBgOpen}
-          title="Remove the background?"
-          description="Re-renders this image with the subject cut out onto plain white."
+          title="Generate a white backdrop?"
+          description="AI redraws the image on solid white. Subject details may change. This does not create a transparent cutout."
           cost={BACKGROUND_REMOVE_MODEL.costPerUnit}
-          confirmLabel="Remove background"
+          confirmLabel="Generate white backdrop"
           onConfirm={async () => {
             setRemovingBg(true);
             try {

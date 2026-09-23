@@ -44,7 +44,7 @@ type Props = {
 };
 
 export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
-  const [mode, setMode] = useState<"creative" | "precision">("creative");
+  const [mode, setMode] = useState<"resize" | "creative" | "precision">("resize");
   const [scale, setScale] = useState<2 | 4>(2);
   const [busy, setBusy] = useState(false);
   // Second click confirms the spend. Any settings change disarms it, so the
@@ -56,7 +56,8 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
   });
 
   const isBatch = sources.length > 1;
-  const cost = UPSCALE_MODELS[mode].costPerUnit * sources.length;
+  const cost = mode === "resize" ? 0 : UPSCALE_MODELS[mode].costPerUnit * sources.length;
+  const targetLabel = mode === "resize" ? `${scale}×` : `${scale}K`;
 
   const run = async () => {
     if (busy || sources.length === 0) return;
@@ -92,10 +93,10 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
     if (results.length > 0) {
       toast.success(
         isBatch
-          ? `Upscaled ${results.length}/${sources.length} images${
+          ? `Finished ${results.length}/${sources.length} images${
               failed > 0 ? ` — ${failed} failed` : ""
             }`
-          : `Upscaled ${scale}× (${mode})`
+          : mode === "resize" ? `Resized ${scale}× without AI` : `AI redraw saved at ${scale}K — review the details`
       );
       onOpenChange(false);
       onDone(results);
@@ -117,12 +118,12 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
         <DialogHeader className="min-w-0 pr-8">
           <DialogTitle className="flex min-w-0 items-center gap-2">
             <ArrowUpToLine className="size-4 shrink-0 text-gold" />
-            {isBatch ? `Upscale ${sources.length} images` : "Upscale image"}
+            {isBatch ? `Resize / enhance ${sources.length} images` : "Resize / enhance image"}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {isBatch
               ? "One configuration applied to every selected image. Each result is a new Library entry."
-              : "Creates a new Library entry. Uploaded Assets photos also update to the sharper version."}
+              : "Creates a new Library entry. For a saved reference asset, the result becomes a new version."}
           </DialogDescription>
         </DialogHeader>
 
@@ -155,18 +156,23 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
         <div className="min-w-0 space-y-4">
           <div className="min-w-0">
             <p className="mb-1.5 text-xs text-muted-foreground">Mode</p>
-            <div className="grid min-w-0 grid-cols-2 gap-2">
+            <div className="grid min-w-0 gap-2">
               {(
                 [
                   {
+                    id: "resize",
+                    label: "Resize · no AI",
+                    hint: "Enlarge existing pixels; preserve content and transparency. No new detail is generated.",
+                  },
+                  {
                     id: "creative",
-                    label: "Creative",
-                    hint: "Richer texture & detail",
+                    label: "Creative redraw · AI",
+                    hint: "Generate richer texture. Faces, products and lettering may change.",
                   },
                   {
                     id: "precision",
-                    label: "Precision",
-                    hint: "Stay close to the original",
+                    label: "Conservative redraw · AI",
+                    hint: "Ask AI to stay close to the original. Exact preservation is not guaranteed.",
                   },
                 ] as const
               ).map((m) => (
@@ -196,7 +202,7 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
           </div>
 
           <div className="min-w-0">
-            <p className="mb-1.5 text-xs text-muted-foreground">Scale</p>
+            <p className="mb-1.5 text-xs text-muted-foreground">{mode === "resize" ? "Scale (each dimension)" : "Target resolution (not a scale multiplier)"}</p>
             <div className="grid min-w-0 grid-cols-2 gap-2">
               {([2, 4] as const).map((s) => (
                 <button
@@ -213,14 +219,15 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
                       : "border-white/10 bg-white/5 hover:border-white/20"
                   )}
                 >
-                  {s}×
+                  {s}{mode === "resize" ? "×" : "K"}
                 </button>
               ))}
             </div>
           </div>
         </div>
 
-        {armed && !busy && (
+        {mode === "resize" && <p className="text-xs text-muted-foreground">No model charge. Maximum output: 64 megapixels. This enlarges the image without recovering missing detail.</p>}
+        {armed && !busy && mode !== "resize" && (
           <p className="rounded-lg bg-gold-soft/50 px-3 py-2 text-xs text-muted-foreground">
             This runs {isBatch ? `${sources.length} renders` : "a render"} and
             costs about{" "}
@@ -242,21 +249,21 @@ export function UpscaleDialog({ sources, open, onOpenChange, onDone }: Props) {
           <Button
             className="h-11 min-w-0 flex-1 whitespace-normal rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
             disabled={busy}
-            onClick={() => (armed ? void run() : setArmed(true))}
+            onClick={() => (mode === "resize" || armed ? void run() : setArmed(true))}
           >
             {busy ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
                 {isBatch
-                  ? `Upscaling ${progress.done + progress.failed + 1}/${sources.length}…`
-                  : "Upscaling — usually under a minute…"}
+                  ? `Processing ${progress.done + progress.failed + 1}/${sources.length}…`
+                  : mode === "resize" ? "Resizing…" : "Redrawing…"}
               </>
             ) : armed ? (
               `Confirm — spend ~$${cost.toFixed(2)}`
             ) : isBatch ? (
-              `Upscale ${sources.length} images ${scale}×`
+              `${mode === "resize" ? "Resize" : "Redraw"} ${sources.length} images ${targetLabel}`
             ) : (
-              `Upscale ${scale}×`
+              `${mode === "resize" ? "Resize" : "Redraw"} ${targetLabel}`
             )}
           </Button>
         </div>

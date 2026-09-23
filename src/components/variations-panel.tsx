@@ -111,11 +111,11 @@ export function VariationsPanel({
   const [imageModelId, setImageModelId] = useState<string>(() =>
     imageModelIdFromEndpoint(
       source.model_endpoint,
-      source.tier === "draft" ? "standard" : source.tier
+      source.tier
     )
   );
   const [aspect, setAspect] = useState<AspectRatio>(asAspect(source.aspect));
-  const [resolution, setResolution] = useState<ImageResolution>("1K");
+  const [resolution, setResolution] = useState<ImageResolution>("2K");
   const [results, setResults] = useState<GenerationRecord[]>([]);
 
   const cost = useMemo(

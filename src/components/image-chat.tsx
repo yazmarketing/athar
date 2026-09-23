@@ -140,15 +140,13 @@ export function ImageChat({
   const [imageModelId, setImageModelId] = useState<string>(() =>
     imageModelIdFromEndpoint(
       generation?.model_endpoint,
-      generation?.tier === "draft" || !generation
-        ? "standard"
-        : generation.tier
+      generation?.tier ?? "standard"
     )
   );
   const [aspect, setAspect] = useState<AspectRatio>(
     asAspect(generation?.aspect)
   );
-  const [resolution, setResolution] = useState<ImageResolution>("1K");
+  const [resolution, setResolution] = useState<ImageResolution>("2K");
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     generation?.output_url
       ? [
@@ -205,7 +203,7 @@ export function ImageChat({
       setImageModelId(
         imageModelIdFromEndpoint(
           generation.model_endpoint,
-          generation.tier === "draft" ? "standard" : generation.tier
+          generation.tier
         )
       );
       setAspect(asAspect(generation.aspect));
@@ -240,18 +238,18 @@ export function ImageChat({
       return;
     }
     const remaining = MAX_EXTRA_REFS - extraRefs.length;
-    if (remaining <= 0) {
+    if (list.length > remaining) {
       toast.error(`Up to ${MAX_EXTRA_REFS} extra references`);
       return;
     }
-    const batch = list.slice(0, remaining);
+    const batch = list;
     setUploadingRef(true);
     try {
       const urls: string[] = [];
       for (const file of batch) {
         urls.push(await uploadReference(file));
       }
-      setExtraRefs((prev) => [...prev, ...urls].slice(0, MAX_EXTRA_REFS));
+      setExtraRefs((prev) => [...prev, ...urls]);
       toast.success(
         urls.length === 1 ? "Reference added" : `${urls.length} references added`
       );

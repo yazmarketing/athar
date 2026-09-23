@@ -113,7 +113,7 @@ const I2V: CapabilityConfig = {
       slug: "dreamina-seedance-2-0-mini-260615",
       costPerUnit: 0.03,
       unit: "second",
-      maxDuration: 12,
+      maxDuration: 15,
       supportsReference: true,
       supportsAudio: false,
       notes: "Seedance 2.0 Mini — cheap iterations",
@@ -161,7 +161,7 @@ const T2V: CapabilityConfig = {
       slug: "dreamina-seedance-2-0-mini-260615",
       costPerUnit: 0.03,
       unit: "second",
-      maxDuration: 12,
+      maxDuration: 15,
       supportsReference: false,
       supportsAudio: false,
       notes: "Seedance 2.0 Mini — cheap iterations",
@@ -356,7 +356,7 @@ export const UPSCALE_MODELS: Record<UpscaleMode, ModelEndpoint> = {
     maxDuration: 0,
     supportsReference: true,
     supportsAudio: false,
-    notes: "Faithful mode — Seedream i2i with strict-reproduction prompt",
+    notes: "Conservative redraw — Seedream i2i, details may change",
   },
 };
 
@@ -932,6 +932,7 @@ export function estimateCost(
  * falls back to a tidied-up version rather than leaking the raw id.
  */
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "lanczos3": "Resize (no AI)",
   "seedream-4-0-250828": "Seedream 4.0",
   "seedream-5-0-260128": "Seedream 5.0",
   "dola-seedream-5-0-pro-260628": "Seedream 5.0 Pro",

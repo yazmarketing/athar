@@ -1,4 +1,5 @@
 import "server-only";
+import { compileImageInstructions } from "@/lib/image-instructions";
 
 import {
   GOOGLE_IMAGE_MODELS,
@@ -51,10 +52,10 @@ type GeminiPart =
 
 type ImageConfig = { imageSize?: string; aspectRatio?: string };
 
-async function urlToInlinePart(url: string): Promise<GeminiPart | null> {
+async function urlToInlinePart(url: string, index: number): Promise<GeminiPart> {
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const mimeType = res.headers.get("content-type") ?? "image/png";
     const buf = Buffer.from(await res.arrayBuffer());
     // Gemini inline data is ~4/3 this size. A 29MB PNG would OOM the
@@ -67,10 +68,7 @@ async function urlToInlinePart(url: string): Promise<GeminiPart | null> {
     const data = buf.toString("base64");
     return { inlineData: { mimeType, data } };
   } catch (err) {
-    if (err instanceof Error && /too large for Nano Banana/i.test(err.message)) {
-      throw err;
-    }
-    return null;
+    throw new Error(`Reference image ${index + 1} could not be loaded. Re-upload it before generating. ${err instanceof Error ? err.message : "Download failed"}`);
   }
 }
 
@@ -116,6 +114,7 @@ async function errorDetail(res: Response): Promise<string> {
 /** Generate (or edit, when reference images are supplied) an image. */
 export async function geminiGenerateImage(opts: {
   prompt: string;
+  negativePrompt?: string;
   imageUrls?: string[];
   /** Which Gemini image model to route to. Defaults to Nano Banana. */
   model?: GoogleImageModelId;
@@ -131,15 +130,12 @@ export async function geminiGenerateImage(opts: {
   const model = geminiModelSlug(modelId);
   const label = GOOGLE_IMAGE_MODELS[modelId].label;
 
-  const parts: GeminiPart[] = [{ text: opts.prompt }];
-  for (const url of opts.imageUrls ?? []) {
-    const part = await urlToInlinePart(url);
-    if (part) parts.push(part);
+  const parts: GeminiPart[] = [{ text: compileImageInstructions(opts.prompt, opts.negativePrompt) }];
+  for (const [index, url] of (opts.imageUrls ?? []).entries()) {
+    parts.push(await urlToInlinePart(url, index));
   }
 
-  // Size/aspect are only sent when asked for. Gemini rejects the whole request
-  // on an unknown generationConfig field. Drop size first (keep the aspect),
-  // then drop the config entirely — never lose 16:9 on the first 400.
+  // Preserve requested output settings. A rejected configuration must be visible.
   const imageConfig: ImageConfig | null =
     opts.imageSize || opts.aspectRatio
       ? {
@@ -148,35 +144,7 @@ export async function geminiGenerateImage(opts: {
         }
       : null;
 
-  let res = await callGemini(key, model, parts, imageConfig);
-  if (!res.ok && imageConfig && res.status === 400) {
-    const detail = await errorDetail(res);
-    if (/image_?config|image_?size|aspect_?ratio|response_?modalit/i.test(detail)) {
-      const aspectOnly =
-        imageConfig.imageSize && imageConfig.aspectRatio
-          ? { aspectRatio: imageConfig.aspectRatio }
-          : null;
-      if (aspectOnly) {
-        res = await callGemini(key, model, parts, aspectOnly);
-        if (!res.ok && res.status === 400) {
-          const retryDetail = await errorDetail(res);
-          if (
-            /image_?config|image_?size|aspect_?ratio|response_?modalit/i.test(
-              retryDetail
-            )
-          ) {
-            res = await callGemini(key, model, parts, null);
-          } else {
-            throw new Error(`Gemini ${400}: ${retryDetail.slice(0, 300)}`);
-          }
-        }
-      } else {
-        res = await callGemini(key, model, parts, null);
-      }
-    } else {
-      throw new Error(`Gemini ${400}: ${detail.slice(0, 300)}`);
-    }
-  }
+  const res = await callGemini(key, model, parts, imageConfig);
 
   if (!res.ok) {
     const detail = await errorDetail(res);

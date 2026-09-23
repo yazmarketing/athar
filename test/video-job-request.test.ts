@@ -128,10 +128,9 @@ describe("videoRequestForJob", () => {
     expect(req.videoUrls).toBeUndefined();
   });
 
-  it("clamps reference videos to the Seedance limit of 10", () => {
+  it("rejects excess reference videos instead of dropping them", () => {
     const urls = Array.from({ length: 12 }, (_, i) => `https://cdn/v${i}.mp4`);
-    const req = videoRequestForJob(job({ input: { referenceVideoUrls: urls } }));
-    expect(req.referenceVideoUrls).toHaveLength(10);
+    expect(() => videoRequestForJob(job({ input: { referenceVideoUrls: urls } }))).toThrow("Too many references");
   });
 
   it("omits referenceVideoUrls when nothing is attached", () => {
@@ -145,10 +144,9 @@ describe("videoRequestForJob", () => {
     expect(req.audioUrls).toEqual(["https://cdn/line.mp3"]);
   });
 
-  it("clamps reference audio to the Seedance limit of 10", () => {
+  it("rejects excess reference audio instead of dropping it", () => {
     const urls = Array.from({ length: 12 }, (_, i) => `https://cdn/${i}.mp3`);
-    const req = videoRequestForJob(job({ input: { sourceAudioUrls: urls } }));
-    expect(req.audioUrls).toHaveLength(10);
+    expect(() => videoRequestForJob(job({ input: { sourceAudioUrls: urls } }))).toThrow("Too many references");
   });
 
   it("omits audioUrls when nothing is attached", () => {

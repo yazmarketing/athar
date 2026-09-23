@@ -15,6 +15,9 @@ export const maxDuration = 120;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+const WHITE_BACKDROP_PROMPT =
+  "Replace only the background with a plain solid white background. Preserve the main subject's identity, pose, geometry, colors, lighting and details, including all existing product labels and logos. Do not add text, props or shadows to the background. Keep the original framing.";
+
 export async function POST(req: NextRequest) {
   const auth = await requireCreator();
   if (auth.response) return auth.response;
@@ -57,8 +60,7 @@ export async function POST(req: NextRequest) {
     // Seedream edit: cut the subject out onto a clean studio-white backdrop
     const result = await arkGenerateImage({
       model: model.slug,
-      prompt:
-        "Remove the background completely. Keep the main subject exactly as it is — same pose, colors, lighting and details — cut out cleanly and placed on a plain solid white background. No shadows, no props, no text, nothing else in the frame.",
+      prompt: WHITE_BACKDROP_PROMPT,
       size: "2K",
       seed: source.seed ?? undefined,
       image: source.output_url,
@@ -89,7 +91,10 @@ export async function POST(req: NextRequest) {
           .prompt_inputs,
         source_generation_id: source.id,
         source_image_url: source.output_url,
-        tool: "remove_background",
+        tool: "white_backdrop",
+        generative: true,
+        transparent: false,
+        provider_prompt: WHITE_BACKDROP_PROMPT,
       },
       finalPrompt: source.final_prompt,
       negativePrompt: source.negative_prompt,

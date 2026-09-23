@@ -1,4 +1,5 @@
 import "server-only";
+import { compileImageInstructions } from "@/lib/image-instructions";
 
 /**
  * BytePlus ModelArk client (primary provider). Server-only — ARK_API_KEY
@@ -23,6 +24,7 @@ function arkKey() {
 export type ArkImageRequest = {
   model: string;
   prompt: string;
+  negativePrompt?: string;
   /** Pixel size "WxH" (multiples of 16) or resolution level "1K"/"2K" */
   size: string;
   seed?: number;
@@ -43,7 +45,7 @@ export async function arkGenerateImage(
 ): Promise<ArkImageResult> {
   const body: Record<string, unknown> = {
     model: req.model,
-    prompt: req.prompt,
+    prompt: compileImageInstructions(req.prompt, req.negativePrompt),
     size: req.size,
     seed: req.seed,
     response_format: "url",

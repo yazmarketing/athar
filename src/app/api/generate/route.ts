@@ -7,6 +7,7 @@ import { submitVideoJob } from "@/lib/video-jobs";
 import { getProject } from "@/lib/projects";
 import { checkSpendControls, similarVideoRenderCount } from "@/lib/render-guardrails";
 import { buildPrompt } from "@/lib/prompt";
+import { validateVideoSettings } from "@/config/video-capabilities";
 import {
   inferOutputSettings,
   lockPromptAspect,
@@ -16,7 +17,7 @@ import {
   resolveModel,
   asGoogleImageModel,
   asOpenAIImageModel,
-  imageAllows4K,
+  IMAGE_MODEL_CHOICES,
   maxReferenceImages,
   googleImageCost,
   openaiImageCost,
@@ -37,13 +38,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (body.mode !== "t2i" && body.mode !== "t2v") {
+  if (!body || (body.mode !== "t2i" && body.mode !== "t2v")) {
     return NextResponse.json(
       { error: "Only Text → Image and Text → Video are available" },
       { status: 400 }
     );
   }
-  if (!body.prompt?.subject?.trim()) {
+  if (!body || typeof body.prompt?.subject !== "string" || !body.prompt.subject.trim()) {
     return NextResponse.json({ error: "Subject is required" }, { status: 400 });
   }
 
@@ -91,6 +92,15 @@ export async function POST(req: NextRequest) {
 
   const mode = body.mode;
   const tier = body.tier ?? (mode === "t2v" ? "standard" : "draft");
+  if (!["draft", "standard", "hero"].includes(tier)) {
+    return NextResponse.json({ error: "Choose a supported model tier" }, { status: 400 });
+  }
+  for (const field of ["referenceUrls", "sourceImageUrls", "referenceVideoUrls", "sourceAudioUrls"] as const) {
+    const values = body[field];
+    if (values != null && (!Array.isArray(values) || values.some(value => typeof value !== "string" || !value.trim()))) {
+      return NextResponse.json({ error: `${field} must contain non-empty reference URLs. Reattach invalid references.` }, { status: 400 });
+    }
+  }
   // Dock chip wins. Inference only fills in a missing/invalid aspect — the
   // studio already mirrors director-prompt ratios onto the chip as you type,
   // so a later "21:9" token must not override a 16:9 the person just picked.
@@ -114,9 +124,18 @@ export async function POST(req: NextRequest) {
   const openaiModel =
     body.mode === "t2i" ? asOpenAIImageModel(body.imageModel) : null;
   const routedImageModel = googleModel ?? openaiModel;
-  const referenceUrls = (body.referenceUrls ?? [])
-    .filter(Boolean)
-    .slice(0, maxReferenceImages(routedImageModel));
+  if (mode === "t2i" && body.imageModel && body.imageModel !== "seedream" && !routedImageModel) {
+    return NextResponse.json({ error: "Unknown image model. Choose a supported model; your selection has not been substituted." }, { status: 400 });
+  }
+  const referenceUrls = (body.referenceUrls ?? []).filter(Boolean);
+  if (mode === "t2i" && referenceUrls.length > maxReferenceImages(routedImageModel)) {
+    return NextResponse.json({ error: `This model accepts up to ${maxReferenceImages(routedImageModel)} reference images. Remove extras before generating; none have been discarded.` }, { status: 400 });
+  }
+  const imageChoice = IMAGE_MODEL_CHOICES.find(choice => routedImageModel ? choice.imageModel === routedImageModel : choice.tier === tier);
+  const resolution = body.resolution ?? "2K";
+  if (mode === "t2i" && !imageChoice?.resolutions.includes(resolution)) {
+    return NextResponse.json({ error: `Choose a supported image resolution: ${imageChoice?.resolutions.join(", ")}.` }, { status: 400 });
+  }
 
   const built = buildPrompt(body.prompt);
   const { finalPrompt, negativePrompt } = lockPromptAspect(
@@ -124,8 +143,8 @@ export async function POST(req: NextRequest) {
     built.negativePrompt,
     aspect
   );
-  // Prefer Seedream standard+ for edits (better i2i than draft / fal)
-  const editTier = referenceUrls.length > 0 && tier === "draft" ? "standard" : tier;
+  // References never change the model the creator selected.
+  const editTier = tier;
   const primary = resolveModel(mode, editTier);
   const durationS = Math.min(
     Math.max(
@@ -134,13 +153,6 @@ export async function POST(req: NextRequest) {
     ),
     primary.maxDuration || 30
   );
-  // 4K only exists on Nano Banana 2/Pro and GPT Image; Seedream renders it at 2K.
-  const resolution: "1K" | "2K" | "4K" =
-    body.resolution === "1K"
-      ? "1K"
-      : body.resolution === "4K" && imageAllows4K(routedImageModel)
-        ? "4K"
-        : "2K";
   const arkResolution: "1K" | "2K" = resolution === "1K" ? "1K" : "2K";
 
   // Video: submit a Seedance task and return a durable job immediately.
@@ -170,10 +182,18 @@ export async function POST(req: NextRequest) {
     body.clientId = projectClientId;
     const sourceImageUrls = (body.sourceImageUrls ?? [])
       .map((u) => u.trim())
-      .filter(Boolean)
-      .slice(0, 9);
+      .filter(Boolean);
     // Attached source video → v2v edit/extend (Seedance reference_video)
     const sourceVideoUrl = body.sourceVideoUrl?.trim() || null;
+    const settingsError = validateVideoSettings({
+      tier, images: sourceImageUrls,
+      videos: (body.referenceVideoUrls ?? []).filter(Boolean),
+      audios: (body.sourceAudioUrls ?? []).filter(Boolean),
+      source: sourceVideoUrl, workflow: body.videoWorkflow, intent: body.videoIntent,
+      duration: body.durationS ?? inferred.durationS,
+      resolution: body.videoResolution, aspect,
+    });
+    if (settingsError) return NextResponse.json({ error: settingsError }, { status: 400 });
     const kind = sourceVideoUrl
       ? ("v2v" as const)
       : sourceImageUrls.length

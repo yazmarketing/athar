@@ -1,4 +1,5 @@
 import "server-only";
+import { compileImageInstructions } from "@/lib/image-instructions";
 
 import {
   GOOGLE_IMAGE_MODELS,
@@ -138,6 +139,7 @@ async function runArkJob(
       primary,
       fallbacks,
       finalPrompt: job.final_prompt,
+      negativePrompt: job.negative_prompt,
       aspect: job.aspect,
       seed,
       referenceUrls: inlined,
@@ -203,14 +205,9 @@ async function runGeminiJob(
 
   const renderStart = Date.now();
   try {
-    // Gemini has no negative-prompt channel — everything the negative bans
-    // used to be silently dropped on this path. Instruction language is the
-    // channel it does have.
-    const negative = job.negative_prompt?.trim();
     const { dataUri, model: usedSlug } = await geminiGenerateImage({
-      prompt: negative
-        ? `${job.final_prompt}\n\nDo not include any of: ${negative}.`
-        : job.final_prompt,
+      prompt: job.final_prompt,
+      negativePrompt: job.negative_prompt,
       imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
       model: modelId,
       imageSize: sendImageConfig ? resolution : undefined,
@@ -229,6 +226,7 @@ async function runGeminiJob(
       inputPayload: {
         provider: "google",
         model: usedSlug,
+        provider_prompt: compileImageInstructions(job.final_prompt, job.negative_prompt),
         prompt_inputs: input.prompt,
         job_id: job.id,
         is_edit: referenceUrls.length > 0,
@@ -274,6 +272,7 @@ async function runOpenAIJob(
   try {
     const { dataUri, model: usedSlug } = await openaiGenerateImage({
       prompt: job.final_prompt,
+      negativePrompt: job.negative_prompt,
       imageUrls: referenceUrls.length > 0 ? referenceUrls : undefined,
       model: modelId,
       imageSize: resolution,
@@ -292,6 +291,7 @@ async function runOpenAIJob(
       inputPayload: {
         provider: "openai",
         model: usedSlug,
+        provider_prompt: compileImageInstructions(job.final_prompt, job.negative_prompt),
         prompt_inputs: input.prompt,
         job_id: job.id,
         is_edit: referenceUrls.length > 0,

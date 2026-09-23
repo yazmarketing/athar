@@ -1,4 +1,5 @@
 import "server-only";
+import { compileImageInstructions } from "@/lib/image-instructions";
 
 import { OPENAI_IMAGE_MODELS, type OpenAIImageModelId } from "@/config/models";
 import { isAspectRatio, openaiSizeFor } from "@/config/aspects";
@@ -87,6 +88,7 @@ function aspectOf(value: string | undefined): AspectRatio {
 /** Generate (or edit, when reference images are supplied) an image. */
 export async function openaiGenerateImage(opts: {
   prompt: string;
+  negativePrompt?: string;
   imageUrls?: string[];
   model?: OpenAIImageModelId;
   imageSize?: "1K" | "2K" | "4K";
@@ -101,6 +103,7 @@ export async function openaiGenerateImage(opts: {
     opts.imageSize ?? "2K"
   );
   const refs = (opts.imageUrls ?? []).filter(Boolean);
+  const prompt = compileImageInstructions(opts.prompt, opts.negativePrompt);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 240_000);
@@ -110,7 +113,7 @@ export async function openaiGenerateImage(opts: {
     if (refs.length > 0) {
       const form = new FormData();
       form.append("model", model);
-      form.append("prompt", opts.prompt);
+      form.append("prompt", prompt);
       form.append("size", size);
       form.append("quality", "high");
       // OpenAI rejects repeated `image` fields (400 Duplicate parameter).
@@ -140,7 +143,7 @@ export async function openaiGenerateImage(opts: {
         },
         body: JSON.stringify({
           model,
-          prompt: opts.prompt,
+          prompt,
           size,
           quality: "high",
           output_format: "png",

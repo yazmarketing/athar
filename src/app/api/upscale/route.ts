@@ -8,6 +8,8 @@ import {
   persistOutputToSpaces,
 } from "@/lib/generations-store";
 import { addReferenceVersion } from "@/lib/reference-assets";
+import { fetchResizeSource, resizeImage } from "@/lib/resize-image";
+import { uploadPublicObject } from "@/lib/storage";
 import { UPSCALE_MODELS, type UpscaleMode, type Tier } from "@/config/models";
 import type { GenerationRecord } from "@/lib/types";
 
@@ -24,8 +26,8 @@ type UpscaleRequest = {
   projectId?: string | null;
   /** If set, the Assets card is bumped to this upscaled file as a new version. */
   referenceAssetId?: string;
-  mode?: UpscaleMode;
-  /** Upscale factor, 2 or 4 (2 → 2K render, 4 → 4K render) */
+  mode?: UpscaleMode | "resize";
+  /** Resize: exact multiplier. AI redraws: legacy 2/4 values mean 2K/4K. */
   scale?: number;
 };
 
@@ -61,7 +63,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const mode: UpscaleMode = body.mode === "precision" ? "precision" : "creative";
+  if (body.mode !== undefined && !["resize", "precision", "creative"].includes(body.mode)) {
+    return NextResponse.json({ error: "Choose Resize, Conservative redraw, or Creative redraw." }, { status: 400 });
+  }
+  if (body.scale !== undefined && body.scale !== 2 && body.scale !== 4) {
+    return NextResponse.json({ error: "Choose a scale of 2 or 4." }, { status: 400 });
+  }
+  const mode = body.mode ?? "resize";
   const scale = body.scale === 4 ? 4 : 2;
 
   let sourceImage: string;
@@ -131,61 +139,65 @@ export async function POST(req: NextRequest) {
       ? body.referenceAssetId
       : null;
 
-  const model = UPSCALE_MODELS[mode];
+  const model = mode === "resize" ? null : UPSCALE_MODELS[mode];
 
   const renderStart = Date.now();
-  let providerUrl: string;
+  let providerUrl: string | null = null;
+  let outputUrl: string;
+  let dimensions: { width: number; height: number } | undefined;
   let requestId: string | null = null;
   try {
-    const result = await arkGenerateImage({
-      model: model.slug,
-      prompt: mode === "creative" ? CREATIVE_PROMPT : PRECISION_PROMPT,
-      // Resolution level: 2× → 2K, 4× → 4K (Seedream renders at that level)
-      size: scale === 4 ? "4K" : "2K",
-      seed: seed ?? undefined,
-      image: sourceImage,
-    });
-    providerUrl = result.urls[0];
-    requestId = result.requestId ?? null;
+    if (mode === "resize") {
+      const resized = await resizeImage(await fetchResizeSource(sourceImage), scale);
+      dimensions = { width: resized.width, height: resized.height };
+      outputUrl = await uploadPublicObject(`upscale/${crypto.randomUUID()}.png`, new Uint8Array(resized.data).buffer, "image/png");
+    } else {
+      const result = await arkGenerateImage({
+        model: UPSCALE_MODELS[mode].slug,
+        prompt: mode === "creative" ? CREATIVE_PROMPT : PRECISION_PROMPT,
+        // AI redraws target a resolution level, not a multiplier of the source.
+        size: scale === 4 ? "4K" : "2K",
+        seed: seed ?? undefined,
+        image: sourceImage,
+      });
+      providerUrl = result.urls[0];
+      requestId = result.requestId ?? null;
+      outputUrl = await persistOutputToSpaces(providerUrl, "image", "upscale", seed);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Upscale failed";
     return NextResponse.json({ error: message }, { status: 502 });
   }
-
-  const outputUrl = await persistOutputToSpaces(
-    providerUrl,
-    "image",
-    "upscale",
-    seed
-  );
 
   try {
     await ensureGenerationModes();
     const generation = await insertGeneration({
       mode: "upscale",
       tier,
-      modelEndpoint: `${model.provider}:${model.slug}`,
+      modelEndpoint: model ? `${model.provider}:${model.slug}` : "local:lanczos3",
       inputPayload: {
         prompt_inputs: promptInputs,
         source_generation_id: source?.id,
         source_image_url: sourceImage,
         source_reference_asset_id: referenceAssetId,
-        upscale: { mode, scale },
+        upscale: { mode, ...(mode === "resize" ? { scale } : { targetResolution: `${scale}K` }), ...dimensions },
+        provider_prompt: mode === "resize" ? null : mode === "creative" ? CREATIVE_PROMPT : PRECISION_PROMPT,
       },
       finalPrompt,
       negativePrompt,
-      seed,
+      seed: mode === "resize" ? null : seed,
       referenceUrls: [sourceImage],
       outputUrl,
       providerUrl,
       requestId,
-      cost: model.costPerUnit,
+      cost: model?.costPerUnit ?? 0,
       aspect,
       durationS: null,
       userId: sessionUser.id,
       projectId,
       brandKitId,
       renderMs: Date.now() - renderStart,
+      resolution: dimensions ? `${dimensions.width}×${dimensions.height}` : `${scale}K`,
     });
 
     if (referenceAssetId) {
@@ -193,7 +205,7 @@ export async function POST(req: NextRequest) {
         await addReferenceVersion(
           referenceAssetId,
           outputUrl,
-          `Upscaled ${scale}× (${mode})`
+          mode === "resize" ? `Resized ${scale}× without AI` : `AI redraw at ${scale}K (${mode}) — review details before use`
         );
       } catch {
         // Library row is already saved — don't fail the request if versioning misses.

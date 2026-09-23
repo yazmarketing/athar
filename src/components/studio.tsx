@@ -1,6 +1,7 @@
 "use client";
 
 import { MotionStudio } from "@/components/motion/motion-studio";
+import { imageEditPrompt } from "@/lib/image-instructions";
 import { suggestVideoDuration } from "@/lib/video-duration";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
@@ -897,7 +898,7 @@ export function Studio() {
       {
         target: "library",
         title: "Everything lands here",
-        body: "The Library holds every generation. Favourite the keepers and filter to them, and open any image to upscale, cut the background, or download it.",
+        body: "The Library holds every generation. Favourite the keepers and filter to them, and open any image to resize, enhance, generate a white backdrop, or download it.",
         placement: "right",
         onEnter: toSidebar,
       },
@@ -1969,14 +1970,14 @@ export function Studio() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 generationId: winner.id,
-                mode: "precision",
+                mode: "resize",
                 scale: 2,
               }),
             });
             const upJson = await upRes.json();
             if (upRes.ok && upJson.generation?.output_url) {
               winner = upJson.generation as GenerationRecord;
-              toast.success("Finished — upscaled to 2K");
+              toast.success("Finished — resized 2× without AI redrawing");
             } else {
               toast.warning("Finishing was unavailable. Your original image is saved.");
             }
@@ -2543,24 +2544,7 @@ export function Studio() {
         body: JSON.stringify({
           mode: "t2i",
           ...imageModelRequest(args.imageModelId),
-          prompt: {
-            subject: [
-              "Image editing task. Apply this change to the reference image:",
-              args.instruction,
-              "Make the requested change clearly visible and obvious.",
-              "If the instruction changes gender, age, or who the person is, fully replace the face and body to match — do not keep the original person's face.",
-              args.extraReferenceUrls?.length
-                ? "Use any additional attached images as identity/look references for the requested change."
-                : "",
-              "Keep wardrobe, pose, mask/accessories, background, and lighting unless the instruction asks to change them.",
-              "Avoid: unchanged original face, ignoring the edit, same identity as the reference person.",
-            ]
-              .filter(Boolean)
-              .join(" "),
-            action: args.basePrompt.action,
-            lighting: args.basePrompt.lighting,
-            brandTokens: args.basePrompt.brandTokens,
-          },
+          prompt: imageEditPrompt(args.instruction, args.basePrompt, Boolean(args.extraReferenceUrls?.length)),
           aspect: args.aspect,
           numOutputs: 1,
           resolution: args.resolution,
@@ -2691,15 +2675,15 @@ export function Studio() {
       return;
     }
     const remaining = maxRefs - referenceUrls.length;
-    if (remaining <= 0) {
+    if (list.length > remaining) {
       toast.error(`Up to ${maxRefs} reference images`);
       return;
     }
-    const batch = list.slice(0, remaining);
+    const batch = list;
     setUploadingRef(true);
     try {
       const urls = await Promise.all(batch.map((f) => uploadReference(f)));
-      setReferenceUrls((prev) => [...prev, ...urls].slice(0, maxRefs));
+      setReferenceUrls((prev) => [...prev, ...urls]);
       toast.success(
         urls.length === 1 ? "Reference added" : `${urls.length} references added`
       );
@@ -4148,13 +4132,13 @@ export function Studio() {
                   { generationId: g.id }
                 );
                 if (!res.ok)
-                  throw new Error(json.error ?? "Background removal failed");
-                toast.success("Background removed");
+                  throw new Error(json.error ?? "White backdrop generation failed");
+                toast.success("White backdrop generated — review subject details");
                 await loadGallery();
                 setDetailTarget(json.generation as GenerationRecord);
               } catch (err) {
                 toast.error(
-                  err instanceof Error ? err.message : "Background removal failed"
+                  err instanceof Error ? err.message : "White backdrop generation failed"
                 );
               }
             }}
@@ -5174,7 +5158,7 @@ export function Studio() {
                 }}
               >
                 <ArrowUpToLine className="size-3.5" />
-                Upscale {upscalableSelected.length}
+                Resize / enhance {upscalableSelected.length}
               </Button>
               {isManagement && (
                 <Button

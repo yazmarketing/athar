@@ -1,4 +1,5 @@
 import "server-only";
+import { compileImageInstructions } from "@/lib/image-instructions";
 
 import { arkGenerateImage } from "@/lib/byteplus-server";
 import { uploadPublicObject } from "@/lib/storage";
@@ -77,7 +78,8 @@ async function generateOne(
   aspect: string,
   seed: number,
   referenceUrls: string[],
-  resolution: "1K" | "2K"
+  resolution: "1K" | "2K",
+  negativePrompt?: string
 ): Promise<ArkImageOutput> {
   // Edits require ≥ ~3.686M pixels — force 2K when a reference is present
   const sizeRes =
@@ -106,7 +108,7 @@ async function generateOne(
     image?: string | string[];
   } = {
     model: model.slug,
-    prompt: finalPrompt,
+    prompt: compileImageInstructions(finalPrompt, negativePrompt),
     size: ensureMinPixels(arkSizeFor(aspect, sizeRes), floor),
     seed,
   };
@@ -129,6 +131,7 @@ export async function renderArkImageWithFallback(opts: {
   primary: ModelEndpoint;
   fallbacks: ModelEndpoint[];
   finalPrompt: string;
+  negativePrompt?: string;
   aspect: string;
   seed: number;
   referenceUrls: string[];
@@ -151,7 +154,8 @@ export async function renderArkImageWithFallback(opts: {
           opts.aspect,
           opts.seed,
           opts.referenceUrls,
-          opts.resolution
+          opts.resolution,
+          opts.negativePrompt
         );
         return {
           output,

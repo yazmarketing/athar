@@ -1,4 +1,5 @@
 import "server-only";
+import { videoCapabilities } from "@/config/video-capabilities";
 import {
   arkCancelVideoTask,
   arkCreateVideoTask,
@@ -80,13 +81,15 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   // same ceiling as reference audio.
   const referenceVideoUrls = (input.referenceVideoUrls ?? [])
     .map((u) => u.trim())
-    .filter(Boolean)
-    .slice(0, 10);
+    .filter(Boolean);
   // Seedance 2.5 accepts up to 10 reference audio clips (30s combined).
   const audioUrls = (input.sourceAudioUrls ?? [])
     .map((u) => u.trim())
-    .filter(Boolean)
-    .slice(0, 10);
+    .filter(Boolean);
+  const limits = videoCapabilities(modelSlug.includes("mini") ? "draft" : "standard");
+  if (imageUrls.length > limits.maxImages || referenceVideoUrls.length > limits.maxVideos || audioUrls.length > limits.maxAudios) {
+    throw new Error(`Too many references for this model (${limits.maxImages} images, ${limits.maxVideos} videos, ${limits.maxAudios} audio clips maximum). Remove extras and start a new render; references have not been discarded.`);
+  }
 
   // 1080p is a Seedance 2.5 capability; the 2.0 Mini behind the draft tier
   // doesn't offer it. Clamp rather than fail — the person asked for a clip.
