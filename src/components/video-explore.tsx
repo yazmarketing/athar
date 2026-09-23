@@ -10,8 +10,10 @@ function RecipePreview({ recipe }: { recipe: VideoRecipe }) {
   if (!recipe.preview) {
     return <div className={styles.previewFallback} style={fallbackStyle} aria-hidden="true"><span>{recipe.category}</span><strong>{recipe.title}</strong></div>;
   }
-  return <div className={styles.preview} style={{ ...fallbackStyle, backgroundImage: `url(${recipe.preview.poster})` }} aria-hidden="true">
-    <video autoPlay loop muted playsInline preload="metadata" poster={recipe.preview.poster}><source src={recipe.preview.src} type="video/mp4" /></video>
+  return <div className={styles.preview} style={fallbackStyle} data-motion={recipe.preview.motion} aria-hidden="true">
+    {recipe.preview.src
+      ? <video autoPlay loop muted playsInline preload="metadata" poster={recipe.preview.poster}><source src={recipe.preview.src} type="video/mp4" /></video>
+      : <div className={styles.still} style={{ backgroundImage: `url(${recipe.preview.poster})` }} />}
   </div>;
 }
 
