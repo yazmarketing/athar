@@ -31,7 +31,9 @@ export async function GET(_req: Request, { params }: Params) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    const upstream = await fetch(imageUrl);
+    const upstream = await fetch(imageUrl, {
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!upstream.ok) {
       return NextResponse.json(
         { error: `Could not load asset image (${upstream.status})` },

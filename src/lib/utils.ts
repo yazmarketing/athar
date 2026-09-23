@@ -33,7 +33,7 @@ function gatewayMessage(status: number, body: string): string {
   switch (status) {
     case 408:
     case 504:
-      return `The render ran longer than the gateway allows (${status}). Try one image at a time, or a lower resolution.`;
+      return `The request ran longer than the gateway allows (${status}). Your saved work is safe; wait a moment and retry.`;
     case 502:
       return "The server dropped the request mid-render (502). It may still have completed — check the Library before retrying.";
     case 413:

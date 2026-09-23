@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { logAudit } from "@/lib/audit";
 import {
   assetsConfigured,
+  cachedAssets,
   deleteAsset,
   ensureDefaultAssetGroup,
   listAssets,
@@ -50,7 +51,17 @@ export async function GET() {
     );
   }
   try {
-    const items = await listAssets();
+    let items;
+    let warning: string | null = null;
+    try {
+      // Keep this comfortably below the platform gateway. Newly submitted
+      // faces live in our registration table, so a slow provider must not
+      // make them disappear from the library.
+      items = await listAssets(undefined, { timeoutMs: 12_000 });
+    } catch (err) {
+      items = cachedAssets();
+      warning = err instanceof Error ? err.message : "BytePlus is temporarily unavailable";
+    }
     const assets = items.map((a) => {
       const rawName = a.Name ?? "";
       const tag = CATEGORY_TAG_RE.exec(rawName);
@@ -66,7 +77,9 @@ export async function GET() {
         createdAt: a.CreateTime ?? null,
       };
     });
-    await completeRegistrationsMatching(new Set(assets.map((a) => a.name)));
+    if (!warning) {
+      await completeRegistrationsMatching(new Set(assets.map((a) => a.name)));
+    }
     const due = await claimDueRegistrations();
     for (const row of due) {
       after(() => processAssetRegistration(row));
@@ -74,7 +87,7 @@ export async function GET() {
     const pending = (await listOpenAssetRegistrations()).map(
       registrationAsLibraryAsset
     );
-    return NextResponse.json({ assets: [...pending, ...assets] });
+    return NextResponse.json({ assets: [...pending, ...assets], warning });
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Could not list assets";

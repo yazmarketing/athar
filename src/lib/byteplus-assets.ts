@@ -125,10 +125,18 @@ async function assetsCall<T>(
     throw err;
   }
 
-  const json = (await res.json()) as {
+  const responseText = await res.text();
+  let json: {
     ResponseMetadata?: { Error?: { Code?: string; Message?: string } };
     Result?: T;
   } & Record<string, unknown>;
+  try {
+    json = JSON.parse(responseText) as typeof json;
+  } catch {
+    throw new Error(
+      `BytePlus Assets API returned ${res.status} instead of JSON. Please retry in a moment.`
+    );
+  }
 
   const apiError = json.ResponseMetadata?.Error;
   if (!res.ok || apiError) {
@@ -163,6 +171,14 @@ export type AssetRecord = {
   URL?: string;
   CreateTime?: string;
 };
+
+const assetCache = globalThis as typeof globalThis & {
+  atharBytePlusAssets?: AssetRecord[];
+};
+
+export function cachedAssets(): AssetRecord[] {
+  return assetCache.atharBytePlusAssets ?? [];
+}
 
 export async function createAssetGroup(
   name: string,
@@ -207,7 +223,11 @@ export async function createAsset(opts: {
 }
 
 export async function getAsset(id: string): Promise<AssetRecord> {
-  const asset = await assetsCall<AssetRecord>("GetAsset", { Id: id });
+  const asset = await assetsCall<AssetRecord>(
+    "GetAsset",
+    { Id: id },
+    { timeoutMs: 12_000 }
+  );
   rememberAssetImageUrl(asset);
   return asset;
 }
@@ -244,7 +264,10 @@ export async function resolveAssetImageUrl(
   return asset.URL ?? null;
 }
 
-export async function listAssets(groupId?: string): Promise<AssetRecord[]> {
+export async function listAssets(
+  groupId?: string,
+  opts?: { timeoutMs?: number }
+): Promise<AssetRecord[]> {
   const result = await assetsCall<{ Items?: AssetRecord[] }>("ListAssets", {
     Filter: {
       ...(groupId ? { GroupIds: [groupId] } : {}),
@@ -252,9 +275,10 @@ export async function listAssets(groupId?: string): Promise<AssetRecord[]> {
     },
     PageNumber: 1,
     PageSize: 100,
-  });
+  }, opts);
   const items = result.Items ?? [];
   for (const item of items) rememberAssetImageUrl(item);
+  assetCache.atharBytePlusAssets = items;
   return items;
 }
 

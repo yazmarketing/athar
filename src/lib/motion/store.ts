@@ -109,8 +109,24 @@ export async function getProject(user: string, id: string) {
 export async function listProjects(user: string) {
   const root = path.join(userRoot(user), "projects"); await mkdir(root, { recursive: true });
   const names = (await readdir(root)).filter(n => /^[0-9a-f-]{36}$/.test(n));
-  const results = await Promise.all(names.map(async id => { try { return await locked(user,id,()=>getProject(user,id)); } catch { return jsonFile<MotionProject>(path.join(projectRoot(user,id),"project.json")); } }));
-  return results.filter((p): p is MotionProject => !!p).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
+  // The overview is polled every few seconds. Reading every project through
+  // its mutation lock made one busy/slow project hold the whole response,
+  // eventually turning this lightweight GET into a gateway 504. Return the
+  // persisted snapshots immediately and reconcile active work after the
+  // response instead. The selected-project endpoint still returns the fully
+  // reconciled record.
+  const results = (await Promise.all(names.map(id =>
+    jsonFile<MotionProject>(path.join(projectRoot(user,id),"project.json"))
+  ))).filter((p): p is MotionProject => !!p);
+  for (const project of results) {
+    if (["designing", "queued", "working", "encoding"].includes(project.status)) {
+      after(async () => {
+        try { await locked(user, project.id, () => getProject(user, project.id)); }
+        catch { /* A detail poll will surface a project-specific failure. */ }
+      });
+    }
+  }
+  return results.sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 export async function exists(file: string) { try { return (await stat(file)).isFile(); } catch { return false; } }
 const state = globalThis as typeof globalThis & { atharMotionQueues?: Map<string, Promise<void>> };

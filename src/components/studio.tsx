@@ -507,6 +507,8 @@ export function Studio() {
     LibraryAsset[] | null
   >(null);
   const [assetsLoading, setAssetsLoading] = useState(false);
+  const assetsRequest = useRef<Promise<void> | null>(null);
+  const lastAssetWarning = useRef<string | null>(null);
   const [registeringAsset, setRegisteringAsset] = useState(false);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [assetToDelete, setAssetToDelete] = useState<{
@@ -2861,17 +2863,38 @@ export function Studio() {
     toast.success("Verified asset attached");
   };
 
-  const loadAssets = useCallback(async () => {
+  const loadAssets = useCallback(() => {
+    if (assetsRequest.current) return assetsRequest.current;
     setAssetsLoading(true);
-    try {
-      const res = await fetch("/api/assets");
-      const json = await res.json();
-      setLibraryAssets((json.assets ?? []) as LibraryAsset[]);
-    } catch {
-      setLibraryAssets((prev) => prev ?? []);
-    } finally {
+    const request = (async () => {
+      try {
+        const res = await fetch("/api/assets");
+        const json = await readJson<{
+          assets?: LibraryAsset[];
+          error?: string;
+          warning?: string | null;
+        }>(res);
+        if (!res.ok) throw new Error(json.error ?? "Could not load characters");
+        setLibraryAssets(json.assets ?? []);
+        if (json.warning && lastAssetWarning.current !== json.warning) {
+          lastAssetWarning.current = json.warning;
+          toast.message("Showing saved characters while BytePlus reconnects");
+        }
+        if (!json.warning) lastAssetWarning.current = null;
+      } catch (err) {
+        setLibraryAssets((prev) => prev ?? []);
+        const message = err instanceof Error ? err.message : "Could not load characters";
+        if (lastAssetWarning.current !== message) {
+          lastAssetWarning.current = message;
+          toast.error(message);
+        }
+      }
+    })().finally(() => {
+      assetsRequest.current = null;
       setAssetsLoading(false);
-    }
+    });
+    assetsRequest.current = request;
+    return request;
   }, []);
 
   const attachedPreview = (url: string) => {

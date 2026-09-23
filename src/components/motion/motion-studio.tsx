@@ -4,11 +4,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowUp, Check, Download, Film, Layers, Loader2, Plus, Upload, WandSparkles } from "lucide-react";
 import type { MotionProject, NativeSnapshot } from "@/lib/motion/schema";
+import { readJson } from "@/lib/utils";
 import styles from "./motion-studio.module.css";
 import { MotionProgress } from "./motion-progress";
 type Bridge = { connected: boolean; snapshot: NativeSnapshot | null };
 type Overview = { projects: MotionProject[]; bridge: Bridge; astraConfigured: boolean; afterEffectsDetected: boolean };
-async function api(url: string, init?: RequestInit) { const r = await fetch(url, init); const data = await r.json(); if (!r.ok) throw new Error(data.error || "Something went wrong. Please retry."); return data; }
+type ProjectResponse = { project: MotionProject; bridge: Bridge };
+async function api<T>(url: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try { response = await fetch(url, init); }
+  catch { throw new Error("Motion Design could not reach Athar. Check the connection and retry."); }
+  const data = await readJson<T & { error?: string }>(response);
+  if (!response.ok) throw new Error(data.error || "Motion Design could not complete that request. Please retry.");
+  return data;
+}
 const busyStates = ["designing", "queued", "working", "encoding"];
 export function MotionStudio() {
   const [overview, setOverview] = useState<Overview | null>(null), [project, setProject] = useState<MotionProject | null>(null);
@@ -17,9 +26,9 @@ export function MotionStudio() {
   const [bridgeReady, setBridgeReady] = useState(false);
   const [setup, setSetup] = useState(false), [uploadName, setUploadName] = useState("");
   const input = useRef<HTMLInputElement>(null), projectId = project?.id;
-  const refresh = useCallback(async () => { const data = await api("/api/motion"); setOverview(data); }, []);
-  useEffect(() => { let alive = true; const load = async () => { try { const data = await api("/api/motion"); if (alive) { setOverview(data); setError(""); } } catch(e) { if (alive) setError(e instanceof Error ? e.message : "Connection failed"); } }; void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000); return () => { alive = false; clearInterval(timer); }; }, []);
-  useEffect(() => { if (!projectId) return; let alive = true; const load = async () => { try { const data = await api(`/api/motion/${projectId}`); if (alive) { setProject(data.project); setOverview(o => o ? { ...o, bridge: data.bridge } : o); } } catch { /* Keep the last revision while a request is being written. */ } }; const timer = setInterval(() => { if (!document.hidden) void load(); }, 2500); return () => { alive = false; clearInterval(timer); }; }, [projectId]);
+  const refresh = useCallback(async () => { const data = await api<Overview>("/api/motion"); setOverview(data); }, []);
+  useEffect(() => { let alive = true, inFlight = false; const load = async () => { if (inFlight) return; inFlight = true; try { const data = await api<Overview>("/api/motion"); if (alive) { setOverview(data); setError(""); } } catch(e) { if (alive) setError(e instanceof Error ? e.message : "Connection failed"); } finally { inFlight = false; } }; void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 5000); return () => { alive = false; clearInterval(timer); }; }, []);
+  useEffect(() => { if (!projectId) return; let alive = true, inFlight = false; const load = async () => { if (inFlight) return; inFlight = true; try { const data = await api<ProjectResponse>(`/api/motion/${projectId}`); if (alive) { setProject(data.project); setOverview(o => o ? { ...o, bridge: data.bridge } : o); } } catch { /* Keep the last revision while a request is being written. */ } finally { inFlight = false; } }; const timer = setInterval(() => { if (!document.hidden) void load(); }, 2500); return () => { alive = false; clearInterval(timer); }; }, [projectId]);
   const previousState = useRef<{ id: string; status: string } | null>(null);
   useEffect(() => {
     if (project && previousState.current?.id === project.id && previousState.current.status === "designing") {
@@ -30,10 +39,10 @@ export function MotionStudio() {
   }, [project]);
   const busy = pending || !!project && busyStates.includes(project.status);
   function syncSettings(p: MotionProject) { const settings = p.designJob?.settings ?? p.scene; if(settings && p.mode === "create") {setFormat(`${settings.width}x${settings.height}`);setDuration(settings.duration);setFps(settings.fps);} }
-  async function create(mode: "create" | "edit", starter?: string) { setPending(true); setError(""); try { const data = await api("/api/motion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: mode === "create" ? "Untitled motion" : "Composition edit", mode, starter }) }); setProject(data.project); syncSettings(data.project); setBrief(""); await refresh(); } catch(e) { setError(String(e instanceof Error ? e.message : e)); } finally { setPending(false); } }
-  async function action(action: string, extra: object = {}) { if (!project) return; setPending(true); setError(""); try { const data = await api(`/api/motion/${project.id}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ action, ...extra }) }); setProject(data.project); if (action === "restore") syncSettings(data.project); } catch(e) { setError(e instanceof Error ? e.message : "Operation failed"); } finally { setPending(false); } }
-  async function upload(files: FileList | null) { if (!project || !files?.length) return; setPending(true); setError(""); try { for (const file of Array.from(files)) { if (file.size > 80 * 1024 * 1024) throw new Error(`${file.name}: the limit is 80 MB per asset. Use a trimmed or compressed copy.`); setUploadName(file.name); const data = await api(`/api/motion/${project.id}/assets?name=${encodeURIComponent(file.name)}`, { method:"POST", headers:{"Content-Type":"application/octet-stream"}, body:file }); setProject(data.project); } } catch(e) { setError(e instanceof Error ? e.message : "Upload failed"); } finally { setPending(false); setUploadName(""); if(input.current)input.current.value=""; } }
-  async function prepareBridge() { setPending(true); setError(""); try { await api("/api/motion/bridge",{method:"POST"}); setBridgeReady(true); } catch(e) {setError(e instanceof Error ? e.message : "Could not prepare the bridge");} finally {setPending(false);} }
+  async function create(mode: "create" | "edit", starter?: string) { setPending(true); setError(""); try { const data = await api<ProjectResponse>("/api/motion", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: mode === "create" ? "Untitled motion" : "Composition edit", mode, starter }) }); setProject(data.project); syncSettings(data.project); setBrief(""); await refresh(); } catch(e) { setError(String(e instanceof Error ? e.message : e)); } finally { setPending(false); } }
+  async function action(action: string, extra: object = {}) { if (!project) return; setPending(true); setError(""); try { const data = await api<ProjectResponse>(`/api/motion/${project.id}`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({ action, ...extra }) }); setProject(data.project); if (action === "restore") syncSettings(data.project); } catch(e) { setError(e instanceof Error ? e.message : "Operation failed"); } finally { setPending(false); } }
+  async function upload(files: FileList | null) { if (!project || !files?.length) return; setPending(true); setError(""); try { for (const file of Array.from(files)) { if (file.size > 80 * 1024 * 1024) throw new Error(`${file.name}: the limit is 80 MB per asset. Use a trimmed or compressed copy.`); setUploadName(file.name); const data = await api<ProjectResponse>(`/api/motion/${project.id}/assets?name=${encodeURIComponent(file.name)}`, { method:"POST", headers:{"Content-Type":"application/octet-stream"}, body:file }); setProject(data.project); } } catch(e) { setError(e instanceof Error ? e.message : "Upload failed"); } finally { setPending(false); setUploadName(""); if(input.current)input.current.value=""; } }
+  async function prepareBridge() { setPending(true); setError(""); try { await api<{ ok?: boolean }>("/api/motion/bridge",{method:"POST"}); setBridgeReady(true); } catch(e) {setError(e instanceof Error ? e.message : "Could not prepare the bridge");} finally {setPending(false);} }
   const bridge = overview?.bridge, scene = project?.scene;
   const visibleProjects = useMemo(
     () => (overview?.projects ?? []).filter((item) => item.name !== "ATHAR — Enter the Trace · Studio study"),

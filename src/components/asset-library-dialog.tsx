@@ -98,6 +98,9 @@ export function AssetLibraryDialog({
     "auto"
   );
   const [dragOver, setDragOver] = useState(false);
+  const [failedPreviews, setFailedPreviews] = useState<Set<string>>(
+    () => new Set()
+  );
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Objects URLs leak unless revoked — one per selected file.
@@ -272,12 +275,17 @@ export function AssetLibraryDialog({
                             active ? "cursor-pointer" : "cursor-not-allowed"
                           )}
                         >
-                          {a.url ? (
+                          {a.url && !failedPreviews.has(a.id) ? (
                             <span className="relative block aspect-square w-full overflow-hidden">
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={a.url}
                                 alt={a.name || "Asset"}
+                                onError={() => setFailedPreviews((current) => {
+                                  const next = new Set(current);
+                                  next.add(a.id);
+                                  return next;
+                                })}
                                 className="size-full object-cover"
                               />
                               {verifying && (
