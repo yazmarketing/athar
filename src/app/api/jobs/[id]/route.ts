@@ -22,9 +22,6 @@ export const maxDuration = 300;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-/** Jobs stuck in running with no provider progress fail after this long. */
-const STALE_JOB_MS = 30 * 60 * 1000;
-
 /**
  * A claimed submit that never produced a task id is presumed dead after this
  * long (a deploy mid-submit, say) and goes back in the queue.
@@ -118,14 +115,8 @@ async function advance(job: GenerationJobRecord) {
     return { job: await markJobFailed(job.id, message), generation: null };
   }
 
-  // Still queued/running at the provider — stale-check
-  const age = Date.now() - new Date(job.created_at).getTime();
-  if (age > STALE_JOB_MS) {
-    return {
-      job: await markJobFailed(job.id, "Render timed out (no provider progress)"),
-      generation: null,
-    };
-  }
+  // The provider still owns this render. Age alone must never turn a live,
+  // paid task into a failed job that invites a second paid submission.
 
   return { job, generation: null };
 }

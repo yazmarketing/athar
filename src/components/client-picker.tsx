@@ -29,6 +29,7 @@ type Props = {
    * "New" and "Rename" folded into the menu instead of separate icon buttons.
    */
   compact?: boolean;
+  canDelete?: boolean;
   className?: string;
 };
 
@@ -38,6 +39,7 @@ export function ClientPicker({
   clients,
   onClientsChange,
   compact = false,
+  canDelete = false,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -95,7 +97,7 @@ export function ClientPicker({
    * what is still attached, which is surfaced verbatim.
    */
   const onDelete = async () => {
-    if (!activeClient) return;
+    if (!canDelete || !activeClient) return;
     const ok = window.confirm(
       `Delete “${activeClient.name}”? This only works if it's empty.`
     );
@@ -200,7 +202,7 @@ export function ClientPicker({
             ...(activeClient
               ? [
                   { label: `✎ Rename “${activeClient.name}”`, onSelect: () => setRenameOpen(true) },
-                  { label: `Delete “${activeClient.name}”`, onSelect: () => void onDelete(), destructive: true },
+                  ...(canDelete ? [{ label: `Delete “${activeClient.name}”`, onSelect: () => void onDelete(), destructive: true }] : []),
                 ]
               : []),
           ]}

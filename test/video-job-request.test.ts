@@ -30,6 +30,20 @@ function job(over: Partial<GenerationJobRecord> = {}): GenerationJobRecord {
 }
 
 describe("videoRequestForJob", () => {
+  it("retains the saved model version and explicit silent-video setting", () => {
+    const req = videoRequestForJob(job({
+      model_endpoint: "byteplus:dreamina-seedance-2-5-260628",
+      input: { generateAudio: false, videoResolution: "720p" },
+    }));
+    expect(req.model).toBe("dreamina-seedance-2-5-260628");
+    expect(req.generateAudio).toBe(false);
+  });
+  it("retains extension intent instead of turning it into an edit", () => {
+    const req = videoRequestForJob(job({ kind: "v2v", input: {
+      sourceVideoUrl: "https://cdn.example.com/source.mp4", videoIntent: "extend",
+    } }));
+    expect(req.taskType).toBe("extend");
+  });
   it("carries the stored prompt, aspect and duration through", () => {
     const req = videoRequestForJob(job());
     expect(req.prompt).toBe("a camel walks across a dune");

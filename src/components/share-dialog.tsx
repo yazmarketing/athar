@@ -176,7 +176,7 @@ export function ShareDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="z-[60] max-h-[85dvh] max-w-sm overflow-y-auto border-white/10 bg-[#161616] text-foreground ring-white/10">
+      <DialogContent className="z-[60] max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl min-w-0 overflow-x-hidden overflow-y-auto border-border bg-popover p-5 text-popover-foreground sm:max-w-4xl sm:p-7">
         <DialogHeader>
           <DialogTitle>Share {kind === "video" ? "clip" : "generation"}</DialogTitle>
           <DialogDescription className="text-muted-foreground">
@@ -186,7 +186,7 @@ export function ShareDialog({
         </DialogHeader>
 
         {shareUrl && (
-          <div className="rounded-xl bg-white/4 px-3 py-2.5 ring-1 ring-white/8">
+          <div className="min-w-0 overflow-hidden rounded-xl bg-white/4 px-3 py-2.5 ring-1 ring-white/8">
             <p className="mb-1 text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
               Live link
             </p>
@@ -204,7 +204,7 @@ export function ShareDialog({
           </div>
         )}
 
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5 min-[420px]:grid-cols-2">
           <ShareOption
             icon={<Share2 className="size-4" />}
             label="Share via device"
@@ -270,9 +270,9 @@ export function ShareOption({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-white/8"
+      className="flex min-h-12 w-full min-w-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-accent"
     >
-      <span className="flex size-9 items-center justify-center rounded-lg bg-white/6 text-foreground ring-1 ring-white/8">
+      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground ring-1 ring-border">
         {icon}
       </span>
       <span className="min-w-0 flex-1">

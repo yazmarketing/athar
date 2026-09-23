@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { getSessionUser } from "@/lib/auth-session";
+import { requireAdmin } from "@/lib/authz";
 import { deleteClientIfEmpty, renameClient } from "@/lib/clients";
 
 const UUID_RE =
@@ -63,10 +64,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 /** Delete — only when nothing depends on it. */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireAdmin();
+    if (auth.response) return auth.response;
+    const sessionUser = auth.user;
     const { id } = await params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });

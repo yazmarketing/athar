@@ -30,6 +30,7 @@ type Props = {
   compact?: boolean;
   required?: boolean;
   canManageSpend?: boolean;
+  canDelete?: boolean;
   className?: string;
 };
 
@@ -42,6 +43,7 @@ export function ProjectPicker({
   compact = false,
   required = false,
   canManageSpend = false,
+  canDelete = false,
   className,
 }: Props) {
   const [createOpen, setCreateOpen] = useState(false);
@@ -124,10 +126,10 @@ export function ProjectPicker({
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>New project</DialogTitle>
+            <DialogTitle>Add project</DialogTitle>
             <DialogDescription>
-              Group generations by client or campaign. New creates go to the
-              active project.
+              Name the project for this client. It will be selected automatically
+              so you can keep creating.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onCreate} className="space-y-3">
@@ -162,7 +164,7 @@ export function ProjectPicker({
                   Creating…
                 </>
               ) : (
-                "New project"
+                "Add project"
               )}
             </Button>
           </form>
@@ -212,7 +214,7 @@ export function ProjectPicker({
    * what is still attached, which is surfaced verbatim.
    */
   const onDelete = async () => {
-    if (!activeProject) return;
+    if (!canDelete || !activeProject) return;
     const ok = window.confirm(
       `Delete “${activeProject.name}”? This only works if it's empty.`
     );
@@ -253,7 +255,7 @@ export function ProjectPicker({
           className={cn(activeProject && "text-foreground", className)}
           actions={[
             ...(!required ? [{ label: "No project", onSelect: () => onActiveProjectChange(null) }] : []),
-            { label: "＋ New project", onSelect: () => setCreateOpen(true), disabled: !clientId },
+            { label: "+ Add project", onSelect: (query: string) => { setName(query); setCreateOpen(true); }, disabled: !clientId },
             ...(activeProject
               ? [
                   { label: `✎ Rename “${activeProject.name}”`, onSelect: () => setRenameOpen(true) },
@@ -266,7 +268,7 @@ export function ProjectPicker({
                         },
                       }]
                     : []),
-                  { label: `Delete “${activeProject.name}”`, onSelect: () => void onDelete(), destructive: true },
+                  ...(canDelete ? [{ label: `Delete “${activeProject.name}”`, onSelect: () => void onDelete(), destructive: true }] : []),
                 ]
               : []),
           ]}
@@ -321,6 +323,7 @@ export function ProjectPicker({
           })),
         ]}
         label="Choose project"
+        actions={[{ label: "+ Add project", onSelect: (query) => { setName(query); setCreateOpen(true); }, disabled: !clientId }]}
         placeholder="All projects"
         icon={<FolderKanban className="size-3.5 shrink-0" />}
         className="h-9 w-full justify-start rounded-lg border-sidebar-border bg-sidebar-accent/50"

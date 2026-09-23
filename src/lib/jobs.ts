@@ -194,6 +194,16 @@ export async function markJobCancelled(
 }
 
 /** Put a failed or cancelled job back in the queue for a fresh submit. */
+export async function resumeProviderJob(id: string, providerTaskId: string): Promise<GenerationJobRecord | null> {
+  const { rows } = await db().query<GenerationJobRecord>(
+    `update generation_jobs set status = 'running', error = null,
+       completed_at = null, finalizing_at = null, updated_at = now()
+     where id = $1 and provider_task_id = $2 and status in ('failed', 'cancelled')
+     returning *`, [id, providerTaskId]
+  );
+  return rows[0] ?? null;
+}
+
 export async function markJobRequeued(
   id: string
 ): Promise<GenerationJobRecord | null> {
@@ -202,7 +212,7 @@ export async function markJobRequeued(
      set status = 'queued', provider_task_id = null, error = null,
          updated_at = now(), completed_at = null, generation_id = null,
          finalizing_at = null
-     where id = $1
+     where id = $1 and status in ('failed', 'cancelled')
      returning *`,
     [id]
   );

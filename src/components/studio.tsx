@@ -1,6 +1,7 @@
 "use client";
 
 import { MotionStudio } from "@/components/motion/motion-studio";
+import { suggestVideoDuration } from "@/lib/video-duration";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
@@ -407,7 +408,7 @@ export function Studio() {
   const [lighting, setLighting] = useState("");
   const [brandTokens, setBrandTokens] = useState("");
   const [negativeAdditions, setNegativeAdditions] = useState("");
-  const [tier, setTier] = useState<Tier>("draft");
+  const [tier, setTier] = useState<Tier>("standard");
   // Which still model the dock is on, as an IMAGE_MODEL_CHOICES id. Tier and
   // googleModel below are what the request actually carries; this is the one
   // the picker speaks, so every surface names models the same way.
@@ -424,6 +425,7 @@ export function Studio() {
   // Each submitted batch owns one continuation into ranking/finishing.
   // The general job poller must not separately surface every candidate.
   const submittedImageJobsRef = useRef(new Set<string>());
+  const submittingRef = useRef(false);
   const claimedImageRunsRef = useRef(new Set<string>());
   const [saveStyleOpen, setSaveStyleOpen] = useState(false);
   const [saveStyleName, setSaveStyleName] = useState("");
@@ -437,10 +439,11 @@ export function Studio() {
   // 1K by default — cheaper and quicker; 2K/4K are a deliberate choice.
   const [resolution, setResolution] = useState<ImageResolution>("2K");
   const [numOutputs, setNumOutputs] = useState(1);
-  const [durationS, setDurationS] = useState(5);
+  const [manualDurationS, setDurationS] = useState(5);
+  const [autoDuration, setAutoDuration] = useState(true);
   const [videoResolution, setVideoResolution] = useState<
     "480p" | "720p" | "1080p"
-  >("480p");
+  >("720p");
   const [generating, setGenerating] = useState(false);
   const [renderApproval, setRenderApproval] = useState<RenderApproval | null>(null);
   /**
@@ -730,6 +733,12 @@ export function Studio() {
     imageModelChoice(imageModelId)?.maxReferenceImages ??
     maxReferenceImages(googleModel);
   const videoCaps = videoCapabilities(tier);
+  const durationSuggestion = useMemo(() => suggestVideoDuration(
+    [subject, cinemaOn ? action : ""].filter(Boolean).join(". "),
+    videoCaps.maxDuration,
+    cinemaOn && MONTAGE_PACING_IDS.includes(cinema.pacingId),
+  ), [subject, action, cinemaOn, videoCaps.maxDuration, cinema.pacingId]);
+  const durationS = autoDuration ? durationSuggestion.seconds : Math.min(manualDurationS, videoCaps.maxDuration);
   const MAX_VIDEO_IMAGES = videoCaps.maxImages;
   const MAX_REFERENCE_VIDEOS = videoCaps.maxVideos;
   const firstFrame = videoUsesFirstFrame(videoSources.map(s => s.url), [...videoRefSources.map(s => s.url), ...(videoEditSource ? [videoEditSource.url] : [])], audioSources.map(s => s.url));
@@ -967,11 +976,11 @@ export function Studio() {
       }
     }
     if (next === "t2v") {
-      // Iteration is intentionally cheap and quick by default. Longer,
-      // premium settings remain an explicit choice and are guarded server-side.
-      setTier("draft");
+      // Explore with the production model so previews retain its capabilities.
+      setTier("standard");
       setDurationS(5);
-      setVideoResolution("480p");
+      setAutoDuration(true);
+      setVideoResolution("720p");
       setGoogleModel(null);
       setImageModelId(DEFAULT_IMAGE_MODEL_ID);
       // 4K rides with Nano Banana Pro; video has its own resolution control.
@@ -1546,7 +1555,7 @@ export function Studio() {
 
     if (video) {
       setTier(job.tier);
-      if (job.duration_s != null) setDurationS(Number(job.duration_s));
+      if (job.duration_s != null) { setDurationS(Number(job.duration_s)); setAutoDuration(false); }
       const vr = input.videoResolution;
       if (vr === "480p" || vr === "720p" || vr === "1080p") {
         setVideoResolution(vr);
@@ -1752,6 +1761,8 @@ export function Studio() {
       prompt: PromptInputs,
       opts: SubmitOptions = {}
     ) => {
+      if (submittingRef.current) return;
+      submittingRef.current = true;
       const startedInView = currentViewRef.current;
       setGenerating(true);
       setComposerCollapsed(true);
@@ -1845,7 +1856,9 @@ export function Studio() {
           return;
         }
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
-        for (const alert of (json.spendAlerts as string[] | undefined) ?? []) toast.warning(alert);
+        if (isManagement) {
+          for (const alert of (json.spendAlerts as string[] | undefined) ?? []) toast.warning(alert);
+        }
         let batch: GenerationRecord[];
         if (json.job) {
           // Every image model now returns durable jobs. Keep this invocation's
@@ -2013,12 +2026,14 @@ export function Studio() {
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Generation failed");
       } finally {
+        submittingRef.current = false;
         setGenerating(false);
         setSmartStage(null);
       }
     },
     [
       mode,
+      isManagement,
       tier,
       googleModel,
       imageModelId,
@@ -2583,13 +2598,9 @@ export function Studio() {
     [cinema, camera]
   );
 
-  /** A montage needs room to cut — raise short durations when one is picked. */
+  /** Auto duration considers montage pacing; manual choices stay untouched. */
   const setCinemaPacing = (pacingId: string) => {
     setCinema((c) => ({ ...c, pacingId }));
-    if (MONTAGE_PACING_IDS.includes(pacingId) && durationS < 15) {
-      setDurationS(15);
-      toast.message("Duration raised to 15s for a multi-cut scene");
-    }
   };
 
   const buildPromptInputs = (): PromptInputs => ({
@@ -3097,7 +3108,7 @@ export function Studio() {
     if (video) {
       setTier(g.tier);
       setGenerateAudio(payload.generate_audio ?? true);
-      if (g.duration_s != null) setDurationS(Number(g.duration_s));
+      if (g.duration_s != null) { setDurationS(Number(g.duration_s)); setAutoDuration(false); }
       const vr = payload.video_resolution ?? g.resolution;
       if (vr === "480p" || vr === "720p" || vr === "1080p") {
         setVideoResolution(vr);
@@ -3551,7 +3562,7 @@ export function Studio() {
           <span className="rounded bg-white/10 px-1.5 py-0.5">{g.mode}</span>
           <span className="rounded bg-white/10 px-1.5 py-0.5">{g.tier}</span>
           {g.duration_s != null && <span>{g.duration_s}s</span>}
-          <span>· {g.cost == null ? "Usage-based" : `$${Number(g.cost).toFixed(3)}`}</span>
+          {isManagement && <span>· {g.cost == null ? "Usage-based" : `$${Number(g.cost).toFixed(3)}`}</span>}
         </div>
         <div className="pointer-events-auto flex gap-2">
           <Button
@@ -4218,6 +4229,7 @@ export function Studio() {
 
         {videoDetailTarget && (
           <VideoDetail
+            key={videoDetailTarget.id}
             onRated={(r, reasons, note) =>
               patchGenerationRating(videoDetailTarget.id, r, reasons, note)
             }
@@ -5331,10 +5343,10 @@ export function Studio() {
           title={renderApproval?.kind === "long" ? "Approve a longer Seedance render?" : "Render a similar prompt again?"}
           description={
             renderApproval?.kind === "long"
-              ? "This render is 13–30 seconds, so it takes longer and costs more than the short iteration default."
+              ? "This longer shot will take more time to render. Your timing and creative settings will be preserved."
               : `This prompt is similar to ${renderApproval?.similarCount ?? 3} recent video renders in this project. Continue only if another take is intentional.`
           }
-          cost={renderApproval?.estimatedCost}
+          cost={isManagement ? renderApproval?.estimatedCost : undefined}
           confirmLabel={renderApproval?.kind === "long" ? "Approve render" : "Render another take"}
           onConfirm={async () => {
             const pending = renderApproval;
@@ -6201,6 +6213,7 @@ export function Studio() {
                       onActiveClientChange={onActiveClientChange}
                       clients={clients}
                       onClientsChange={setClients}
+                      canDelete={isManagement}
                       compact
                     />
                   </span>
@@ -6213,6 +6226,7 @@ export function Studio() {
                       clientId={activeClientId}
                       required={mode === "t2v"}
                       canManageSpend={session?.user?.role === "admin"}
+                      canDelete={isManagement}
                       compact
                     />
                   </span>
@@ -6597,7 +6611,7 @@ export function Studio() {
                   </span>
                 ) : mode === "t2v" ? (
                     <ChipPopover
-                      value={`${durationS}s`}
+                      value={`${autoDuration ? "Auto · " : ""}${durationS}s`}
                       icon={<Clock className="size-3.5" />}
                       active={false}
                       width="w-72"
@@ -6606,19 +6620,36 @@ export function Studio() {
                         <p className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">
                           Choose duration
                         </p>
+                        <button type="button" aria-pressed={autoDuration} onClick={() => setAutoDuration(true)}
+                          className={cn("mt-3 w-full rounded-lg border px-3 py-2 text-left text-xs", autoDuration ? "border-primary text-primary" : "border-border text-muted-foreground")}>
+                          Auto · {durationSuggestion.seconds}s
+                          <span className="mt-1 block text-muted-foreground">{durationSuggestion.reason}</span>
+                        </button>
                         <p className="mt-2 mb-3 text-center text-2xl font-semibold text-foreground">
                           {durationS}s
                         </p>
                         <Slider
+                          aria-label="Video duration"
+                          aria-describedby="video-duration-guidance"
                           min={4}
                           max={videoCaps.maxDuration}
                           step={1}
                           value={[durationS]}
-                          onValueChange={([v]) => setDurationS(v)}
+                          onValueChange={([v]) => { setDurationS(v); setAutoDuration(false); }}
                         />
                         <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
                           <span>4s</span>
                           <span>{videoCaps.maxDuration}s</span>
+                        </div>
+                        <div id="video-duration-guidance" className="mt-3 space-y-1 text-xs leading-relaxed text-muted-foreground" aria-live="polite">
+                          <p>{durationS <= 5
+                            ? "4–5s · A product detail, quick reveal, or simple movement."
+                            : durationS <= 10
+                              ? "6–10s · A few connected actions or a short spoken line."
+                              : durationS <= 15
+                                ? "11–15s · A longer action or dialogue that needs room to finish."
+                                : "16–30s · Only when dialogue or uninterrupted action needs the full time. Consider separate shots for multiple scenes."}</p>
+                          <p className="text-foreground/80">Use only the time your shot needs.</p>
                         </div>
                       </div>
                     </ChipPopover>
@@ -6676,7 +6707,7 @@ export function Studio() {
 
           {/* Live estimate for the current settings, so cost is visible
               before committing rather than discovered in the Usage report. */}
-          {estimatedCost != null && (
+          {isManagement && estimatedCost != null && (
             <span
               data-tour="cost"
               title={

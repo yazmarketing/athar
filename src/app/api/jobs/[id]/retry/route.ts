@@ -2,7 +2,9 @@ import { NextRequest, NextResponse, after } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { requireCreator } from "@/lib/authz";
 import { submitImageJob } from "@/lib/image-jobs";
-import { getJob, markJobRequeued } from "@/lib/jobs";
+import { getJob, markJobRequeued, resumeProviderJob } from "@/lib/jobs";
+import { arkGetVideoTask } from "@/lib/byteplus-server";
+import { checkSpendControls } from "@/lib/render-guardrails";
 import { isImageJob } from "@/lib/types";
 import { submitVideoJob } from "@/lib/video-jobs";
 
@@ -35,9 +37,24 @@ export async function POST(_req: NextRequest, { params }: Params) {
       );
     }
 
+    // A local timeout or storage failure does not mean the paid render failed.
+    // Resume polling the original task before considering another submission.
+    if (!isImageJob(job) && job.provider_task_id) {
+      const task = await arkGetVideoTask(job.provider_task_id);
+      if (!["failed", "expired", "cancelled"].includes(task.status ?? "")) {
+        const resumed = await resumeProviderJob(job.id, job.provider_task_id);
+        return NextResponse.json({ job: resumed ?? await getJob(job.id) });
+      }
+    }
+    const spend = await checkSpendControls({ userId: job.user_id ?? sessionUser.id, projectId: job.project_id, proposedCost: Number(job.estimated_cost ?? 0) });
+    if (!spend.allowed) {
+      return NextResponse.json({ error: sessionUser.role === "admin" ? spend.error : "This project needs a manager’s review before another render. Your work is saved." }, { status: 409 });
+    }
+
     // Back in the queue, then submitted after the response — same path as a
     // first render, so a retry can't outrun the gateway either.
     const updated = await markJobRequeued(job.id);
+    if (!updated) return NextResponse.json({ job: await getJob(job.id) });
     after(() =>
       isImageJob(job) ? submitImageJob(job.id) : submitVideoJob(job.id)
     );

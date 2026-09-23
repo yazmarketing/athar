@@ -76,10 +76,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 /** Delete a project — only when it holds no live generations. */
 export async function DELETE(_req: NextRequest, { params }: Params) {
   try {
-    const sessionUser = await getSessionUser();
-    if (!sessionUser?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const auth = await requireAdmin();
+    if (auth.response) return auth.response;
+    const sessionUser = auth.user;
     const { id } = await params;
     if (!UUID_RE.test(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });

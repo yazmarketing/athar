@@ -194,10 +194,6 @@ export function VideoDetail({
     setFavorited(Boolean(g.is_favorite));
   }
 
-  useEffect(() => {
-    setShareOpen(false);
-  }, [g.id]);
-
   const toggleFavorite = async () => {
     if (busy) return;
     const next = !favorited;

@@ -43,6 +43,8 @@ type VideoJobInput = {
   referenceVideoUrls?: string[] | null;
   sourceAudioUrls?: string[] | null;
   videoResolution?: string | null;
+  generateAudio?: boolean;
+  videoIntent?: "edit" | "extend" | "vary";
   prompt?: PromptInputs;
   sourceGenerationId?: string | null;
   sourceVideoGenerationId?: string | null;
@@ -69,6 +71,9 @@ export function videoJobSourceImages(input: VideoJobInput): string[] {
 export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   const input = videoJobInput(job);
   const model = resolveModel(job.kind, job.tier as Tier);
+  // Preserve versioned endpoints; legacy records may only say byteplus:seedance.
+  const storedSlug = job.model_endpoint.replace(/^byteplus:/, "");
+  const modelSlug = /^dreamina-seedance-/.test(storedSlug) ? storedSlug : model.slug;
   const imageUrls = videoJobSourceImages(input);
   const sourceVideoUrl = input.sourceVideoUrl?.trim() || null;
   // Seedance 2.5 accepts up to 10 reference video clips (30s combined) —
@@ -89,7 +94,7 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   const resolution: "480p" | "720p" | "1080p" =
     requested === "480p"
       ? "480p"
-      : requested === "1080p" && model.slug.includes("seedance-2-5")
+      : requested === "1080p" && modelSlug.includes("seedance-2-5")
         ? "1080p"
         : "720p";
 
@@ -100,7 +105,7 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   );
 
   return {
-    model: model.slug,
+    model: modelSlug,
     prompt: job.final_prompt,
     negativePrompt: job.negative_prompt || undefined,
     ratio: isAspectRatio(job.aspect)
@@ -108,7 +113,8 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
       : "16:9",
     resolution,
     duration,
-    generateAudio: model.supportsAudio,
+    generateAudio: model.supportsAudio && (input.generateAudio ?? true),
+    taskType: sourceVideoUrl ? (input.videoIntent === "extend" ? "extend" : "edit") : undefined,
     imageUrls: imageUrls.length ? imageUrls : undefined,
     videoUrls: sourceVideoUrl ? [sourceVideoUrl] : undefined,
     referenceVideoUrls: referenceVideoUrls.length
@@ -226,6 +232,8 @@ export async function finalizeVideoJob(
           ? input.sourceAudioUrls
           : undefined,
         video_resolution: input.videoResolution ?? undefined,
+        generate_audio: input.generateAudio ?? true,
+        video_intent: input.videoIntent,
       },
       finalPrompt: job.final_prompt,
       negativePrompt: job.negative_prompt,

@@ -20,7 +20,7 @@ export type SearchPickerOption = {
 
 export type SearchPickerAction = {
   label: string;
-  onSelect: () => void;
+  onSelect: (query: string) => void;
   destructive?: boolean;
   disabled?: boolean;
 };
@@ -147,7 +147,8 @@ export function SearchPicker({
                   disabled={action.disabled}
                   onClick={() => {
                     setOpen(false);
-                    action.onSelect();
+                    action.onSelect(query.trim());
+                    setQuery("");
                   }}
                   className={cn(
                     "rounded-lg border border-border px-3 py-2 text-xs transition hover:bg-sidebar-accent disabled:opacity-40",

@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
   }
 
   const mode = body.mode;
-  const tier = body.tier ?? "draft";
+  const tier = body.tier ?? (mode === "t2v" ? "standard" : "draft");
   // Dock chip wins. Inference only fills in a missing/invalid aspect — the
   // studio already mirrors director-prompt ratios onto the chip as you type,
   // so a later "21:9" token must not override a 16:9 the person just picked.
@@ -160,13 +160,14 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (body.clientId !== projectClientId) {
+    if (body.clientId != null && body.clientId !== projectClientId) {
       return NextResponse.json(
         { error: "Choose a project linked to the selected client", code: "project_client_mismatch" },
         { status: 400 }
       );
     }
-    // Seedance 2.0 series accepts up to 9 reference images
+    // The saved project is authoritative for callers such as Storyboard.
+    body.clientId = projectClientId;
     const sourceImageUrls = (body.sourceImageUrls ?? [])
       .map((u) => u.trim())
       .filter(Boolean)
@@ -195,17 +196,6 @@ export async function POST(req: NextRequest) {
           videoModel.maxDuration || 30
         );
     const estimatedCost = videoModel.costPerUnit * (videoDuration ?? 5);
-    if ((videoDuration ?? 0) >= 13 && (videoDuration ?? 0) <= 30 && !body.longRenderApproved) {
-      return NextResponse.json(
-        {
-          error: "Approval is required for Seedance renders from 13 to 30 seconds.",
-          code: "long_render_approval_required",
-          estimatedCost,
-          durationS: videoDuration,
-        },
-        { status: 409 }
-      );
-    }
     if (!body.duplicatePromptApproved) {
       const similarCount = await similarVideoRenderCount(sessionUser.id, projectId, finalPrompt);
       if (similarCount >= 3) {
@@ -222,7 +212,7 @@ export async function POST(req: NextRequest) {
     }
     const spend = await checkSpendControls({ userId: sessionUser.id, projectId, proposedCost: estimatedCost });
     if (!spend.allowed) {
-      return NextResponse.json({ error: spend.error, code: "spend_cap_exceeded" }, { status: 409 });
+      return NextResponse.json({ error: sessionUser.role === "admin" ? spend.error : "This project needs a manager’s review before another render. Your work is saved.", code: "spend_cap_exceeded" }, { status: 409 });
     }
     try {
       const job = await createJob({
@@ -249,7 +239,7 @@ export async function POST(req: NextRequest) {
        * and a poll re-submits it if this process dies first.
        */
       after(() => submitVideoJob(job.id));
-      return NextResponse.json({ job, spendAlerts: spend.alerts }, { status: 202 });
+      return NextResponse.json({ job, spendAlerts: sessionUser.role === "admin" ? spend.alerts : [] }, { status: 202 });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Could not queue the render";
@@ -274,7 +264,7 @@ export async function POST(req: NextRequest) {
   const estimatedCost = imageUnitCost * numOutputs;
   const spend = await checkSpendControls({ userId: sessionUser.id, projectId, proposedCost: estimatedCost });
   if (!spend.allowed) {
-    return NextResponse.json({ error: spend.error, code: "spend_cap_exceeded" }, { status: 409 });
+    return NextResponse.json({ error: sessionUser.role === "admin" ? spend.error : "This project needs a manager’s review before another render. Your work is saved.", code: "spend_cap_exceeded" }, { status: 409 });
   }
   try {
     const jobs: Awaited<ReturnType<typeof createJob>>[] = [];
@@ -307,7 +297,7 @@ export async function POST(req: NextRequest) {
       after(() => submitImageJob(job.id));
     }
     return NextResponse.json(
-      { job: jobs[0], jobs, spendAlerts: spend.alerts },
+      { job: jobs[0], jobs, spendAlerts: sessionUser.role === "admin" ? spend.alerts : [] },
       { status: 202 }
     );
   } catch (err) {

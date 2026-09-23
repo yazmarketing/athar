@@ -1,4 +1,5 @@
 import "server-only";
+import type { PoolClient } from "pg";
 import { db, onceProcess } from "@/lib/db";
 import { ensureGenerationColumns } from "@/lib/generations-store";
 
@@ -43,9 +44,9 @@ export async function similarVideoRenderCount(userId: string, projectId: string,
 
 type Scope = { type: "user" | "project"; id: string; cap: number | null; spent: number };
 
-export async function checkSpendControls(input: { userId: string; projectId: string | null; proposedCost: number }) {
+export async function checkSpendControls(input: { userId: string; projectId: string | null; proposedCost: number }, executor: Pick<PoolClient, "query"> = db()) {
   await ensureSpendControls();
-  const { rows } = await db().query<{
+  const { rows } = await executor.query<{
     user_cap: string | null; project_cap: string | null; user_spent: string; project_spent: string;
   }>(`select
       u.spend_cap as user_cap, p.spend_cap as project_cap,
@@ -68,7 +69,7 @@ export async function checkSpendControls(input: { userId: string; projectId: str
   for (const scope of scopes) {
     for (const threshold of SPEND_ALERT_THRESHOLDS) {
       if (scope.spent + input.proposedCost >= threshold) {
-        const inserted = await db().query(`insert into spend_alerts (scope_type, scope_id, threshold) values ($1,$2,$3) on conflict do nothing returning threshold`, [scope.type, scope.id, threshold]);
+        const inserted = await executor.query(`insert into spend_alerts (scope_type, scope_id, threshold) values ($1,$2,$3) on conflict do nothing returning threshold`, [scope.type, scope.id, threshold]);
         if (inserted.rowCount) alerts.push(`${scope.type === "user" ? "User" : "Project"} spend has reached $${threshold}.`);
       }
     }
