@@ -5731,7 +5731,7 @@ export function Studio() {
                 Wraps instead of scrolling so the upward popovers aren't
                 clipped by an overflow container. */}
             {!generating && !composerCollapsed && mode === "t2v" && cinemaOn && (
-              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 px-1">
+              <div className="mb-1.5 grid grid-cols-2 items-center gap-1.5 px-1 sm:flex sm:flex-wrap">
                 <ChipPopover
                   label="Film setup"
                   value={

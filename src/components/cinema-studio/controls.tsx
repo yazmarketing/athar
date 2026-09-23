@@ -56,26 +56,45 @@ export function ChipPopover({
   width?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(
-    null
-  );
+  const [pos, setPos] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const place = () => {
     const rect = wrapRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const panelW = WIDTH_PX[width] ?? 320;
+    const gap = 8;
+    const panelW = Math.min(
+      WIDTH_PX[width] ?? 320,
+      Math.max(0, window.innerWidth - gap * 2)
+    );
+    const desiredHeight = Math.min(panelRef.current?.scrollHeight ?? 608, 608);
+    const spaceAbove = Math.max(0, rect.top - gap * 2);
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap * 2);
+    const openAbove = spaceAbove >= spaceBelow;
+    const availableHeight = openAbove ? spaceAbove : spaceBelow;
+    const maxHeight = Math.max(0, Math.min(608, availableHeight));
+    const renderedHeight = Math.min(desiredHeight, maxHeight);
     setPos({
-      // Clamp to the viewport so the last chips don't push the panel
-      // off the right edge.
-      left: Math.max(8, Math.min(rect.left, window.innerWidth - panelW - 8)),
-      bottom: window.innerHeight - rect.top + 8,
+      left: Math.max(gap, Math.min(rect.left, window.innerWidth - panelW - gap)),
+      top: openAbove
+        ? Math.max(gap, rect.top - gap - renderedHeight)
+        : Math.min(window.innerHeight - gap - renderedHeight, rect.bottom + gap),
+      width: panelW,
+      maxHeight,
     });
   };
 
   useEffect(() => {
     if (!open) return;
+    // Measure once the portalled content exists; this also prevents tall
+    // panels from opening beyond the top edge of short viewports.
+    const frame = window.requestAnimationFrame(place);
     const onDown = (e: PointerEvent) => {
       const t = e.target as Node;
       // The panel lives in a body portal — it is NOT inside wrapRef.
@@ -90,6 +109,7 @@ export function ChipPopover({
     window.addEventListener("resize", onMove);
     window.addEventListener("scroll", onMove, true);
     return () => {
+      window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", onDown);
       window.removeEventListener("resize", onMove);
       window.removeEventListener("scroll", onMove, true);
@@ -98,7 +118,7 @@ export function ChipPopover({
   }, [open]);
 
   return (
-    <div ref={wrapRef} className="relative">
+    <div ref={wrapRef} className="relative min-w-0">
       <button
         type="button"
         onClick={() => {
@@ -106,7 +126,7 @@ export function ChipPopover({
           setOpen((o) => !o);
         }}
         className={cn(
-          "flex min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition",
+          "flex w-full min-w-0 items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left transition sm:w-auto",
           active
             ? "border-gold/40 bg-gold/10"
             : "border-white/10 bg-white/5 hover:border-white/20",
@@ -138,9 +158,9 @@ export function ChipPopover({
         createPortal(
           <div
             ref={panelRef}
-            style={{ left: pos.left, bottom: pos.bottom, width: Math.min(WIDTH_PX[width] ?? 320, window.innerWidth - 16) }}
+            style={{ left: pos.left, top: pos.top, width: pos.width, maxHeight: pos.maxHeight }}
             className={cn(
-              "fixed z-[100] max-h-[min(38rem,calc(100vh-1rem))] overflow-y-auto rounded-xl bg-popover p-2 shadow-2xl ring-1 ring-border",
+              "fixed z-[100] overflow-x-hidden overflow-y-auto overscroll-contain rounded-xl bg-popover p-2 shadow-2xl ring-1 ring-border",
             )}
           >
             {children}
@@ -222,20 +242,20 @@ export function CameraControlPanel({ movementPresets, framingPresets, bodyPreset
 }) {
   const [section, setSection] = useState<"setup" | "movement">("setup");
   return (
-    <div className="grid min-h-[28rem] grid-cols-[9rem_1fr]">
-      <div className="space-y-1 border-r border-white/10 pr-2">
+    <div className="flex min-h-0 flex-col sm:grid sm:min-h-[28rem] sm:grid-cols-[7rem_1fr] md:grid-cols-[9rem_1fr]">
+      <div className="mb-2 flex gap-1 border-b border-white/10 pb-2 sm:mb-0 sm:block sm:space-y-1 sm:border-r sm:border-b-0 sm:pr-2 sm:pb-0">
         <button type="button" onClick={() => setSection("setup")} className={cn("flex w-full items-center justify-start gap-2 rounded-xl px-3 py-3 text-sm", section === "setup" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5")}><Camera className="size-4" /> Setup</button>
         <button type="button" onClick={() => setSection("movement")} className={cn("flex w-full items-center justify-start gap-2 rounded-xl px-3 py-3 text-sm", section === "movement" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5")}><Move3d className="size-4" /> Movement</button>
       </div>
-      <div className="min-w-0 pl-3">
+      <div className="min-w-0 sm:pl-3">
         {section === "setup" ? (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <SetupColumn title="Camera" presets={bodyPresets} value={body} onChange={onBodyChange} />
             <SetupColumn title="Lens" presets={lensPresets} value={lens} onChange={onLensChange} />
             <SetupColumn title="Aperture" presets={aperturePresets} value={aperture} onChange={onApertureChange} />
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <PresetList title="Movement" presets={movementPresets} value={movement} onChange={onMovementChange} />
             <PresetList title="Framing" presets={framingPresets} value={framing} onChange={onFramingChange} />
           </div>
@@ -317,7 +337,28 @@ export function EmotionWheel({
   const radius = 96;
 
   return (
-    <div className="relative mx-auto my-3 size-64">
+    <>
+    <div className="grid grid-cols-2 gap-1.5 p-1 sm:hidden">
+      {presets.map((p) => {
+        const selected = p.id === value;
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onChange(p.id)}
+            className={cn(
+              "rounded-xl border px-2 py-2.5 text-xs transition",
+              selected
+                ? "border-gold/60 bg-gold/20 text-gold"
+                : "border-white/10 bg-white/5 text-muted-foreground"
+            )}
+          >
+            {p.id === "raw" ? "Auto" : p.label}
+          </button>
+        );
+      })}
+    </div>
+    <div className="relative mx-auto my-3 hidden size-64 sm:block">
       <button
         type="button"
         onClick={() => onChange("raw")}
@@ -357,6 +398,7 @@ export function EmotionWheel({
         );
       })}
     </div>
+    </>
   );
 }
 
@@ -371,7 +413,7 @@ export function PacingCards({
   onChange: (id: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-1.5">
+    <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
       {presets.map((p) => {
         const selected = p.id === value;
         return (
