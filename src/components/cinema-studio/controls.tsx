@@ -15,16 +15,17 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Check } from "lucide-react";
+import { Camera, Check, Move3d } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { DirectorPreset } from "@/config/director";
-import type { CameraPreset } from "@/config/camera";
+import type { CameraPreset, CameraSetupPreset } from "@/config/camera";
 
 /** Width classes in px, so the fixed panel can be clamped to the viewport. */
 const WIDTH_PX: Record<string, number> = {
   "w-72": 288,
   "w-80": 320,
   "w-cinema-grid": 704,
+  "w-camera-panel": 780,
 };
 
 /**
@@ -139,7 +140,7 @@ export function ChipPopover({
             ref={panelRef}
             style={{ left: pos.left, bottom: pos.bottom, width: Math.min(WIDTH_PX[width] ?? 320, window.innerWidth - 16) }}
             className={cn(
-              "fixed z-[100] max-h-80 overflow-y-auto rounded-xl bg-popover p-2 shadow-2xl ring-1 ring-border",
+              "fixed z-[100] max-h-[min(38rem,calc(100vh-1rem))] overflow-y-auto rounded-xl bg-popover p-2 shadow-2xl ring-1 ring-border",
             )}
           >
             {children}
@@ -175,6 +176,71 @@ export function VisualPresetGrid({ presets, value, onChange }: { presets: Direct
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function SetupColumn({ title, presets, value, onChange }: { title: string; presets: CameraSetupPreset[]; value: string; onChange: (id: string) => void }) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-2 px-1 text-center text-[10px] font-medium tracking-[0.14em] text-muted-foreground uppercase">{title}</p>
+      <div className="space-y-2">
+        {presets.map((preset) => {
+          const selected = preset.id === value;
+          return (
+            <button key={preset.id} type="button" onClick={() => onChange(preset.id)} title={preset.description} className={cn("relative flex aspect-[1.55] w-full flex-col items-center justify-end overflow-hidden rounded-[2rem] border bg-gradient-to-b from-white/[0.06] to-black/30 p-3 text-center transition", selected ? "border-gold ring-1 ring-gold/30" : "border-white/10 hover:border-white/25")}>
+              {preset.preview ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={preset.preview} alt="" className="absolute inset-2 h-[68%] w-[calc(100%-1rem)] object-contain" />
+              ) : <Camera className="absolute top-1/3 size-7 text-muted-foreground/60" />}
+              <span className={cn("relative z-10 text-xs", selected ? "text-gold" : "text-foreground")}>{preset.label}</span>
+              {selected && <span className="absolute right-2 top-2 grid size-5 place-items-center rounded-full bg-gold text-black"><Check className="size-3" /></span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function CameraControlPanel({ movementPresets, framingPresets, bodyPresets, lensPresets, aperturePresets, movement, framing, body, lens, aperture, onMovementChange, onFramingChange, onBodyChange, onLensChange, onApertureChange }: {
+  movementPresets: CameraPreset[];
+  framingPresets: DirectorPreset[];
+  bodyPresets: CameraSetupPreset[];
+  lensPresets: CameraSetupPreset[];
+  aperturePresets: CameraSetupPreset[];
+  movement: string;
+  framing: string;
+  body: string;
+  lens: string;
+  aperture: string;
+  onMovementChange: (id: string) => void;
+  onFramingChange: (id: string) => void;
+  onBodyChange: (id: string) => void;
+  onLensChange: (id: string) => void;
+  onApertureChange: (id: string) => void;
+}) {
+  const [section, setSection] = useState<"setup" | "movement">("setup");
+  return (
+    <div className="grid min-h-[28rem] grid-cols-[9rem_1fr]">
+      <div className="space-y-1 border-r border-white/10 pr-2">
+        <button type="button" onClick={() => setSection("setup")} className={cn("flex w-full items-center justify-start gap-2 rounded-xl px-3 py-3 text-sm", section === "setup" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5")}><Camera className="size-4" /> Setup</button>
+        <button type="button" onClick={() => setSection("movement")} className={cn("flex w-full items-center justify-start gap-2 rounded-xl px-3 py-3 text-sm", section === "movement" ? "bg-white/10 text-foreground" : "text-muted-foreground hover:bg-white/5")}><Move3d className="size-4" /> Movement</button>
+      </div>
+      <div className="min-w-0 pl-3">
+        {section === "setup" ? (
+          <div className="grid grid-cols-3 gap-3">
+            <SetupColumn title="Camera" presets={bodyPresets} value={body} onChange={onBodyChange} />
+            <SetupColumn title="Lens" presets={lensPresets} value={lens} onChange={onLensChange} />
+            <SetupColumn title="Aperture" presets={aperturePresets} value={aperture} onChange={onApertureChange} />
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <PresetList title="Movement" presets={movementPresets} value={movement} onChange={onMovementChange} />
+            <PresetList title="Framing" presets={framingPresets} value={framing} onChange={onFramingChange} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }

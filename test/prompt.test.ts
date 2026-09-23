@@ -250,4 +250,17 @@ describe("buildPrompt lip-sync dialogue", () => {
     expect(negativePrompt).toContain("watermark");
     expect(negativePrompt).toContain("text overlay");
   });
+
+  it("adds camera body, lens, and aperture choices to video direction", () => {
+    const { finalPrompt } = buildPrompt({
+      subject: "a portrait in a quiet room",
+      cameraId: "locked",
+      cameraBodyId: "super8",
+      lensId: "vintage_anamorphic",
+      apertureId: "wide_open",
+    });
+    expect(finalPrompt).toContain("Super 8 film");
+    expect(finalPrompt).toContain("vintage anamorphic lens");
+    expect(finalPrompt).toContain("f/1.4");
+  });
 });

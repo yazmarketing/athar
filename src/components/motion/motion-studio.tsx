@@ -1,7 +1,7 @@
 "use client";
 /* Native previews require authenticated cookies and must not pass through the image optimizer. */
 /* eslint-disable @next/next/no-img-element */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowUp, Check, Download, Film, Layers, Loader2, Plus, Upload, WandSparkles } from "lucide-react";
 import type { MotionProject, NativeSnapshot } from "@/lib/motion/schema";
 import styles from "./motion-studio.module.css";
@@ -35,21 +35,32 @@ export function MotionStudio() {
   async function upload(files: FileList | null) { if (!project || !files?.length) return; setPending(true); setError(""); try { for (const file of Array.from(files)) { if (file.size > 80 * 1024 * 1024) throw new Error(`${file.name}: the limit is 80 MB per asset. Use a trimmed or compressed copy.`); setUploadName(file.name); const data = await api(`/api/motion/${project.id}/assets?name=${encodeURIComponent(file.name)}`, { method:"POST", headers:{"Content-Type":"application/octet-stream"}, body:file }); setProject(data.project); } } catch(e) { setError(e instanceof Error ? e.message : "Upload failed"); } finally { setPending(false); setUploadName(""); if(input.current)input.current.value=""; } }
   async function prepareBridge() { setPending(true); setError(""); try { await api("/api/motion/bridge",{method:"POST"}); setBridgeReady(true); } catch(e) {setError(e instanceof Error ? e.message : "Could not prepare the bridge");} finally {setPending(false);} }
   const bridge = overview?.bridge, scene = project?.scene;
+  const visibleProjects = useMemo(
+    () => (overview?.projects ?? []).filter((item) => item.name !== "ATHAR — Enter the Trace · Studio study"),
+    [overview?.projects]
+  );
   const output = (kind: string) => {
     const version = kind === "movie" ? project?.movie : kind === "preview" ? project?.preview : kind === "master" ? project?.master : project?.nativeProject;
     return `/api/motion/${project?.id}?output=${kind}&v=${encodeURIComponent(version ?? "")}`;
   };
   return <section className={styles.studio}>
-    <header className={styles.header}><div><p className={styles.eyebrow}>ATHAR / NATIVE CREATIVE TOOLS</p><h1>Motion design</h1><p>Direct with Astra. Create in After Effects.</p></div><button className={styles.connection} onClick={() => setSetup(!setup)}><span data-connected={bridge?.connected || false}/>{bridge?.connected ? `After Effects ${bridge.snapshot?.version.split(".")[0]} connected` : "Connect After Effects"}</button></header>
+    <header className={styles.header}><div><p className={styles.eyebrow}>ATHAR / EDITABLE MOTION GRAPHICS</p><h1>Motion design</h1><p>Describe the animation. Astra designs it. After Effects builds editable layers.</p></div><button className={styles.connection} onClick={() => setSetup(!setup)}><span data-connected={bridge?.connected || false}/>{bridge?.connected ? `After Effects ${bridge.snapshot?.version.split(".")[0]} connected` : "Connect After Effects"}</button></header>
     {(setup || (overview && !bridge?.connected && !project)) && <div className={styles.setup}><div><strong>Connect this Mac</strong><p>After Effects and Athar must run on this computer. Keep the bridge window open while working.</p></div><ol><li><button disabled={pending} onClick={()=>void prepareBridge()}>{bridgeReady ? "Bridge prepared ✓" : "Prepare bridge"}</button> <a href="/api/motion/bridge" download>Download bridge <Download size={14}/></a></li><li>In After Effects, enable <b>Allow Scripts to Write Files and Access Network</b> under Settings → Scripting &amp; Expressions.</li><li>Choose File → Scripts → Run Script File, open <b>Athar-After-Effects.jsx</b> from your downloads. Or, after preparing the bridge, run <b>scripts/motion/bridge.jsx</b> in your local Athar folder. It connects automatically.</li></ol><p className={styles.note}>{overview?.afterEffectsDetected ? "After Effects is installed on this Mac." : "After Effects is required for native preview and export."} This connection uses local files; it is separate from a ChatGPT plugin.</p></div>}
     {bridge?.connected && (bridge.snapshot?.capabilities ?? 1) < 6 && <div className={styles.setup}><strong>Update your After Effects connection</strong><p>Prepare the bridge and run it again to study the complete timeline and reuse native reference compositions, effects and animation.</p><button onClick={()=>setSetup(true)}>Show connection steps</button></div>}
     {error && <div className={styles.error} role="alert">{error}</div>}
     {!overview && !error && <p role="status"><Loader2 className={styles.spin} size={18}/> Connecting to your workspace…</p>}
     {!project ? <>
-      <div className={styles.hero}><div className={styles.heroArt} aria-hidden><span>أثر</span><i/><b>IDEAS<br/>IN MOTION.</b></div><div><p className={styles.eyebrow}>FROM DIRECTION TO EDITABLE LAYERS</p><h2>Give your ideas<br/>a sense of motion.</h2><p>Kinetic type, animated graphics and effects over your footage. Shape the direction, refine the timing, and keep every layer editable.</p><div className={styles.actions}><button className={styles.primary} disabled={!overview || pending} onClick={() => void create("create")}><Plus size={17}/> Create motion</button><button disabled={!overview || pending} onClick={() => void create("edit")}><Layers size={17}/> Edit a composition</button><button disabled={!overview || pending} onClick={() => void create("create","athar-ident")}><Film size={17}/> Open the Athar studio study</button></div></div></div>
-      <div className={styles.sectionTitle}><h2>Your motion projects</h2><span>{overview?.projects.length ?? 0} projects</span></div>
-      <div className={styles.grid}>{overview?.projects.map(p => <button key={p.id} className={styles.projectCard} onClick={() => {setProject(p);syncSettings(p);setBrief(p.designJob?.instruction ?? "");setError("");}}><div>{p.preview ? <img src={`/api/motion/${p.id}?output=preview&v=${p.updatedAt}`} alt=""/> : <Film size={36}/>}<span>{p.mode === "edit" ? "COMPOSITION EDIT" : "MOTION GRAPHICS"}</span></div><strong>{p.name}</strong><p>{p.scene ? `${p.scene.duration}s · ${p.scene.width} × ${p.scene.height}` : "Add your direction"}</p></button>)}</div>
-      {overview && !overview.projects.length && <p className={styles.note}>Your compositions, directions and revisions will be saved here.</p>}
+      <div className={styles.intro}>
+        <div><p className={styles.eyebrow}>CHOOSE WHAT YOU WANT TO DO</p><h2>Create real motion graphics, not generated video.</h2><p>Use this workspace for animated typography, logos, graphic overlays and effects. The result is a native After Effects composition with editable layers, timing and keyframes.</p></div>
+        <div className={styles.workflowChoices}>
+          <button disabled={!overview || pending} onClick={() => void create("create")}><span><Plus size={18}/></span><strong>Start a new motion graphic</strong><p>Choose a canvas, add assets, and describe the exact copy, style and timing.</p><small>Best for titles, idents, social graphics and overlays</small></button>
+          <button disabled={!overview || pending} onClick={() => void create("edit")}><span><Layers size={18}/></span><strong>Edit an After Effects composition</strong><p>Open the source in After Effects first. Athar studies it, duplicates it, then applies your direction.</p><small>The original composition stays unchanged</small></button>
+        </div>
+      </div>
+      <div className={styles.howItWorks}><div><b>1</b><span><strong>Set the direction</strong><small>Add copy, footage and the intended format.</small></span></div><div><b>2</b><span><strong>Astra designs</strong><small>It plans the layers, hierarchy, motion and timing.</small></span></div><div><b>3</b><span><strong>Build in After Effects</strong><small>Review the real render and continue editing natively.</small></span></div></div>
+      <div className={styles.sectionTitle}><h2>Your motion projects</h2><span>{visibleProjects.length} projects</span></div>
+      <div className={styles.grid}>{visibleProjects.map(p => <button key={p.id} className={styles.projectCard} onClick={() => {setProject(p);syncSettings(p);setBrief(p.designJob?.instruction ?? "");setError("");}}><div>{p.preview ? <img src={`/api/motion/${p.id}?output=preview&v=${p.updatedAt}`} alt=""/> : <Film size={36}/>}<span>{p.mode === "edit" ? "COMPOSITION EDIT" : "MOTION GRAPHICS"}</span></div><strong>{p.name}</strong><p>{p.scene ? `${p.scene.duration}s · ${p.scene.width} × ${p.scene.height}` : "Add your direction"}</p></button>)}</div>
+      {overview && !visibleProjects.length && <p className={styles.emptyProjects}>No motion projects yet. Choose one of the two workflows above to begin.</p>}
     </> : <>
       <div className={styles.projectHeading}><button onClick={() => {setProject(null);setError("");void refresh();}}><ArrowLeft size={16}/> Projects</button><h2>{project.name}</h2><span>{project.referenceComp ? "Create from reference" : project.mode === "edit" ? "Edit composition" : "Create motion"}</span></div>
       <div className={`${styles.workspace} ${busyStates.includes(project.status) ? styles.workspaceBusy : ""}`}>

@@ -60,6 +60,7 @@ import { uploadAudioFile } from "@/lib/upload-audio";
 import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
   ChipPopover,
+  CameraControlPanel,
   EmotionWheel,
   PacingCards,
   PresetList,
@@ -121,7 +122,13 @@ import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
 import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
-import { CAMERA_PRESETS, DEFAULT_CAMERA_ID } from "@/config/camera";
+import {
+  APERTURE_PRESETS,
+  CAMERA_BODY_PRESETS,
+  CAMERA_PRESETS,
+  DEFAULT_CAMERA_ID,
+  LENS_PRESETS,
+} from "@/config/camera";
 import {
   DEFAULT_DIRECTOR_ID,
   EMOTION_PRESETS,
@@ -232,6 +239,9 @@ const PROMPT_FIELD_TYPE =
 
 /** Cinema Studio director picks (video dock). Camera movement stays in `camera`. */
 type CinemaControls = {
+  cameraBodyId: string;
+  lensId: string;
+  apertureId: string;
   genreId: string;
   eraId: string;
   shotId: string;
@@ -243,6 +253,9 @@ type CinemaControls = {
 };
 
 const CINEMA_DEFAULTS: CinemaControls = {
+  cameraBodyId: DEFAULT_DIRECTOR_ID,
+  lensId: DEFAULT_DIRECTOR_ID,
+  apertureId: DEFAULT_DIRECTOR_ID,
   genreId: DEFAULT_DIRECTOR_ID,
   eraId: DEFAULT_DIRECTOR_ID,
   shotId: DEFAULT_DIRECTOR_ID,
@@ -974,6 +987,9 @@ export function Studio() {
     setCinema({
       ...CINEMA_DEFAULTS,
       genreId: seed?.genreId ?? DEFAULT_DIRECTOR_ID,
+      cameraBodyId: seed?.cameraBodyId ?? DEFAULT_DIRECTOR_ID,
+      lensId: seed?.lensId ?? DEFAULT_DIRECTOR_ID,
+      apertureId: seed?.apertureId ?? DEFAULT_DIRECTOR_ID,
       eraId: seed?.eraId ?? DEFAULT_DIRECTOR_ID,
       shotId: seed?.shotId ?? DEFAULT_DIRECTOR_ID,
       gradeId: seed?.gradeId ?? DEFAULT_DIRECTOR_ID,
@@ -982,7 +998,7 @@ export function Studio() {
       tempoId: seed?.tempoId ?? DEFAULT_DIRECTOR_ID,
       pacingId: seed?.pacingId ?? DEFAULT_DIRECTOR_ID,
     });
-    setCinemaOn(Boolean(seed?.genreId || seed?.eraId || seed?.shotId || seed?.gradeId || seed?.lightLookId || seed?.emotionId || seed?.tempoId || seed?.pacingId));
+    setCinemaOn(Boolean(seed?.genreId || seed?.eraId || seed?.shotId || seed?.gradeId || seed?.lightLookId || seed?.emotionId || seed?.tempoId || seed?.pacingId || seed?.cameraBodyId || seed?.lensId || seed?.apertureId));
     setDetailsOpen(
       Boolean(
         seed?.action ||
@@ -1510,6 +1526,9 @@ export function Studio() {
       negativeAdditions: prompt.negativeAdditions,
       styleId: prompt.styleId,
       cameraId: prompt.cameraId,
+      cameraBodyId: prompt.cameraBodyId,
+      lensId: prompt.lensId,
+      apertureId: prompt.apertureId,
     });
 
     if (isAspectRatio(job.aspect)) setAspect(job.aspect);
@@ -1566,6 +1585,9 @@ export function Studio() {
         }))
       );
       const nextCinema: CinemaControls = {
+        cameraBodyId: prompt.cameraBodyId ?? DEFAULT_DIRECTOR_ID,
+        lensId: prompt.lensId ?? DEFAULT_DIRECTOR_ID,
+        apertureId: prompt.apertureId ?? DEFAULT_DIRECTOR_ID,
         genreId: prompt.genreId ?? DEFAULT_DIRECTOR_ID,
         eraId: prompt.eraId ?? DEFAULT_DIRECTOR_ID,
         shotId: prompt.shotId ?? DEFAULT_DIRECTOR_ID,
@@ -3034,6 +3056,9 @@ export function Studio() {
       negativeAdditions: inputs.negativeAdditions,
       styleId: inputs.styleId,
       cameraId: inputs.cameraId,
+      cameraBodyId: inputs.cameraBodyId,
+      lensId: inputs.lensId,
+      apertureId: inputs.apertureId,
     });
 
     const aspect = isAspectRatio(g.aspect) ? g.aspect : null;
@@ -3090,6 +3115,9 @@ export function Studio() {
         }))
       );
       const nextCinema: CinemaControls = {
+        cameraBodyId: inputs.cameraBodyId ?? DEFAULT_DIRECTOR_ID,
+        lensId: inputs.lensId ?? DEFAULT_DIRECTOR_ID,
+        apertureId: inputs.apertureId ?? DEFAULT_DIRECTOR_ID,
         genreId: inputs.genreId ?? DEFAULT_DIRECTOR_ID,
         eraId: inputs.eraId ?? DEFAULT_DIRECTOR_ID,
         shotId: inputs.shotId ?? DEFAULT_DIRECTOR_ID,
@@ -5737,8 +5765,11 @@ export function Studio() {
                 <ChipPopover
                   label="Camera"
                   value={
-                    camera !== "raw" || cinema.shotId !== "raw"
+                    camera !== "raw" || cinema.shotId !== "raw" || cinema.cameraBodyId !== "raw" || cinema.lensId !== "raw" || cinema.apertureId !== "raw"
                       ? [
+                          presetLabel(CAMERA_BODY_PRESETS, cinema.cameraBodyId),
+                          presetLabel(LENS_PRESETS, cinema.lensId),
+                          presetLabel(APERTURE_PRESETS, cinema.apertureId),
                           presetLabel(CAMERA_PRESETS, camera),
                           presetLabel(SHOT_PRESETS, cinema.shotId),
                         ]
@@ -5746,19 +5777,25 @@ export function Studio() {
                           .join(" · ")
                       : "Auto"
                   }
-                  active={camera !== "raw" || cinema.shotId !== "raw"}
+                  active={camera !== "raw" || cinema.shotId !== "raw" || cinema.cameraBodyId !== "raw" || cinema.lensId !== "raw" || cinema.apertureId !== "raw"}
+                  width="w-camera-panel"
                 >
-                  <PresetList
-                    title="Movement"
-                    presets={CAMERA_PRESETS}
-                    value={camera}
-                    onChange={setCamera}
-                  />
-                  <PresetList
-                    title="Framing"
-                    presets={SHOT_PRESETS}
-                    value={cinema.shotId}
-                    onChange={(shotId) => setCinema((c) => ({ ...c, shotId }))}
+                  <CameraControlPanel
+                    movementPresets={CAMERA_PRESETS}
+                    framingPresets={SHOT_PRESETS}
+                    bodyPresets={CAMERA_BODY_PRESETS}
+                    lensPresets={LENS_PRESETS}
+                    aperturePresets={APERTURE_PRESETS}
+                    movement={camera}
+                    framing={cinema.shotId}
+                    body={cinema.cameraBodyId}
+                    lens={cinema.lensId}
+                    aperture={cinema.apertureId}
+                    onMovementChange={setCamera}
+                    onFramingChange={(shotId) => setCinema((c) => ({ ...c, shotId }))}
+                    onBodyChange={(cameraBodyId) => setCinema((c) => ({ ...c, cameraBodyId }))}
+                    onLensChange={(lensId) => setCinema((c) => ({ ...c, lensId }))}
+                    onApertureChange={(apertureId) => setCinema((c) => ({ ...c, apertureId }))}
                   />
                 </ChipPopover>
 

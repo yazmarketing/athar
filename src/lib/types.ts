@@ -40,6 +40,9 @@ export type PromptInputs = {
   styleNegative?: string;
   /** Camera-move preset id (see config/camera.ts) — video motion. */
   cameraId?: string;
+  cameraBodyId?: string;
+  lensId?: string;
+  apertureId?: string;
   /** Seedance director pickers (see config/director.ts) — video only. */
   genreId?: string;
   shotId?: string;

@@ -1,6 +1,6 @@
 import type { PromptInputs } from "@/lib/types";
 import { resolveStyle } from "@/config/styles";
-import { resolveCamera } from "@/config/camera";
+import { cameraSetupFragments, resolveCamera } from "@/config/camera";
 import {
   compileDirector,
   SEEDANCE_VIDEO_NEGATIVES,
@@ -91,6 +91,7 @@ export function buildPrompt(inputs: PromptInputs): {
     inputs.lighting?.trim(),
     inputs.brandTokens?.trim(),
     camera.fragment.trim() || undefined,
+    ...cameraSetupFragments(inputs),
     ...director.fragments,
     stylePositive || undefined,
   ].filter((p): p is string => Boolean(p));
