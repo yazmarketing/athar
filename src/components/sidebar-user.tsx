@@ -33,55 +33,53 @@ export function SidebarUser({
   const role = ROLE_LABEL[user.role] ?? "Creator";
 
   return (
-    <div className={cn("flex min-w-0 items-center gap-2 rounded-xl bg-sidebar-accent/40 p-2 ring-1 ring-sidebar-border", className)}>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className={cn("mt-1 rounded-xl bg-sidebar-accent/40 p-2.5 ring-1 ring-sidebar-border", className)}>
+      <div className="flex items-center gap-2.5">
         {user.image ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={user.image}
             alt={name}
             referrerPolicy="no-referrer"
-            className="size-8 shrink-0 rounded-full object-cover ring-1 ring-sidebar-border"
+            className="size-9 shrink-0 rounded-full object-cover ring-1 ring-sidebar-border"
           />
         ) : (
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-gold text-[10px] font-semibold text-primary-foreground">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-gold text-[11px] font-semibold text-primary-foreground">
             {initials(user.name, user.email)}
           </span>
         )}
         <div className="min-w-0 flex-1 leading-tight">
           <p
-            className="truncate text-xs font-medium text-foreground"
+            className="truncate text-sm font-medium text-foreground"
             title={name}
           >
             {name}
           </p>
-          <p className="truncate text-[9px] text-muted-foreground">
+          <p className="truncate text-[11px] text-muted-foreground">
             {role}
             {user.team ? ` · ${user.team}` : ""}
           </p>
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-0.5">
+      <div className="mt-2 flex items-center gap-1 border-t border-sidebar-border/70 pt-2">
         {isAdmin && (
           <button
             type="button"
             onClick={onManageTeam}
-            aria-label="Team"
-            title="Team"
-            className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+            className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
           >
             <Users className="size-3.5" />
+            Team
           </button>
         )}
         <button
           type="button"
           onClick={() => signOut({ callbackUrl: "/login" })}
-          aria-label="Sign out"
-          title="Sign out"
-          className="flex size-7 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
+          className="flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-[11px] text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground"
         >
           <LogOut className="size-3.5" />
+          Sign out
         </button>
       </div>
     </div>

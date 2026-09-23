@@ -40,6 +40,8 @@ import {
   Plug,
   Trash2,
   Users,
+  Volume2,
+  VolumeX,
   Wand2,
   X,
 } from "lucide-react";
@@ -69,7 +71,6 @@ import {
 } from "@/components/cinema-studio/controls";
 import { AspectIcon } from "@/components/aspect-icon";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
 import { Storyboards } from "@/components/storyboard";
@@ -3933,10 +3934,10 @@ export function Studio() {
           {navBtn(view === "create" && cinemaOn, () => { openTool("t2v"); setCinemaOn(true); }, <Aperture className="size-4" />, "Cinema Studio")}
           {navBtn(view === "motion", () => setView("motion"), <Film className="size-4" />, "Motion design")}
           {navBtn(view === "effects", () => setView("effects"), <Sparkles className="size-4" />, "Looks & motion")}
-          {navBtn(view === "storyboard", () => setView("storyboard"), <Film className="size-4" />, "Storyboard", "storyboard")}
 
           <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Image</p>
           {navBtn(view === "create" && mode === "t2i", () => openTool("t2i"), <ImageIcon className="size-4" />, "Image")}
+          {navBtn(view === "storyboard", () => setView("storyboard"), <Film className="size-4" />, "Storyboard", "storyboard")}
 
           <p className="px-3 pt-1.5 pb-0 text-[8px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Audio</p>
           {navBtn(view === "tts", () => setView("tts"), <Mic className="size-4" />, "Voice", "tts")}
@@ -3953,7 +3954,7 @@ export function Studio() {
             to the other things you set before pressing Generate. */}
         </div>
 
-        <div className="relative mt-2 flex shrink-0 items-center gap-1 border-t border-sidebar-border pt-2">
+        <div className="relative mt-2 shrink-0 border-t border-sidebar-border pt-2">
           {connectionsOpen && (
             <div className="absolute bottom-full left-0 right-0 mb-2 rounded-xl border border-sidebar-border bg-popover p-3 shadow-lg">
               <p className="mb-2 text-xs font-medium text-foreground">
@@ -4018,7 +4019,7 @@ export function Studio() {
             </div>
           )}
 
-          <div className="flex shrink-0 items-center gap-0.5">
+          <div className="flex items-center gap-1 px-1">
             <button
               type="button"
               aria-label="Take the tour"
@@ -4071,7 +4072,7 @@ export function Studio() {
               </span>
             </button>
           </div>
-          <SidebarUser className="flex-1" onManageTeam={() => setView("team")} />
+          <SidebarUser onManageTeam={() => setView("team")} />
         </div>
       </aside>
 
@@ -6480,22 +6481,30 @@ export function Studio() {
               )}
 
               {mode === "t2v" && (
-                <label
+                <button
+                  type="button"
+                  aria-pressed={generateAudio || audioSources.length > 0}
+                  aria-label={
+                    generateAudio || audioSources.length > 0
+                      ? "Turn sound off"
+                      : "Turn sound on"
+                  }
                   title={
                     audioSources.length
                       ? "Reference audio requires sound output"
                       : "Generate sound with the video"
                   }
-                  className="inline-flex h-8 cursor-pointer items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60"
+                  disabled={audioSources.length > 0}
+                  onClick={() => setGenerateAudio((enabled) => !enabled)}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:bg-white/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 >
+                  {generateAudio || audioSources.length > 0 ? (
+                    <Volume2 className="size-3.5" />
+                  ) : (
+                    <VolumeX className="size-3.5" />
+                  )}
                   <span>Sound</span>
-                  <Switch
-                    checked={generateAudio || audioSources.length > 0}
-                    disabled={audioSources.length > 0}
-                    onCheckedChange={setGenerateAudio}
-                    aria-label="Generate sound"
-                  />
-                </label>
+                </button>
               )}
               <span data-tour="output" className="inline-flex items-center gap-2">
               {mode === "t2i" && googleModel === "nano-banana" ? (
