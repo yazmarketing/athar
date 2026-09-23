@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Loader2, Sparkles, SquarePen, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -20,27 +20,26 @@ type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   mode: "t2i" | "t2v";
+  durationS?: number;
   value: PromptInputs;
   onApply: (next: PromptInputs) => void;
 };
 
-export function PromptEditor({
+export function PromptEditor(props: Props) {
+  return props.open ? <PromptEditorSession {...props} /> : null;
+}
+
+function PromptEditorSession({
   open,
   onOpenChange,
   mode,
+  durationS,
   value,
   onApply,
 }: Props) {
   const [draft, setDraft] = useState<PromptInputs>(value);
   const [improving, setImproving] = useState(false);
   const [instruction, setInstruction] = useState("");
-
-  useEffect(() => {
-    if (open) {
-      setDraft(value);
-      setInstruction("");
-    }
-  }, [open, value]);
 
   const setField = <K extends keyof PromptInputs>(key: K, v: PromptInputs[K]) => {
     setDraft((prev) => ({ ...prev, [key]: v }));
@@ -58,14 +57,16 @@ export function PromptEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mode,
+          durationS,
+          engine: "astra",
           prompt: draft,
           instruction: instruction.trim() || undefined,
         }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Improve failed");
-      setDraft(json.prompt as PromptInputs);
-      toast.success("Prompt improved");
+      setDraft((previous) => ({ ...previous, ...json.prompt }));
+      toast.success(`Prompt developed with ${json.model}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Improve failed");
     } finally {
@@ -79,6 +80,7 @@ export function PromptEditor({
       return;
     }
     onApply({
+      ...draft,
       subject: draft.subject.trim(),
       action: draft.action?.trim() || undefined,
       lighting: draft.lighting?.trim() || undefined,
@@ -102,7 +104,7 @@ export function PromptEditor({
                 Prompt editor
               </DialogTitle>
               <DialogDescription className="mt-1 text-muted-foreground">
-                Structure a stronger prompt · AI improve uses ModelArk chat
+                GPT-6 Astra develops your creative direction. Your selected image or video model renders the result.
               </DialogDescription>
             </div>
             <button
@@ -163,7 +165,7 @@ export function PromptEditor({
             <Input
               value={draft.negativeAdditions ?? ""}
               onChange={(e) => setField("negativeAdditions", e.target.value)}
-              placeholder="extra fingers, plastic skin…"
+              placeholder={mode === "t2v" ? "No subtitles, no background music…" : "extra fingers, plastic skin…"}
               className="h-10 border-white/8 bg-black/30"
             />
           </Field>
@@ -172,13 +174,13 @@ export function PromptEditor({
             <div className="mb-2 flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-foreground">AI improve</p>
               <span className="font-mono text-[10px] text-muted-foreground">
-                ModelArk
+                GPT-6 Astra
               </span>
             </div>
             <Input
               value={instruction}
               onChange={(e) => setInstruction(e.target.value)}
-              placeholder="Keep outfit exact"
+              placeholder="e.g. Keep the Emirati wardrobe exact; build a slow, natural camera move"
               className="mb-2 h-9 border-white/8 bg-black/30 text-sm"
             />
             <Button
@@ -193,7 +195,7 @@ export function PromptEditor({
               ) : (
                 <Sparkles className="size-3.5" />
               )}
-              {improving ? "Improving…" : "Improve with AI"}
+              {improving ? "Developing your prompt…" : "Develop with GPT-6 Astra"}
             </Button>
           </div>
         </div>

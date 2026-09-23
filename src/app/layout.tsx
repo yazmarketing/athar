@@ -26,7 +26,7 @@ function resolveSiteUrl(): URL {
 const SITE_URL_OBJ = resolveSiteUrl();
 const SITE_URL = SITE_URL_OBJ.origin;
 
-const TITLE = "Athar — AI Film & Image Studio";
+const TITLE = "Athar — Creative Production Studio";
 const DESCRIPTION =
   "Athar is YAZ Media's in-house AI studio. Direct cinematic film and stills from a single prompt, locked to each client's brand — then version, upscale and ship without leaving the workspace.";
 
@@ -117,7 +117,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#000000",
+  themeColor: "#1b1d21",
   colorScheme: "dark",
   width: "device-width",
   initialScale: 1,

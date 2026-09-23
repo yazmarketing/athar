@@ -486,7 +486,7 @@ export function MemberActivity({
                     </span>
 
                     <span className="hidden shrink-0 text-right text-[11px] text-muted-foreground sm:block">
-                      <span className="block">{usd(g.cost)}</span>
+                      <span className="block">{g.cost == null ? "Cost pending" : usd(g.cost)}</span>
                       <span className="block">{dubaiTime(g.created_at)}</span>
                     </span>
                   </button>

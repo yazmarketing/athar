@@ -197,8 +197,12 @@ export async function GET(req: NextRequest) {
         group by user_id, label order by cost desc limit 12
       `;
       byUser = (await pool.query(sql, [from, to])).rows;
-    } catch {
-      /* users table missing */
+    } catch (err) {
+      // Was silently swallowed as "users table missing" — that's a real
+      // possibility on a fresh install, but so is a genuine query error,
+      // and the two looked identical (an empty "By user" section) until
+      // this logged. Keep the fallback; just stop hiding the real cause.
+      console.error("usage: byUser query failed", err);
     }
 
     let byProject: unknown[] = [];
@@ -213,8 +217,10 @@ export async function GET(req: NextRequest) {
         group by 1 order by cost desc limit 12
       `;
       byProject = (await pool.query(sql, [from, to])).rows;
-    } catch {
-      /* projects table missing */
+    } catch (err) {
+      // Same as byUser above: this used to render identically whether the
+      // projects table was genuinely missing or the query just failed.
+      console.error("usage: byProject query failed", err);
     }
 
     // Transcription runs through OpenAI's hosted whisper-1 — billed per

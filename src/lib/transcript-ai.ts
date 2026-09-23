@@ -21,13 +21,13 @@ import type {
 
 class TranscriptAiError extends Error {}
 
-/** OpenAI first, ModelArk second — the same order the shot planner uses. */
+/** Honor the configured provider; use ModelArk only when OpenAI is not configured. */
 async function chat(opts: {
   messages: { role: "system" | "user" | "assistant"; content: string }[];
   temperature?: number;
   maxTokens?: number;
 }): Promise<string> {
-  const providers = openaiConfigured() ? [openaiChat, arkChat] : [arkChat];
+  const providers = openaiConfigured() ? [openaiChat] : [arkChat];
   let firstError: Error | null = null;
   for (const provider of providers) {
     try {

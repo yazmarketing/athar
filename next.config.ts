@@ -47,6 +47,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Proxy otherwise truncates multipart uploads at 10 MB. Allow Director's
+  // 100 MB file limit plus multipart headers; the route enforces file size.
+  experimental: { proxyClientMaxBodySize: 101 * 1024 * 1024 },
   // Hide the Next.js Dev Tools badge (bottom-left N) and its toolbar
   devIndicators: false,
 

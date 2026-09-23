@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCreator } from "@/lib/authz";
 import { openaiChat, openaiConfigured } from "@/lib/openai-server";
-import { IMAGE_MODEL_CHOICES } from "@/config/models";
-
-/**
- * Selectable image models, from the same list the pickers render — so the
- * guide can never recommend a model the dock doesn't offer, or miss one it
- * does.
- */
-export const IMAGE_MODELS = IMAGE_MODEL_CHOICES.map((m) => ({
-  id: m.id,
-  label: m.label,
-  bestFor: m.bestFor,
-}));
+import { IMAGE_MODELS } from "@/config/models";
 
 type Body = { prompt?: string; current?: string };
 
@@ -80,7 +69,7 @@ export async function POST(req: NextRequest) {
       label: best.label,
       reason: (parsed.reason ?? "").slice(0, 140),
     });
-  } catch (err) {
+  } catch {
     // Recommendation is advisory — never block generation.
     return NextResponse.json({ differs: false });
   }

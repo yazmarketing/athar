@@ -180,7 +180,7 @@ export function ImageChat({
   const selectedModelLabel =
     imageModelChoice(imageModelId)?.label ?? "Model";
   const cost = useMemo(
-    () => imageModelCost(imageModelId, resolution, 1) ?? 0,
+    () => imageModelCost(imageModelId, resolution, 1),
     [imageModelId, resolution]
   );
   const hasImage = Boolean(current?.output_url);
@@ -668,7 +668,7 @@ export function ImageChat({
             </Select>
 
             <span className="flex h-8 items-center px-1 font-mono text-[11px] text-muted-foreground">
-              ~${cost.toFixed(3)}
+              {cost === null ? "Usage-based" : `~$${cost.toFixed(3)}`}
             </span>
           </div>
 

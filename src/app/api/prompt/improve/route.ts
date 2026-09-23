@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/auth-session";
 import { arkChat } from "@/lib/byteplus-server";
 import { openaiChat, openaiConfigured, openaiModel } from "@/lib/openai-server";
 import type { PromptInputs } from "@/lib/types";
+import { canGenerate } from "@/lib/authz";
 
 export const maxDuration = 60;
 
@@ -10,6 +11,8 @@ type Body = {
   prompt?: PromptInputs;
   mode?: "t2i" | "t2v";
   instruction?: string;
+  engine?: "astra" | "auto";
+  durationS?: number;
 };
 
 function extractJsonObject(text: string): Record<string, unknown> {
@@ -39,10 +42,13 @@ export async function POST(req: NextRequest) {
     if (!sessionUser?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    if (!canGenerate(sessionUser.role)) {
+      return NextResponse.json({ error: "Creator access is required to use AI assistance" }, { status: 403 });
+    }
 
     const body = (await req.json()) as Body;
     const prompt = body.prompt;
-    if (!prompt?.subject?.trim()) {
+    if (typeof prompt?.subject !== "string" || !prompt.subject.trim()) {
       return NextResponse.json(
         { error: "Prompt subject is required" },
         { status: 400 }
@@ -50,12 +56,17 @@ export async function POST(req: NextRequest) {
     }
 
     const mode = body.mode === "t2v" ? "t2v" : "t2i";
-    const extra = body.instruction?.trim();
+    const extra = asString(body.instruction);
+    if (body.engine === "astra" && !openaiConfigured()) {
+      return NextResponse.json({ error: "GPT-6 Astra is not connected. Ask an admin to configure the OpenAI connection." }, { status: 503 });
+    }
+    const model = body.engine === "astra" ? "gpt-6-astra" : openaiConfigured() ? openaiModel() : (process.env.ARK_CHAT_MODEL ?? "seed-1-6-250915");
 
     const system = [
       "You are a prompt engineer for BytePlus Seedream (images) and Seedance (video).",
       "Improve the user's structured prompt for higher visual fidelity and clearer direction.",
       "Keep brand intent and factual product/person details intact.",
+      "Respect any named country, city, language, dialect, clothing, architecture and cultural context. Do not blend distinct Gulf or Arab cultures, introduce stereotypes, or invent local facts. Preserve exact Arabic text when supplied. If the location is unspecified, do not assume one.",
       "Do not invent brand logos or watermark text.",
       "Return ONLY a JSON object with keys:",
       '  "subject" (required string),',
@@ -83,6 +94,7 @@ export async function POST(req: NextRequest) {
 
     const user = [
       `Mode: ${mode}`,
+      mode === "t2v" && Number.isFinite(body.durationS) ? `Output duration: ${body.durationS} seconds. All shot timestamps must fit within this duration.` : null,
       extra ? `Extra instruction: ${extra}` : null,
       "Current fields:",
       JSON.stringify(
@@ -92,6 +104,8 @@ export async function POST(req: NextRequest) {
           lighting: prompt.lighting ?? "",
           brandTokens: prompt.brandTokens ?? "",
           negativeAdditions: prompt.negativeAdditions ?? "",
+          cameraId: prompt.cameraId,
+          styleId: prompt.styleId,
         },
         null,
         2
@@ -104,6 +118,7 @@ export async function POST(req: NextRequest) {
     // the BytePlus chat model.
     const chat = openaiConfigured() ? openaiChat : arkChat;
     const raw = await chat({
+      ...(openaiConfigured() ? { model } : {}),
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
@@ -131,9 +146,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       prompt: improved,
-      model: openaiConfigured()
-        ? openaiModel()
-        : (process.env.ARK_CHAT_MODEL ?? "seed-1-6-250915"),
+      model,
     });
   } catch (err) {
     const raw = err instanceof Error ? err.message : "Improve failed";

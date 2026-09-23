@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { MotionStudio } from "@/components/motion/motion-studio";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
   Aperture,
@@ -15,7 +16,6 @@ import {
   Clock,
   Cpu,
   Film,
-  FolderKanban,
   Gem,
   Heart,
   HelpCircle,
@@ -38,9 +38,8 @@ import {
   Sun,
   Plug,
   Trash2,
-  Upload,
+  Users,
   Wand2,
-  Workflow,
   X,
 } from "lucide-react";
 import { useTheme } from "next-themes";
@@ -57,7 +56,7 @@ import {
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { prepareVerifiedFaceImage, uploadImageFile } from "@/lib/upload-image";
-import { isAudioFile, uploadAudioFile } from "@/lib/upload-audio";
+import { uploadAudioFile } from "@/lib/upload-audio";
 import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
   ChipPopover,
@@ -69,7 +68,6 @@ import { AspectIcon } from "@/components/aspect-icon";
 import { Slider } from "@/components/ui/slider";
 import { ImageChat } from "@/components/image-chat";
 import { ImageDetail } from "@/components/image-detail";
-import { PromptEditor } from "@/components/prompt-editor";
 import { Storyboards } from "@/components/storyboard";
 import { Transcribe } from "@/components/transcribe";
 import { TextToSpeech } from "@/components/text-to-speech";
@@ -103,13 +101,13 @@ import {
 import {
   estimateCost,
   listModelOptions,
+  listVideoModelOptions,
   resolveModel,
   maxReferenceImages,
   imageModelChoice,
   imageModelCost,
   imageModelIdFromEndpoint,
   imageModelRequest,
-  asGoogleImageModel,
   DEFAULT_IMAGE_MODEL_ID,
   type Capability,
   type GoogleImageModelId,
@@ -164,6 +162,11 @@ import {
 } from "@/components/brand-kit-picker";
 import { ReferenceLibrary } from "@/components/reference-library";
 import { Orchestrator } from "@/components/orchestrator";
+import { StudioHome } from "@/components/studio-home";
+import { VideoExplore } from "@/components/video-explore";
+import { VideoWorkspaceControls, type VideoWorkflow } from "@/components/video-workspace-controls";
+import { videoCapabilities, videoUsesFirstFrame, validateVideoSettings } from "@/config/video-capabilities";
+import type { VideoRecipe } from "@/config/video-recipes";
 import { TeamManagement } from "@/components/team-management";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -192,20 +195,30 @@ const RESOLUTIONS: { value: ImageResolution; label: string }[] = [
 ];
 
 // Seedance 2.0 series accepts up to 9 reference images (2.5 allows more)
-const MAX_VIDEO_IMAGES = 9;
 
 /** Seedance 2.5 lip-sync: up to 10 reference audio clips, 30s combined. */
-const MAX_AUDIO_CLIPS = 10;
 
 /**
  * Seedance 2.5 subject/motion/style reference clips: up to 10, 30s combined.
  * Distinct from the single `videoEditSource` (v2v edit/extend) — these feed
  * a fresh generation and never lock its duration or aspect ratio.
  */
-const MAX_REFERENCE_VIDEOS = 10;
 
 /** Mention tokens the prompt box tints — split() keeps them via the capture. */
 const PROMPT_TOKEN_RE = /(@(?:image|video|audio)\d+\b)/gi;
+
+/**
+ * A selected Library card's outer glow — a soft blurred halo peeking out
+ * past the rounded corners of the card's own (overflow-hidden) inner box.
+ * Shared across every card kind (render/voice/transcript) so "selected"
+ * reads the same way everywhere, not just as a plain ring.
+ */
+function SELECTED_GLOW_CLASS(selected: boolean) {
+  return (
+    selected &&
+    "after:pointer-events-none after:absolute after:-inset-1.5 after:-z-10 after:rounded-[1.25rem] after:bg-gold after:opacity-60 after:blur-lg"
+  );
+}
 
 /**
  * Overlay and textarea must share this exactly. The Textarea primitive
@@ -258,6 +271,7 @@ const SHOW_COST_ESTIMATE = false;
 
 type StudioMode = Extract<Capability, "t2i" | "t2v">;
 type View =
+  | "motion"
   | "home"
   | "create"
   | "library"
@@ -266,6 +280,7 @@ type View =
   | "usage"
   | "assets"
   | "orchestrate"
+  | "effects"
   | "storyboard"
   | "transcribe"
   | "tts"
@@ -284,17 +299,19 @@ function isVideo(g: GenerationRecord) {
 const LIBRARY_PAGE_SIZE = 48;
 const LIBRARY_MAX_LIMIT = 240;
 
-/** Poll Nano Banana jobs until they land (used by Create / Vary / Edit). */
+/** Poll still-image jobs until they land (used by Create / Vary / Edit). */
 async function waitForImageJobs(
-  jobs: GenerationJobRecord[]
+  jobs: GenerationJobRecord[],
+  allowPartial = false
 ): Promise<GenerationRecord[]> {
   const pending = new Set(jobs.map((j) => j.id));
   const results: GenerationRecord[] = [];
+  let failure: string | null = null;
   const deadline = Date.now() + 8 * 60 * 1000;
   while (pending.size > 0) {
     if (Date.now() > deadline) {
       throw new Error(
-        "Nano Banana is still working — check Library in a minute"
+        "The render is still working — check Library in a minute"
       );
     }
     await new Promise((r) => setTimeout(r, 3000));
@@ -314,16 +331,36 @@ async function waitForImageJobs(
         json.job.status === "cancelled"
       ) {
         pending.delete(id);
-        throw new Error(json.job.error ?? "Image render failed");
+        failure = json.job.error ?? (json.job.status === "cancelled" ? "Image render cancelled" : "Image render failed");
+        if (!allowPartial) throw new Error(failure);
       }
     }
   }
+  if (!results.length && failure) throw new Error(failure);
   return results;
 }
 
+function subscribeToDesktopSidebar(onChange: () => void) {
+  const media = window.matchMedia("(min-width: 768px)");
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+
+function subscribeToHydration() {
+  return () => {};
+}
+
 export function Studio() {
-  const [view, setView] = useState<View>("home");
-  const [mode, setMode] = useState<StudioMode>("t2i");
+  const [selectedView, setView] = useState<View | null>(null);
+  const view: View = selectedView ?? "home";
+  const currentViewRef = useRef<View>(view);
+  useEffect(() => { currentViewRef.current = view; }, [view]);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete("view");
+    window.history.replaceState(null, "", url);
+  }, [selectedView]);
+  const [mode, setMode] = useState<StudioMode>("t2v");
   const [subject, setSubject] = useState("");
   const [action, setAction] = useState("");
   const [lighting, setLighting] = useState("");
@@ -337,12 +374,16 @@ export function Studio() {
     DEFAULT_IMAGE_MODEL_ID
   );
   const [googleModel, setGoogleModel] =
-    useState<GoogleImageModelId | null>(null);
+    useState<GoogleImageModelId | OpenAIImageModelId | null>(null);
   const [style, setStyle] = useState<string>(DEFAULT_STYLE_ID);
   const [camera, setCamera] = useState<string>(DEFAULT_CAMERA_ID);
   const [clientStyles, setClientStyles] = useState<StylePresetRecord[]>([]);
   const [smartMode, setSmartMode] = useState(false);
   const [smartStage, setSmartStage] = useState<string | null>(null);
+  // Each submitted batch owns one continuation into ranking/finishing.
+  // The general job poller must not separately surface every candidate.
+  const submittedImageJobsRef = useRef(new Set<string>());
+  const claimedImageRunsRef = useRef(new Set<string>());
   const [saveStyleOpen, setSaveStyleOpen] = useState(false);
   const [saveStyleName, setSaveStyleName] = useState("");
   const [saveStyleTokens, setSaveStyleTokens] = useState("");
@@ -353,7 +394,7 @@ export function Studio() {
   // further typing in a prompt that still mentions another ratio.
   const lastInferredAspect = useRef<AspectRatio | undefined>(undefined);
   // 1K by default — cheaper and quicker; 2K/4K are a deliberate choice.
-  const [resolution, setResolution] = useState<ImageResolution>("1K");
+  const [resolution, setResolution] = useState<ImageResolution>("2K");
   const [numOutputs, setNumOutputs] = useState(1);
   const [durationS, setDurationS] = useState(5);
   const [videoResolution, setVideoResolution] = useState<
@@ -407,6 +448,9 @@ export function Studio() {
     durationS?: number | null;
   } | null>(null);
   const [uploadingVideoSource, setUploadingVideoSource] = useState(false);
+  const [requestedVideoWorkflow, setVideoWorkflow] = useState<VideoWorkflow>("create");
+  const videoWorkflow = videoEditSource ? "edit" : requestedVideoWorkflow;
+  const editVideoFileInput = useRef<HTMLInputElement>(null);
   // Subject/motion/style reference clips (Seedance 2.5) — a fresh
   // generation, not an edit source; mutually exclusive with videoEditSource.
   const [videoRefSources, setVideoRefSources] = useState<
@@ -460,7 +504,23 @@ export function Studio() {
   const [libraryOpenTranscriptId, setLibraryOpenTranscriptId] = useState<string | null>(
     null
   );
-  const [ownerFilter, setOwnerFilter] = useState<"all" | "mine">("all");
+  /** "all" | "mine" | a specific team member's user id (admins only). */
+  const [ownerFilter, setOwnerFilter] = useState<string>("all");
+  const [ownerFilterName, setOwnerFilterName] = useState<string | null>(null);
+  const [teamMembers, setTeamMembers] = useState<
+    { id: string; name: string | null; email: string }[] | null
+  >(null);
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+  const loadTeamMembers = () => {
+    if (teamMembers !== null || teamMembersLoading) return;
+    setTeamMembersLoading(true);
+    void fetch("/api/users")
+      .then((res) => res.json())
+      .then((json) => setTeamMembers(json.users ?? []))
+      .catch(() => setTeamMembers([]))
+      .finally(() => setTeamMembersLoading(false));
+  };
+  const [ownerSearchQuery, setOwnerSearchQuery] = useState("");
   /** Favourites are marked on cards; this is how you actually get to them. */
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
@@ -470,7 +530,7 @@ export function Studio() {
   /** Cinema Studio: director chips stay hidden until this is on. */
   const [cinemaOn, setCinemaOn] = useState(false);
   const [cinema, setCinema] = useState<CinemaControls>(CINEMA_DEFAULTS);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const [generateAudio, setGenerateAudio] = useState(true);
   const [query, setQuery] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [referenceUrls, setReferenceUrls] = useState<string[]>([]);
@@ -518,6 +578,47 @@ export function Studio() {
     );
   };
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const isDesktopSidebar = useSyncExternalStore(
+    subscribeToDesktopSidebar,
+    () => window.matchMedia("(min-width: 768px)").matches,
+    () => false
+  );
+
+  useEffect(() => {
+    if (!sidebarOpen || isDesktopSidebar) return;
+    const sidebar = sidebarRef.current;
+    const menuButton = menuButtonRef.current;
+    if (!sidebar) return;
+    const focusable = () => Array.from(sidebar.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]'
+    )).filter((element) => element.getClientRects().length > 0);
+    const frame = window.requestAnimationFrame(() => focusable()[0]?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !sidebar.querySelector('[role="menu"]')) {
+        event.preventDefault();
+        setSidebarOpen(false);
+      }
+      if (event.key !== "Tab") return;
+      const elements = focusable();
+      const first = elements[0];
+      const last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    sidebar.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      sidebar.removeEventListener("keydown", onKeyDown);
+      if (!window.matchMedia("(min-width: 768px)").matches) menuButton?.focus();
+    };
+  }, [sidebarOpen, isDesktopSidebar]);
 
   /**
    * Onboarding walks the generate bar, and those controls only render on the
@@ -530,6 +631,15 @@ export function Studio() {
   }, []);
 
   const [generateMenuOpen, setGenerateMenuOpen] = useState(false);
+  const generateButtonRef = useRef<HTMLButtonElement>(null);
+  const generateMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!generateMenuOpen) return;
+    const frame = window.requestAnimationFrame(() => {
+      generateMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [generateMenuOpen]);
   const [refLibOpen, setRefLibOpen] = useState(false);
   const [saveRefUrl, setSaveRefUrl] = useState<string | null>(null);
   const [saveRefName, setSaveRefName] = useState("");
@@ -553,18 +663,17 @@ export function Studio() {
    * models only) and the references it can actually fuse.
    */
   const applyImageModel = (id: string, choice: ImageModelChoice) => {
+    if (referenceUrls.length > choice.maxReferenceImages) {
+      toast.error(`Remove extra references first. ${choice.label} accepts ${choice.maxReferenceImages}.`);
+      return false;
+    }
     setImageModelId(id);
-    setGoogleModel(asGoogleImageModel(choice.imageModel));
+    setGoogleModel(choice.imageModel);
     if (choice.tier) setTier(choice.tier);
     if (!choice.resolutions.includes(resolution as ImageResolutionOption)) {
       setResolution(choice.resolutions[choice.resolutions.length - 1]);
     }
-    if (referenceUrls.length > choice.maxReferenceImages) {
-      setReferenceUrls((prev) => prev.slice(0, choice.maxReferenceImages));
-      toast.error(
-        `${choice.label} takes ${choice.maxReferenceImages} references — extras removed`
-      );
-    }
+    return true;
   };
 
   /**
@@ -575,6 +684,19 @@ export function Studio() {
   const maxRefs =
     imageModelChoice(imageModelId)?.maxReferenceImages ??
     maxReferenceImages(googleModel);
+  const videoCaps = videoCapabilities(tier);
+  const MAX_VIDEO_IMAGES = videoCaps.maxImages;
+  const MAX_REFERENCE_VIDEOS = videoCaps.maxVideos;
+  const firstFrame = videoUsesFirstFrame(videoSources.map(s => s.url), [...videoRefSources.map(s => s.url), ...(videoEditSource ? [videoEditSource.url] : [])], audioSources.map(s => s.url));
+  const videoRatioLocked = videoWorkflow === "edit" || (tier !== "draft" && firstFrame);
+  const selectVideoTier = (next: Tier) => {
+    const error = validateVideoSettings({ tier: next, images: videoSources.map(s => s.url), videos: videoRefSources.map(s => s.url), audios: audioSources.map(s => s.url), source: videoEditSource?.url });
+    if (error) { toast.error(error); return; }
+    const caps = videoCapabilities(next);
+    setTier(next);
+    setDurationS(d => Math.min(d, caps.maxDuration));
+    if (!(caps.resolutions as readonly string[]).includes(videoResolution)) setVideoResolution("720p");
+  };
 
   /**
    * Live cost estimate for the current dock settings. The Google models are
@@ -688,9 +810,9 @@ export function Studio() {
         onEnter: toCreate,
       },
       {
-        target: "prompt-editor",
-        title: "Prompt editor (⌘E)",
-        body: "The full control surface: edit the structured prompt field by field — action, lighting, brand tokens, negatives — and have AI tighten it before you spend a render.",
+        target: "prompt-details",
+        title: "Creative details",
+        body: "Add action, lighting and brand direction here when your image needs it. The controls stay with your prompt; no separate editor is needed.",
         placement: "top",
         onEnter: toCreate,
       },
@@ -772,14 +894,14 @@ export function Studio() {
     (session?.user?.name || session?.user?.email?.split("@")[0] || "")
       .trim()
       .split(/\s+/)[0] || "there";
-  const [themeReady, setThemeReady] = useState(false);
+  const themeReady = useSyncExternalStore(subscribeToHydration, () => true, () => false);
   const refFileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
 
   const model = useMemo(() => resolveModel(mode, tier), [mode, tier]);
-  const modelOptions = useMemo(() => listModelOptions(mode), [mode]);
+  const modelOptions = useMemo(() => mode === "t2v" ? listVideoModelOptions() : listModelOptions(mode), [mode]);
   const selectedModelLabel =
-    modelOptions.find((m) => m.tier === tier)?.label ?? model.slug;
+    modelOptions.find((m) => m.tier === tier)?.label ?? modelOptions.find((m) => m.slug === model.slug)?.label ?? model.slug;
   const selectedStyleLabel =
     clientStyles.find((s) => s.id === style)?.name ??
     STYLE_PRESETS.find((s) => s.id === style)?.label ??
@@ -791,6 +913,14 @@ export function Studio() {
     seed?: Partial<PromptInputs> | null
   ) => {
     setMode(next);
+    if (next === "t2i") {
+      const choice = imageModelChoice(imageModelId);
+      if (choice) {
+        setGoogleModel(choice.imageModel);
+        if (choice.tier) setTier(choice.tier);
+        if (!choice.resolutions.includes(resolution as ImageResolutionOption)) setResolution(choice.resolutions[choice.resolutions.length - 1]);
+      }
+    }
     if (next === "t2v" && tier === "draft") setTier("standard");
     if (next === "t2v") {
       setGoogleModel(null);
@@ -807,6 +937,25 @@ export function Studio() {
     setStyle(seed?.styleId ?? DEFAULT_STYLE_ID);
     setCamera(seed?.cameraId ?? DEFAULT_CAMERA_ID);
     setReferenceUrls([]);
+    setLastRun([]);
+    setVideoSources([]);
+    setVideoRefSources([]);
+    setVideoEditSource(null);
+    setVideoWorkflow("create");
+    setAudioSources([]);
+    setReferenceNames({});
+    setCinema({
+      ...CINEMA_DEFAULTS,
+      genreId: seed?.genreId ?? DEFAULT_DIRECTOR_ID,
+      eraId: seed?.eraId ?? DEFAULT_DIRECTOR_ID,
+      shotId: seed?.shotId ?? DEFAULT_DIRECTOR_ID,
+      gradeId: seed?.gradeId ?? DEFAULT_DIRECTOR_ID,
+      lightLookId: seed?.lightLookId ?? DEFAULT_DIRECTOR_ID,
+      emotionId: seed?.emotionId ?? DEFAULT_DIRECTOR_ID,
+      tempoId: seed?.tempoId ?? DEFAULT_DIRECTOR_ID,
+      pacingId: seed?.pacingId ?? DEFAULT_DIRECTOR_ID,
+    });
+    setCinemaOn(Boolean(seed?.genreId || seed?.eraId || seed?.shotId || seed?.gradeId || seed?.lightLookId || seed?.emotionId || seed?.tempoId || seed?.pacingId));
     setDetailsOpen(
       Boolean(
         seed?.action ||
@@ -815,7 +964,8 @@ export function Studio() {
           seed?.negativeAdditions
       )
     );
-    setEditorOpen(false);
+    setGenerateAudio(true);
+    if (next === "t2v" && aspect === "4:5") setAspect("9:16");
     setComposerCollapsed(false);
     setView("create");
   };
@@ -835,16 +985,18 @@ export function Studio() {
   }, [subject]);
 
   useEffect(() => {
-    if (!query.trim()) {
-      setSearchQ("");
-      return;
-    }
-    const t = window.setTimeout(() => setSearchQ(query.trim()), 300);
+    const nextQuery = query.trim();
+    const t = window.setTimeout(
+      () => setSearchQ(nextQuery),
+      nextQuery ? 300 : 0
+    );
     return () => window.clearTimeout(t);
   }, [query]);
 
   const generationsLenRef = useRef(0);
-  generationsLenRef.current = generations?.length ?? 0;
+  useEffect(() => {
+    generationsLenRef.current = generations?.length ?? 0;
+  }, [generations?.length]);
   const gallerySeq = useRef(0);
 
   const gallerySearchParams = useCallback(() => {
@@ -853,7 +1005,7 @@ export function Studio() {
     // A generation's client comes through its project, so the server has to
     // resolve it — filtering here would only ever see the rows it fetched.
     if (activeClientId) params.set("clientId", activeClientId);
-    if (ownerFilter === "mine") params.set("createdBy", "me");
+    if (ownerFilter !== "all") params.set("createdBy", ownerFilter);
     if (sortOrder === "oldest") params.set("sort", "oldest");
     if (typeFilter === "image" || typeFilter === "video") {
       params.set("type", typeFilter);
@@ -870,6 +1022,14 @@ export function Studio() {
     favoritesOnly,
     searchQ,
   ]);
+
+  const openRecipe = (recipe: VideoRecipe) => {
+    openTool("t2v", recipe.prompt);
+    setCinemaOn(true);
+    setSidebarOpen(false);
+    toast.success(`${recipe.title} loaded. Edit the subject or add a reference before generating.`);
+    window.requestAnimationFrame(() => promptRef.current?.focus());
+  };
 
   /**
    * `showLoader` is for reloads that change which generations are in scope
@@ -965,7 +1125,7 @@ export function Studio() {
     const params = new URLSearchParams();
     if (activeProjectId) params.set("projectId", activeProjectId);
     if (activeClientId) params.set("clientId", activeClientId);
-    if (ownerFilter === "mine") params.set("owner", "mine");
+    if (ownerFilter !== "all") params.set("owner", ownerFilter);
     const qs = params.size ? `?${params.toString()}` : "";
     try {
       const [ttsRes, transcriptsRes] = await Promise.all([
@@ -984,7 +1144,9 @@ export function Studio() {
 
   useEffect(() => {
     if (view !== "library") return;
-    void loadLibraryExtras();
+    // Coalesce rapid scope switches before starting an external request.
+    const frame = window.requestAnimationFrame(() => void loadLibraryExtras());
+    return () => window.cancelAnimationFrame(frame);
   }, [view, loadLibraryExtras]);
 
   useEffect(() => {
@@ -1007,6 +1169,9 @@ export function Studio() {
   }, [view, activeClientId, assetsReload]);
 
   useEffect(() => {
+    // Restore browser-only selections after hydration. A cancelled mount
+    // must not start a gallery request using partially restored context.
+    const restoreFrame = window.requestAnimationFrame(() => {
     const storedClient = localStorage.getItem(ACTIVE_CLIENT_STORAGE_KEY);
     if (storedClient) setActiveClientId(storedClient);
     const stored = localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY);
@@ -1022,28 +1187,20 @@ export function Studio() {
       // corrupted storage — start fresh
     }
     setProjectsReady(true);
+    });
 
-    // Onboarding runs on every sign-in until it is explicitly completed.
-    // Skipping it doesn't count, so it comes back next time. "Completed" is
-    // answered by the server (users.onboarded_at) with localStorage as a fast
-    // path, so a new browser or a cleared cache doesn't replay a tour this
-    // person already finished.
     let cancelled = false;
     let waitForAnchors = 0;
     void shouldRunTour().then((run) => {
       if (cancelled || !run) return;
       setView("create");
       setMode("t2i");
-      // Wait for the dock to exist rather than guessing a delay: a fixed
-      // timeout raced the first paint on slower loads and the tour opened
-      // with nothing to point at.
       let tries = 0;
       waitForAnchors = window.setInterval(() => {
-        tries += 1;
         if (document.querySelector('[data-tour="prompt"]')) {
           window.clearInterval(waitForAnchors);
           if (!cancelled) setTourOpen(true);
-        } else if (tries > 40) {
+        } else if (++tries > 40) {
           window.clearInterval(waitForAnchors);
         }
       }, 100);
@@ -1065,6 +1222,7 @@ export function Studio() {
 
     return () => {
       cancelled = true;
+      window.cancelAnimationFrame(restoreFrame);
       window.clearInterval(waitForAnchors);
     };
   }, []);
@@ -1161,6 +1319,29 @@ export function Studio() {
     [clientStyles, style]
   );
 
+  const activeVideoJobs = useMemo(
+    () =>
+      videoJobs.filter(
+        (j) => j.status === "running" || j.status === "queued"
+      ),
+    [videoJobs]
+  );
+
+  // ⌘K/Ctrl+K focuses Home's search — the badge next to it promised a
+  // shortcut that never actually did anything.
+  const homeSearchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        if (view !== "home") return;
+        e.preventDefault();
+        homeSearchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [view]);
+
   // Restore in-flight / recently failed video renders after a refresh
   useEffect(() => {
     void (async () => {
@@ -1206,6 +1387,16 @@ export function Studio() {
           const next = json.job as GenerationJobRecord;
           if (next.status === "completed") {
             const image = isImageJob(next);
+            if (image && submittedImageJobsRef.current.has(next.id)) {
+              // submit() owns this batch's one finishing continuation. Polling
+              // still restores progress, but must not reopen every candidate.
+              if (json.generation) {
+                const generation = json.generation as GenerationRecord;
+                setLastRun((previous) => previous.some((item) => item.id === generation.id) ? previous : [...previous, generation]);
+              }
+              void loadGallery();
+              continue;
+            }
             toast.success(image ? "Image ready" : "Video ready");
             pushNotification({
               kind: image ? "image" : "video",
@@ -1414,7 +1605,8 @@ export function Studio() {
     if (!projectsReady) return;
     // loadGallery's identity changes whenever the project/client/owner scope
     // changes, so this is exactly the "show the loader" case.
-    void loadGallery({ showLoader: true });
+    const frame = window.requestAnimationFrame(() => void loadGallery({ showLoader: true }));
+    return () => window.cancelAnimationFrame(frame);
   }, [loadGallery, projectsReady]);
 
   const filtered =
@@ -1434,6 +1626,19 @@ export function Studio() {
     const extras = lastRun.filter((g) => match(g) && !seen.has(g.id));
     return [...extras, ...fromLib];
   }, [generations, lastRun, mode]);
+
+  // Home has its own simple search; a previous Library type/favourite filter
+  // must not make recent work disappear without a visible filter control.
+  const homeCreations = useMemo(() => {
+    if (!generations) return null;
+    const text = query.trim().toLowerCase();
+    return generations.filter((generation) =>
+      Boolean(generation.output_url) && (!text ||
+        generation.final_prompt.toLowerCase().includes(text) ||
+        generation.mode.toLowerCase().includes(text) ||
+        generation.model_endpoint.toLowerCase().includes(text))
+    );
+  }, [generations, query]);
 
   /**
    * Library's own view of the world — renders plus voice-overs and
@@ -1524,6 +1729,7 @@ export function Studio() {
           url: string;
           generationId: string | null;
           durationS?: number | null;
+          intent?: "edit" | "extend" | "vary";
         } | null;
         /** Stay on Home/Library instead of jumping to Create */
         stayOnView?: boolean;
@@ -1533,6 +1739,7 @@ export function Studio() {
         resolution?: ImageResolution;
       } = {}
     ) => {
+      const startedInView = currentViewRef.current;
       setGenerating(true);
       setComposerCollapsed(true);
       setLastRun([]);
@@ -1548,6 +1755,9 @@ export function Studio() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: activeMode,
+            videoWorkflow: activeMode === "t2v" ? activeVideoEditSource ? "edit" : "create" : undefined,
+            videoIntent: activeMode === "t2v" ? activeVideoEditSource?.intent : undefined,
+            generateAudio: activeMode === "t2v" ? generateAudio : undefined,
             tier: opts.tier ?? tier,
             imageModel:
               activeMode !== "t2i"
@@ -1608,8 +1818,10 @@ export function Studio() {
         });
         const json = await readJson(res);
         if (!res.ok) throw new Error(json.error ?? "Generation failed");
+        let batch: GenerationRecord[];
         if (json.job) {
-          // Video and Nano Banana run as durable jobs — track and poll
+          // Every image model now returns durable jobs. Keep this invocation's
+          // Smart/brand/resolution settings captured while the batch settles.
           const queued = (
             (json.jobs as GenerationJobRecord[] | undefined) ?? [
               json.job as GenerationJobRecord,
@@ -1620,16 +1832,32 @@ export function Studio() {
             ...prev.filter((j) => !queued.some((q) => q.id === j.id)),
           ]);
           const image = queued.some(isImageJob);
-          toast.success(
-            image
-              ? "Image started — Nano Banana keeps going even if you leave"
-              : "Video render started — it keeps going even if you leave"
-          );
-          return;
+          if (!image) {
+            toast.success("Video render started — it keeps going even if you leave");
+            return;
+          }
+          const runId = queued.map((job) => job.id).sort().join(",");
+          if (claimedImageRunsRef.current.has(runId)) return;
+          claimedImageRunsRef.current.add(runId);
+          queued.forEach((job) => submittedImageJobsRef.current.add(job.id));
+          // At most one continuation per submitted run, never per poll. Image
+          // generation is durable; automatic finishing is session-only until
+          // a server run record and idempotent paid finishing steps exist.
+          // Reloading keeps source renders, but does not resume paid finishing.
+          if (smartMode) setSmartStage("Generating your options…");
+          toast.success(smartMode || queued.length > 1
+            ? "Images started. Keep this tab open for automatic selection and finishing."
+            : "Image render started — the original is saved even if you leave");
+          batch = await waitForImageJobs(queued, true);
+          if (batch.length < queued.length) {
+            toast.warning(`${batch.length} of ${queued.length} images completed. Continuing with the available results.`);
+          }
+        } else {
+          batch = (json.generations as GenerationRecord[] | undefined) ??
+            (json.generation ? [json.generation as GenerationRecord] : []);
         }
-        const batch =
-          (json.generations as GenerationRecord[] | undefined) ??
-          [json.generation as GenerationRecord];
+        batch = batch.filter((generation) => Boolean(generation?.output_url));
+        if (!batch.length) throw new Error("The run returned no usable images. Check the render status in Library.");
         const isBatch = activeMode === "t2i" && batch.length > 1;
         // Keep the run on screen. Until now the Create view emptied itself
         // back to "Describe an image" and the only way back to what you had
@@ -1648,7 +1876,9 @@ export function Studio() {
 
         // Best-of-N: score the batch and surface the winner.
         let winner = batch[0];
+        let winnerRanked = !isBatch;
         if (isBatch) {
+          if (smartMode) setSmartStage("Comparing your options…");
           let scored = false;
           try {
             const scoreRes = await fetch("/api/score", {
@@ -1664,6 +1894,7 @@ export function Studio() {
             const sj = await scoreRes.json();
             if (scoreRes.ok && sj.scored && sj.bestId) {
               scored = true;
+              winnerRanked = true;
               winner = batch.find((g) => g.id === sj.bestId) ?? winner;
               const wScore = (
                 sj.ranking as { id: string; score: number }[]
@@ -1679,7 +1910,7 @@ export function Studio() {
           } catch {
             // scoring is best-effort — leave the batch unscored
           }
-          if (!scored) toast.success(`Generated ${batch.length} options`);
+          if (!scored) toast.warning(`Generated ${batch.length} options. Automatic ranking is unavailable — choose the strongest image in Library.`);
         } else {
           const seedLabel =
             winner.seed != null ? ` · seed ${winner.seed}` : "";
@@ -1687,9 +1918,10 @@ export function Studio() {
         }
 
         // Orchestration chain (Smart mode): finish the winner, then brand-check.
-        if (smartMode && activeMode === "t2i" && winner?.output_url) {
-          // Finishing pass — upscale the winner only (not the rejects).
-          try {
+        if (smartMode && activeMode === "t2i" && winnerRanked && winner?.output_url) {
+          // Keep native 2K/4K outputs intact; the finishing API produces 2K.
+          // Only a 1K winner needs this additional paid rendering pass.
+          if ((opts.resolution ?? resolution) === "1K") try {
             setSmartStage("Finishing the winner…");
             const upRes = await fetch("/api/upscale", {
               method: "POST",
@@ -1704,9 +1936,11 @@ export function Studio() {
             if (upRes.ok && upJson.generation?.output_url) {
               winner = upJson.generation as GenerationRecord;
               toast.success("Finished — upscaled to 2K");
+            } else {
+              toast.warning("Finishing was unavailable. Your original image is saved.");
             }
           } catch {
-            // finishing is best-effort
+            toast.warning("Finishing could not complete. Your original image is saved.");
           }
           // Brand-guideline enforcement against the active kit.
           if (activeBrandKitId) {
@@ -1722,6 +1956,7 @@ export function Studio() {
               });
               const bc = await bcRes.json();
               if (bcRes.ok && bc.checked) {
+                winner = { ...winner, brand_flagged: !bc.compliant, brand_notes: (bc.violations ?? []).join("; ") };
                 if (bc.compliant) {
                   toast.success("On-brand ✓");
                 } else {
@@ -1729,9 +1964,11 @@ export function Studio() {
                     `Off-brand: ${(bc.violations ?? []).join("; ")}`
                   );
                 }
+              } else {
+                toast.warning("Brand review was unavailable. Check the image against the brand guidelines before delivery.");
               }
             } catch {
-              // brand-check is best-effort
+              toast.warning("Brand review could not complete. Please review the image before delivery.");
             }
           }
           setSmartStage(null);
@@ -1739,15 +1976,17 @@ export function Studio() {
         }
 
         if (activeMode === "t2i" && winner?.output_url) {
-          setDetailTarget(winner);
+          setLastRun((previous) => [winner, ...previous.filter((item) => item.id !== winner.id)]);
+          if (currentViewRef.current === startedInView) setDetailTarget(winner);
         }
-        if (!opts.stayOnView) {
+        if (!opts.stayOnView && currentViewRef.current === startedInView) {
           setView("create");
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : "Generation failed");
       } finally {
         setGenerating(false);
+        setSmartStage(null);
       }
     },
     [
@@ -1760,6 +1999,7 @@ export function Studio() {
       numOutputs,
       durationS,
       videoResolution,
+      generateAudio,
       referenceUrls,
       activeProjectId,
       activeBrandKitId,
@@ -1769,6 +2009,7 @@ export function Studio() {
       audioSources,
       loadGallery,
       pushNotification,
+      smartMode,
     ]
   );
 
@@ -1901,7 +2142,7 @@ export function Studio() {
     [subject]
   );
 
-  const attachMentionPhoto = (url: string, name: string | null): number | null => {
+  const attachMentionPhoto = useCallback((url: string, name: string | null): number | null => {
     const attached =
       mode === "t2v" ? videoSources.map((s) => s.url) : referenceUrls;
     const existing = attached.indexOf(url);
@@ -1924,7 +2165,7 @@ export function Studio() {
       setReferenceNames((prev) => ({ ...prev, [url]: name }));
     }
     return attached.length;
-  };
+  }, [mode, videoSources, referenceUrls, maxRefs, MAX_VIDEO_IMAGES]);
 
   /** Replace the `@…` under the caret with a stable token. */
   const insertMention = useCallback(
@@ -1953,8 +2194,15 @@ export function Studio() {
         el.setSelectionRange(caret, caret);
       });
     },
-    [mention, subject, mode, videoSources, referenceUrls, maxRefs]
+    [mention, subject, attachMentionPhoto]
   );
+
+  const handleMentionMouseDown = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    const index = Number(event.currentTarget.dataset.mentionIndex);
+    const row = mentionMatches[index];
+    if (row) insertMention(row);
+  }, [mentionMatches, insertMention]);
 
   /** Recompute the open mention from wherever the caret now is. */
   const syncMention = useCallback(
@@ -2317,14 +2565,14 @@ export function Studio() {
 
   const buildPromptInputs = (): PromptInputs => ({
     subject,
-    action,
-    lighting,
+    action: mode === "t2i" || cinemaOn ? action : undefined,
+    lighting: mode === "t2i" || cinemaOn ? lighting : undefined,
     brandTokens,
     negativeAdditions: negativeAdditions || undefined,
     styleId: activeClientStyle ? undefined : style,
     styleTokens: activeClientStyle?.positive,
     styleNegative: activeClientStyle?.negative || undefined,
-    cameraId: mode === "t2v" ? camera : undefined,
+    cameraId: mode === "t2v" && cinemaOn ? camera : undefined,
     ...(mode === "t2v" && cinemaOn ? cinema : {}),
     // Positional, matching the badges on the thumbnails, so the server can
     // turn "@image2" into "reference image 2 (Fatima)".
@@ -2342,7 +2590,7 @@ export function Studio() {
     )
       ? resolution
       : choice.resolutions[choice.resolutions.length - 1];
-    applyImageModel(modelId, choice);
+    if (!applyImageModel(modelId, choice)) return;
     submit(buildPromptInputs(), {
       tier: choice.tier ?? undefined,
       imageModel: choice.imageModel ?? "seedream",
@@ -2351,6 +2599,15 @@ export function Studio() {
   };
 
   const onGenerate = async () => {
+    if (generating || uploadingVideoRef || uploadingVideoSource || uploadingAudio) return;
+    if (mode === "t2v" && videoWorkflow === "edit" && !videoEditSource) {
+      toast.error("Upload a video to edit first");
+      return;
+    }
+    if (mode === "t2v") {
+      const error = validateVideoSettings({ tier, images: videoSources.map(s => s.url), videos: videoRefSources.map(s => s.url), audios: audioSources.map(s => s.url), source: videoEditSource?.url, workflow: videoWorkflow, intent: videoEditSource?.intent, duration: durationS, resolution: videoResolution, aspect });
+      if (error) { toast.error(error); return; }
+    }
     // Client is required — everything downstream (projects, brand kits,
     // reporting) hangs off it, so nothing is generated unattributed.
     if (!activeClientId) {
@@ -2446,14 +2703,14 @@ export function Studio() {
 
   const onAudioFiles = async (files: FileList | null) => {
     if (!files?.length) return;
-    const list = Array.from(files).filter(isAudioFile);
+    const list = Array.from(files).filter(file => /\.(mp3|wav)$/i.test(file.name));
     if (!list.length) {
-      toast.error("Only MP3, WAV, M4A, AAC, or OGG audio");
+      toast.error("Video references support MP3 or WAV audio");
       return;
     }
-    const remaining = MAX_AUDIO_CLIPS - audioSources.length;
+    const remaining = videoCaps.maxAudios - audioSources.length;
     if (remaining <= 0) {
-      toast.error(`Up to ${MAX_AUDIO_CLIPS} audio clips per video`);
+      toast.error(`Up to ${videoCaps.maxAudios} audio clips for this model`);
       return;
     }
     const batch = list.slice(0, remaining);
@@ -2478,13 +2735,13 @@ export function Studio() {
         setAudioSources((prev) =>
           [...prev, { url, name: file.name, transcript }].slice(
             0,
-            MAX_AUDIO_CLIPS
+            videoCaps.maxAudios
           )
         );
       }
       toast.success(
         batch.length === 1
-          ? "Audio attached — the character will speak these lines"
+          ? "Audio reference attached"
           : `${batch.length} audio clips attached`
       );
     } catch (err) {
@@ -2495,10 +2752,28 @@ export function Studio() {
     }
   };
 
+  const onEditVideoFile = async (file?: File) => {
+    if (!file) return;
+    setUploadingVideoRef(true);
+    try {
+      const url = await uploadVideoFile(file);
+      setVideoRefSources([]);
+      setVideoEditSource({ url, generationId: null, intent: "edit" });
+      setVideoWorkflow("edit");
+      setTier("standard");
+      toast.success("Source video attached. Describe what to change in @video1.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploadingVideoRef(false);
+      if (editVideoFileInput.current) editVideoFileInput.current.value = "";
+    }
+  };
+
   const onReferenceVideoFiles = async (files: FileList | File[] | null) => {
     if (!files) return;
-    if (videoEditSource) {
-      toast.error("Remove the attached edit source first — reference clips are for a fresh generation");
+    if (videoWorkflow === "edit") {
+      toast.error("Switch to Create video first. Remove the attached edit source first — reference clips are for a fresh generation");
       return;
     }
     const list = Array.from(files).filter(isVideoFile);
@@ -2584,7 +2859,8 @@ export function Studio() {
   // is the moment it becomes visible, so fetch it then.
   useEffect(() => {
     if (mention && mode === "t2v" && libraryAssets === null && !assetsLoading) {
-      void loadAssets();
+      const frame = window.requestAnimationFrame(() => void loadAssets());
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [mention, mode, libraryAssets, assetsLoading, loadAssets]);
 
@@ -2738,6 +3014,8 @@ export function Studio() {
       reference_video_urls?: string[];
       source_audio_urls?: string[];
       video_resolution?: string;
+      video_intent?: "edit" | "extend" | "vary";
+      generate_audio?: boolean;
     };
     const video = isVideo(g);
 
@@ -2761,6 +3039,7 @@ export function Studio() {
 
     if (video) {
       setTier(g.tier);
+      setGenerateAudio(payload.generate_audio ?? true);
       if (g.duration_s != null) setDurationS(Number(g.duration_s));
       const vr = payload.video_resolution ?? g.resolution;
       if (vr === "480p" || vr === "720p" || vr === "1080p") {
@@ -2788,7 +3067,7 @@ export function Studio() {
           ? {
               url: payload.source_video_url,
               generationId: payload.source_video_generation_id ?? null,
-              intent: "edit",
+              intent: payload.video_intent ?? "edit",
               durationS: g.duration_s ?? null,
             }
           : null
@@ -2820,7 +3099,7 @@ export function Studio() {
       };
       setCinema(nextCinema);
       setCinemaOn(
-        Object.values(nextCinema).some((id) => id !== DEFAULT_DIRECTOR_ID)
+        !payload.source_video_url && (Object.values(nextCinema).some((id) => id !== DEFAULT_DIRECTOR_ID) || Boolean(inputs.cameraId && inputs.cameraId !== DEFAULT_CAMERA_ID) || Boolean(inputs.action || inputs.lighting))
       );
     } else {
       setVideoSources([]);
@@ -2853,10 +3132,6 @@ export function Studio() {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
       onGenerate();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
-      e.preventDefault();
-      setEditorOpen(true);
     }
   };
 
@@ -2922,13 +3197,8 @@ export function Studio() {
   };
 
   useEffect(() => {
-    setThemeReady(true);
-  }, []);
-
-  useEffect(() => {
     if (!connectionsOpen) return;
     let cancelled = false;
-    setStatusLoading(true);
     void (async () => {
       try {
         const res = await fetch("/api/status");
@@ -2951,18 +3221,6 @@ export function Studio() {
     };
   }, [connectionsOpen]);
 
-  useEffect(() => {
-    if (view !== "create") return;
-    const onGlobal = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "e") {
-        e.preventDefault();
-        setEditorOpen((o) => !o);
-      }
-    };
-    window.addEventListener("keydown", onGlobal);
-    return () => window.removeEventListener("keydown", onGlobal);
-  }, [view]);
-
   const navBtn = (
     active: boolean,
     onClick: () => void,
@@ -2974,19 +3232,21 @@ export function Studio() {
     <button
       type="button"
       data-tour={tourId}
+      aria-current={active ? "page" : undefined}
       onClick={() => {
         onClick();
         setSidebarOpen(false);
       }}
       className={cn(
-        "flex w-full items-center gap-3 rounded-lg py-1.5 athar-nav transition",
+        "athar-nav relative flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition",
         active
-          ? "bg-white/8 text-foreground"
-          : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
+          ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-[inset_0_0_0_1px_var(--sidebar-border)]"
+          : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
       )}
     >
       {icon}
       <span>{label}</span>
+      {active && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-gold" aria-hidden />}
     </button>
   );
 
@@ -2996,9 +3256,18 @@ export function Studio() {
    * card selection itself is unrestricted and each action filters its own
    * targets.
    */
-  const toggleSelected = (g: GenerationRecord) => {
+  /**
+   * Selection is one flat list of ids shared across all three Library card
+   * kinds. A render/transcript key is its own row id; a voice-over key is
+   * the card's `group_id` (one card = every version of that script) — the
+   * three id spaces never collide, so a plain string list is enough for
+   * "is this selected" without tagging each entry with its kind.
+   */
+  const toggleSelected = (item: { id: string }) => {
     setSelectedIds((prev) =>
-      prev.includes(g.id) ? prev.filter((x) => x !== g.id) : [...prev, g.id]
+      prev.includes(item.id)
+        ? prev.filter((x) => x !== item.id)
+        : [...prev, item.id]
     );
   };
 
@@ -3015,25 +3284,96 @@ export function Studio() {
     if (ids.length === 0) return;
     setBulkDeleting(true);
     try {
-      const res = await fetch("/api/generations/bulk-delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Bulk delete failed");
-
-      const deleted = new Set<string>(json.ids ?? []);
-      setGenerations((prev) =>
-        prev ? prev.filter((row) => !deleted.has(row.id)) : prev
+      const genIds = ids.filter((id) =>
+        (generations ?? []).some((g) => g.id === id)
       );
+      const transcriptIds = ids.filter((id) =>
+        (libraryTranscripts ?? []).some((t) => t.id === id)
+      );
+      // A voice card's id is its group_id; deleting the card deletes every
+      // version in that group, not just the latest one shown on the card.
+      const voiceGroupIds = ids.filter((id) =>
+        (libraryVoices ?? []).some((v) => v.group_id === id)
+      );
+      const voiceVersionIds = (libraryVoices ?? [])
+        .filter((v) => voiceGroupIds.includes(v.group_id))
+        .map((v) => v.id);
+
+      const results = await Promise.allSettled([
+        genIds.length
+          ? fetch("/api/generations/bulk-delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ ids: genIds }),
+            }).then(async (res) => {
+              const json = await res.json();
+              if (!res.ok) throw new Error(json.error ?? "Delete failed");
+              return { kind: "render" as const, ids: json.ids as string[] };
+            })
+          : Promise.resolve({ kind: "render" as const, ids: [] }),
+        ...transcriptIds.map((id) =>
+          fetch(`/api/transcripts/${id}`, { method: "DELETE" }).then(
+            (res) => {
+              if (!res.ok) throw new Error("Delete failed");
+              return { kind: "transcript" as const, ids: [id] };
+            }
+          )
+        ),
+        ...voiceVersionIds.map((id) =>
+          fetch(`/api/tts/${id}`, { method: "DELETE" }).then((res) => {
+            if (!res.ok) throw new Error("Delete failed");
+            return { kind: "voice" as const, ids: [id] };
+          })
+        ),
+      ]);
+
+      const deletedGenIds = new Set<string>();
+      const deletedTranscriptIds = new Set<string>();
+      const deletedVoiceVersionIds = new Set<string>();
+      let failures = 0;
+      for (const r of results) {
+        if (r.status === "rejected") {
+          failures++;
+          continue;
+        }
+        const target =
+          r.value.kind === "render"
+            ? deletedGenIds
+            : r.value.kind === "transcript"
+              ? deletedTranscriptIds
+              : deletedVoiceVersionIds;
+        for (const id of r.value.ids) target.add(id);
+      }
+
+      if (deletedGenIds.size > 0) {
+        setGenerations((prev) =>
+          prev ? prev.filter((row) => !deletedGenIds.has(row.id)) : prev
+        );
+      }
+      if (deletedTranscriptIds.size > 0) {
+        setLibraryTranscripts((prev) =>
+          prev ? prev.filter((row) => !deletedTranscriptIds.has(row.id)) : prev
+        );
+      }
+      if (deletedVoiceVersionIds.size > 0) {
+        setLibraryVoices((prev) =>
+          prev ? prev.filter((row) => !deletedVoiceVersionIds.has(row.id)) : prev
+        );
+      }
       setSelectedIds([]);
       setBulkDeleteOpen(false);
       // Close the detail overlay if it was showing something just removed.
-      setDetailTarget((cur) => (cur && deleted.has(cur.id) ? null : cur));
-      toast.success(
-        `Deleted ${json.deleted} generation${json.deleted === 1 ? "" : "s"}`
-      );
+      setDetailTarget((cur) => (cur && deletedGenIds.has(cur.id) ? null : cur));
+
+      const deletedCount =
+        deletedGenIds.size + deletedTranscriptIds.size + voiceGroupIds.length;
+      if (failures > 0) {
+        toast.error(
+          `Deleted ${deletedCount}, ${failures} failed — try the rest again`
+        );
+      } else {
+        toast.success(`Deleted ${deletedCount} item${deletedCount === 1 ? "" : "s"}`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Bulk delete failed");
     } finally {
@@ -3041,22 +3381,28 @@ export function Studio() {
     }
   };
 
-  const renderCard = (g: GenerationRecord, i: number) => (
+  const renderCard = (g: GenerationRecord, i: number, allowSelection = true) => {
+    const selected = allowSelection && selectMode && selectedIds.includes(g.id);
+    return (
     <article
       key={g.id}
       className={cn(
-        "animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8",
-        selectMode &&
-          selectedIds.includes(g.id) &&
-          "ring-2 ring-gold"
+        "animate-card-in group relative rounded-2xl",
+        SELECTED_GLOW_CLASS(selected)
       )}
       style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
     >
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl bg-card ring-1 ring-border transition",
+          selected && "ring-2 ring-gold"
+        )}
+      >
       <button
         type="button"
         className="block w-full text-left"
-        onClick={() => (selectMode ? toggleSelected(g) : openDetail(g))}
-        title={selectMode ? "Select" : "Open details"}
+        onClick={() => (allowSelection && selectMode ? toggleSelected(g) : openDetail(g))}
+        title={allowSelection && selectMode ? "Select" : "Open details"}
       >
         {g.output_url ? (
           isVideo(g) ? (
@@ -3109,11 +3455,11 @@ export function Studio() {
         )}
       </div>
 
-      {selectMode && !isVideo(g) && g.output_url && (
+      {allowSelection && selectMode && g.output_url && (
         <span
           className={cn(
             "pointer-events-none absolute top-2.5 left-2.5 flex size-6 items-center justify-center rounded-full ring-1 transition",
-            selectedIds.includes(g.id)
+            selected
               ? "bg-gold text-primary-foreground ring-gold"
               : "bg-black/50 text-transparent ring-white/40"
           )}
@@ -3145,7 +3491,7 @@ export function Studio() {
           <span className="rounded bg-white/10 px-1.5 py-0.5">{g.mode}</span>
           <span className="rounded bg-white/10 px-1.5 py-0.5">{g.tier}</span>
           {g.duration_s != null && <span>{g.duration_s}s</span>}
-          <span>· ${Number(g.cost).toFixed(3)}</span>
+          <span>· {g.cost == null ? "Usage-based" : `$${Number(g.cost).toFixed(3)}`}</span>
         </div>
         <div className="pointer-events-auto flex gap-2">
           <Button
@@ -3180,25 +3526,42 @@ export function Studio() {
           </Button>
         </div>
       </div>
+      </div>
     </article>
-  );
+    );
+  };
 
   /** Audio has no visual, so voice-overs and transcripts get an icon tile
       instead of the image/video preview `renderCard` uses. */
-  const renderVoiceCard = (v: TtsGenerationRecord, versions: TtsGenerationRecord[], i: number) => (
+  const renderVoiceCard = (v: TtsGenerationRecord, versions: TtsGenerationRecord[], i: number) => {
+    // The card represents the whole group, so its selection key is the
+    // group_id, not any one version's id — matches bulkDelete's expansion
+    // of a selected group into every version it contains.
+    const selected = selectMode && selectedIds.includes(v.group_id);
+    return (
     <article
       key={v.group_id}
-      className="animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      className={cn(
+        "animate-card-in group relative rounded-2xl",
+        SELECTED_GLOW_CLASS(selected)
+      )}
       style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
     >
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl bg-card ring-1 ring-border transition",
+          selected && "ring-2 ring-gold"
+        )}
+      >
       <button
         type="button"
         className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-gold-soft/25 to-transparent text-left transition group-hover:from-gold-soft/40"
-        onClick={() => {
-          setVoiceDetailTarget(v);
-          setVoiceDetailVersions(versions);
-        }}
-        title="Open voice-over"
+        onClick={() =>
+          selectMode
+            ? toggleSelected({ id: v.group_id })
+            : (setVoiceDetailTarget(v), setVoiceDetailVersions(versions))
+        }
+        title={selectMode ? "Select" : "Open voice-over"}
       >
         <span className="flex size-11 items-center justify-center rounded-full bg-white/8">
           <Mic className="size-5 text-gold" />
@@ -3217,6 +3580,18 @@ export function Studio() {
           </span>
         )}
       </div>
+      {selectMode && (
+        <span
+          className={cn(
+            "pointer-events-none absolute top-2.5 left-2.5 flex size-6 items-center justify-center rounded-full ring-1 transition",
+            selected
+              ? "bg-gold text-primary-foreground ring-gold"
+              : "bg-black/50 text-transparent ring-white/40"
+          )}
+        >
+          <Check className="size-3.5" />
+        </span>
+      )}
       <div className="p-3">
         <p className="truncate text-sm text-foreground">{v.title}</p>
         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -3225,23 +3600,37 @@ export function Studio() {
             .join(" · ")}
         </p>
       </div>
+      </div>
     </article>
-  );
+    );
+  };
 
-  const renderTranscriptCard = (t: TranscriptRecord, i: number) => (
+  const renderTranscriptCard = (t: TranscriptRecord, i: number) => {
+    const selected = selectMode && selectedIds.includes(t.id);
+    return (
     <article
       key={t.id}
-      className="animate-card-in group relative overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      className={cn(
+        "animate-card-in group relative rounded-2xl",
+        SELECTED_GLOW_CLASS(selected)
+      )}
       style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }}
     >
+      <div
+        className={cn(
+          "relative overflow-hidden rounded-2xl bg-card ring-1 ring-border transition",
+          selected && "ring-2 ring-gold"
+        )}
+      >
       <button
         type="button"
         className="flex aspect-video w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-white/8 to-transparent text-left transition group-hover:from-white/12"
-        onClick={() => {
-          setLibraryOpenTranscriptId(t.id);
-          setView("transcribe");
-        }}
-        title="Open transcript"
+        onClick={() =>
+          selectMode
+            ? toggleSelected(t)
+            : (setLibraryOpenTranscriptId(t.id), setView("transcribe"))
+        }
+        title={selectMode ? "Select" : "Open transcript"}
       >
         <span className="flex size-11 items-center justify-center rounded-full bg-white/8">
           {t.media_kind === "video" ? (
@@ -3259,6 +3648,18 @@ export function Studio() {
           Transcript
         </span>
       </div>
+      {selectMode && (
+        <span
+          className={cn(
+            "pointer-events-none absolute top-2.5 left-2.5 flex size-6 items-center justify-center rounded-full ring-1 transition",
+            selected
+              ? "bg-gold text-primary-foreground ring-gold"
+              : "bg-black/50 text-transparent ring-white/40"
+          )}
+        >
+          <Check className="size-3.5" />
+        </span>
+      )}
       <div className="p-3">
         <p className="truncate text-sm text-foreground">{t.title}</p>
         <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -3267,8 +3668,10 @@ export function Studio() {
             .join(" · ")}
         </p>
       </div>
+      </div>
     </article>
-  );
+    );
+  };
 
   const galleryLoader = (
     <div className="flex flex-col items-center justify-center gap-3 py-16 text-muted-foreground">
@@ -3302,6 +3705,7 @@ export function Studio() {
 
   return (
     <div className="relative flex h-dvh overflow-hidden bg-background text-foreground">
+      <a href="#studio-main" className="sr-only z-[100] rounded-lg bg-gold px-4 py-3 text-sm font-medium text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3">Skip to workspace</a>
       {/* Dims the app while the mobile drawer is open. */}
       {sidebarOpen && (
         <button
@@ -3314,15 +3718,21 @@ export function Studio() {
 
       {/* Sidebar: off-canvas drawer under md, static column from md up. */}
       <aside
+        ref={sidebarRef}
+        id="studio-sidebar"
+        aria-label="Workspace navigation"
+        role={sidebarOpen && !isDesktopSidebar ? "dialog" : undefined}
+        aria-modal={sidebarOpen && !isDesktopSidebar ? true : undefined}
+        inert={!sidebarOpen && !isDesktopSidebar}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex h-full w-56 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-5 pb-5 transition-transform duration-200 ease-out",
+          "fixed inset-y-0 left-0 z-50 flex h-full w-60 shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-3 pt-6 pb-4 transition-transform duration-200 ease-out",
           "md:relative md:z-10 md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
         {/* Same lockup treatment as the login page: Athar, a hairline
             divider, then the "by YAZ Media" mark. */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 px-2">
           <AtharLogo height={ATHAR_LOCKUP_MIN_HEIGHT} priority />
           <span className="h-7 w-px shrink-0 bg-sidebar-border" aria-hidden />
           <a
@@ -3338,17 +3748,26 @@ export function Studio() {
             <YazMediaLogo height={14} />
           </a>
         </div>
-        <div className="mt-3" />
+        <button type="button" onClick={() => setSidebarOpen(false)} aria-label="Close navigation" className="absolute right-2 top-2 rounded-lg p-1.5 text-muted-foreground hover:bg-sidebar-accent md:hidden"><X className="size-4" /></button>
+        <div className="mt-2" />
 
         <div data-tour="new-generation" className="relative mt-4 mb-4">
           <Button
-            className="athar-label h-9 w-full justify-center gap-2 rounded-xl bg-gold text-primary-foreground hover:bg-gold/90"
+            ref={generateButtonRef}
+            className="h-10 w-full justify-center gap-2 rounded-xl bg-primary text-sm font-semibold text-primary-foreground shadow-sm hover:bg-primary/90"
             onClick={() => setGenerateMenuOpen((o) => !o)}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault();
+                setGenerateMenuOpen(true);
+              }
+            }}
             aria-haspopup="menu"
             aria-expanded={generateMenuOpen}
+            aria-controls={generateMenuOpen ? "studio-create-menu" : undefined}
           >
             <Plus className="size-4" />
-            Generate
+            Create new
             <ChevronDown
               className={cn(
                 "size-3.5 transition",
@@ -3359,15 +3778,35 @@ export function Studio() {
 
           {generateMenuOpen && (
             <>
-              <button
-                type="button"
+              {/* A div, not a button: clicking a button focuses it, and a
+                  focused element behind an aria-hidden boundary trips the
+                  assistive-tech warning. Mouse-only click-away — keyboard
+                  users close the menu by choosing an item. */}
+              <div
                 aria-hidden
-                tabIndex={-1}
                 className="fixed inset-0 z-30 cursor-default"
                 onClick={() => setGenerateMenuOpen(false)}
               />
               <div
+                id="studio-create-menu"
+                ref={generateMenuRef}
                 role="menu"
+                aria-label="Create new"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setGenerateMenuOpen(false);
+                    generateButtonRef.current?.focus();
+                    return;
+                  }
+                  if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+                  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+                  items[next]?.focus();
+                }}
                 className="absolute inset-x-0 top-full z-40 mt-1.5 overflow-hidden rounded-xl border border-sidebar-border bg-popover p-1 shadow-lg"
               >
                 {[
@@ -3384,22 +3823,22 @@ export function Studio() {
                     run: () => openTool("t2v"),
                   },
                   {
-                    icon: <Wand2 className="size-4" />,
-                    label: "Assistant",
-                    hint: "Edit an image with a prompt",
-                    run: () => openAssistant(null),
+                    icon: <AudioLines className="size-4" />,
+                    label: "Transcribe",
+                    hint: "Audio or video → transcript",
+                    run: () => setView("transcribe"),
                   },
                   {
-                    icon: <Shuffle className="size-4" />,
-                    label: "Variations",
-                    hint: "Riff on a still",
-                    run: () => {
-                      const latestStill = generations?.find(
-                        (g) => !isVideo(g) && g.output_url
-                      );
-                      if (latestStill) openVary(latestStill);
-                      else toast.message("Generate a still first");
-                    },
+                    icon: <Mic className="size-4" />,
+                    label: "Voice",
+                    hint: "Text → voice-over",
+                    run: () => setView("tts"),
+                  },
+                  {
+                    icon: <Film className="size-4" />,
+                    label: "Storyboard",
+                    hint: "Plan and generate a shot list",
+                    run: () => setView("storyboard"),
                   },
                 ].map((opt) => (
                   <button
@@ -3408,6 +3847,7 @@ export function Studio() {
                     role="menuitem"
                     onClick={() => {
                       setGenerateMenuOpen(false);
+                      setSidebarOpen(false);
                       opt.run();
                     }}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition hover:bg-sidebar-accent"
@@ -3429,105 +3869,25 @@ export function Studio() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
-        <nav className="space-y-0.5">
-          {navBtn(
-            view === "home",
-            () => setView("home"),
-            <Home className="size-4" />,
-            "Home"
-          )}
-          {navBtn(
-            view === "library",
-            () => setView("library"),
-            <Library className="size-4" />,
-            "Library",
-            "library"
-          )}
-          {navBtn(
-            view === "assets",
-            () => setView("assets"),
-            <Boxes className="size-4" />,
-            "Assets",
-            "assets"
-          )}
-          {navBtn(
-            view === "orchestrate",
-            () => setView("orchestrate"),
-            <Workflow className="size-4" />,
-            "Campaign",
-            "campaign"
-          )}
-          {navBtn(
-            view === "storyboard",
-            () => setView("storyboard"),
-            <Film className="size-4" />,
-            "Storyboard",
-            "storyboard"
-          )}
-          {navBtn(
-            view === "transcribe",
-            () => setView("transcribe"),
-            <AudioLines className="size-4" />,
-            "Transcribe",
-            "transcribe"
-          )}
-          {navBtn(
-            view === "tts",
-            () => setView("tts"),
-            <Mic className="size-4" />,
-            "Voice",
-            "tts"
-          )}
-          {isManagement &&
-            navBtn(
-              view === "usage",
-              () => setView("usage"),
-              <BarChart3 className="size-4" />,
-              "Usage",
-              "usage"
-            )}
+        <nav aria-label="Studio" className="space-y-1">
+          {navBtn(view === "home", () => setView("home"), <Home className="size-4" />, "Explore")}
+          <p className="px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Create</p>
+          {navBtn(view === "create" && mode === "t2v" && !cinemaOn, () => openTool("t2v"), <Clapperboard className="size-4" />, "Video")}
+          {navBtn(view === "create" && cinemaOn, () => { openTool("t2v"); setCinemaOn(true); }, <Aperture className="size-4" />, "Cinema Studio")}
+          {navBtn(view === "motion", () => setView("motion"), <Film className="size-4" />, "Motion design")}
+          {navBtn(view === "effects", () => setView("effects"), <Sparkles className="size-4" />, "Looks & motion")}
+          {navBtn(view === "create" && mode === "t2i", () => openTool("t2i"), <ImageIcon className="size-4" />, "Image")}
+          {navBtn(view === "storyboard", () => setView("storyboard"), <Film className="size-4" />, "Storyboard", "storyboard")}
+          {navBtn(view === "tts", () => setView("tts"), <Mic className="size-4" />, "Voice", "tts")}
+          {navBtn(view === "transcribe", () => setView("transcribe"), <AudioLines className="size-4" />, "Transcribe", "transcribe")}
+          <p className="px-3 pt-5 pb-1.5 text-[10px] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Workspace</p>
+          {navBtn(view === "library", () => setView("library"), <Library className="size-4" />, "Library", "library")}
+          {navBtn(view === "assets", () => setView("assets"), <Boxes className="size-4" />, "Brand assets", "assets")}
+          {isManagement && navBtn(view === "usage", () => setView("usage"), <BarChart3 className="size-4" />, "Usage & cost", "usage")}
         </nav>
-
-        <div className="my-4 h-px bg-sidebar-border" />
 
         {/* Client / project / brand kit now live in the generate dock, next
             to the other things you set before pressing Generate. */}
-
-        <p className="mb-1 text-[10px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
-          Tools
-        </p>
-        <nav className="space-y-0.5">
-          {navBtn(
-            view === "create" && mode === "t2i",
-            () => openTool("t2i"),
-            <ImageIcon className="size-4" />,
-            "Image Generator"
-          )}
-          {navBtn(
-            view === "create" && mode === "t2v",
-            () => openTool("t2v"),
-            <Clapperboard className="size-4" />,
-            "Video Generator"
-          )}
-          {navBtn(
-            view === "edit",
-            () => openAssistant(null),
-            <Wand2 className="size-4" />,
-            "Assistant"
-          )}
-          {navBtn(
-            view === "vary",
-            () => {
-              const latestStill = generations?.find(
-                (g) => !isVideo(g) && g.output_url
-              );
-              if (latestStill) openVary(latestStill);
-              else toast.message("Generate a still first");
-            },
-            <Shuffle className="size-4" />,
-            "Variations"
-          )}
-        </nav>
         </div>
 
         <div className="relative mt-3 shrink-0 border-t border-sidebar-border pt-3">
@@ -3613,7 +3973,10 @@ export function Studio() {
               type="button"
               aria-label="Connections"
               aria-expanded={connectionsOpen}
-              onClick={() => setConnectionsOpen((o) => !o)}
+              onClick={() => {
+                if (!connectionsOpen) setStatusLoading(true);
+                setConnectionsOpen((open) => !open);
+              }}
               className={cn(
                 "group relative flex size-9 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-sidebar-accent hover:text-foreground",
                 connectionsOpen && "bg-sidebar-accent text-foreground"
@@ -3650,10 +4013,12 @@ export function Studio() {
       </aside>
 
       {/* Main */}
-      <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+      <main id="studio-main" tabIndex={-1} inert={sidebarOpen && !isDesktopSidebar} className="studio-main relative z-10 flex min-w-0 flex-1 flex-col outline-none">
         <button
           type="button"
+          ref={menuButtonRef}
           aria-label="Open menu"
+          aria-controls="studio-sidebar"
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(true)}
           className="absolute top-4 left-4 z-40 inline-flex size-9 items-center justify-center rounded-lg bg-card text-muted-foreground ring-1 ring-border transition hover:text-foreground md:hidden"
@@ -3793,6 +4158,7 @@ export function Studio() {
               patchGenerationRating(videoDetailTarget.id, r, reasons, note)
             }
             generation={videoDetailTarget}
+            hasEditSource={!!videoEditSource}
             onClose={() => setVideoDetailTarget(null)}
             {...detailNavFor(videoDetailTarget.id)}
             onReuse={reuseGeneration}
@@ -3929,203 +4295,88 @@ export function Studio() {
         )}
 
         {view === "home" && (
-          <div className="flex-1 overflow-y-auto px-6 py-8 sm:px-10">
-            <div className="mx-auto max-w-4xl text-center">
-              {session?.user && (
-                <p className="mb-2 text-sm text-muted-foreground">
-                  {(() => {
-                    const h = new Date().getHours();
-                    return h < 12
-                      ? "Good morning"
-                      : h < 18
-                        ? "Good afternoon"
-                        : "Good evening";
-                  })()}
-                  ,{" "}
-                  <span className="font-medium text-foreground">
-                    {firstName}
-                  </span>{" "}
-                  — what are we making?
-                </p>
-              )}
-              <h1 className="athar-display">
-                Generate
-          </h1>
-
-              <div className="mx-auto mt-6 flex max-w-xl items-center gap-2 rounded-full bg-card px-4 py-3 ring-1 ring-border shadow-sm">
-                <Search className="size-4 shrink-0 text-muted-foreground" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search"
-                  className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-                />
-                <kbd className="hidden rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-                  ⌘K
-                </kbd>
-              </div>
-
-              <div className="mx-auto mt-6 flex max-w-lg flex-wrap justify-center gap-3">
-                {[
-                  {
-                    label: "Image",
-                    icon: ImageIcon,
-                    onClick: () => openTool("t2i"),
-                  },
-                  {
-                    label: "Video",
-                    icon: Clapperboard,
-                    onClick: () => openTool("t2v"),
-                  },
-                  {
-                    label: "Assistant",
-                    icon: Wand2,
-                    onClick: () => openAssistant(null),
-                  },
-                  {
-                    label: "Transcribe",
-                    icon: AudioLines,
-                    onClick: () => setView("transcribe"),
-                  },
-                  {
-                    label: "Voice",
-                    icon: Mic,
-                    onClick: () => setView("tts"),
-                  },
-                  {
-                    label: "Variations",
-                    icon: Shuffle,
-                    onClick: () => {
-                      const latestStill = generations?.find(
-                        (g) => !isVideo(g) && g.output_url
-                      );
-                      if (latestStill) openVary(latestStill);
-                      else
-                        toast.message(
-                          "Generate a still first"
-                        );
-                    },
-                  },
-                ].map((t) => (
-                  <button
-                    key={t.label}
-                    type="button"
-                    onClick={t.onClick}
-                    className="group flex w-[4.75rem] flex-col items-center gap-2"
-                  >
-                    <span
-                      className={cn(
-                        "flex size-14 items-center justify-center rounded-2xl bg-secondary text-foreground ring-1 ring-border transition group-hover:scale-[1.03]",
-                      )}
-                    >
-                      <t.icon className="size-5" />
-          </span>
-                    <span className="text-xs text-muted-foreground group-hover:text-foreground">
-                      {t.label}
-                    </span>
-                  </button>
-                ))}
-        </div>
-            </div>
-
-            <div className="mx-auto mt-12 max-w-6xl">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <h2 className="text-sm font-medium text-foreground">
-                    Recent generations
-                  </h2>
-                  {activeProject && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveProjectId(null)}
-                      title="Showing this project only — click to show all"
-                      className="inline-flex items-center gap-1.5 rounded-full bg-gold-soft px-2.5 py-0.5 text-[11px] text-foreground ring-1 ring-gold/25 transition hover:opacity-80"
-                    >
-                      <FolderKanban className="size-3" />
-                      {activeProject.name}
-                      {filtered && (
-                        <span className="text-muted-foreground">
-                          · {filtered.length}
-                        </span>
-                      )}
-                      <X className="size-3 opacity-60" />
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-0.5 rounded-full bg-card p-0.5 ring-1 ring-border">
-                    {(
-                      [
-                        { v: "all", label: "All" },
-                        { v: "image", label: "Images" },
-                        { v: "video", label: "Videos" },
-                      ] as const
-                    ).map((t) => (
-                      <button
-                        key={t.v}
-                        type="button"
-                        onClick={() => setTypeFilter(t.v)}
-                        className={cn(
-                          "rounded-full px-2.5 py-1 text-[11px] transition",
-                          typeFilter === t.v
-                            ? "bg-gold text-primary-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        )}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setView("library")}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                  View library →
-                </button>
-                </div>
-              </div>
-
-              {filtered === null || galleryLoading ? (
-                galleryLoader
-              ) : filtered.length === 0 ? (
-                <div className="rounded-2xl bg-[#121212] px-6 py-16 text-center ring-1 ring-white/6">
-                  <Sparkles className="mx-auto mb-3 size-6 text-gold" />
-                  <p className="athar-headline">
-                    {activeProject
-                      ? `Nothing in ${activeProject.name} yet`
-                      : "Nothing here yet"}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {activeProject
-                      ? "New work you generate is tagged to this project. Switch to All projects to see everything."
-                      : "Generate an image or video."}
-                  </p>
-                  {activeProject && (
-                    <button
-                      type="button"
-                      onClick={() => setActiveProjectId(null)}
-                      className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      Show all projects
-                    </button>
-                  )}
-                  <div>
-                    <Button
-                      className="mt-5 rounded-full bg-gold text-primary-foreground"
-                      onClick={() => openTool("t2i")}
-                    >
-                      <Plus className="size-4" />
-                      Generate
-                    </Button>
-                  </div>
+          <StudioHome
+            firstName={firstName}
+            clientName={activeClient?.name}
+            projectName={activeProject?.name}
+            searchRef={homeSearchRef}
+            query={query}
+            onQueryChange={setQuery}
+            onRecipe={openRecipe}
+            onVideoModel={(nextTier) => { openTool("t2v"); setTier(nextTier); }}
+            onClearProject={() => setActiveProjectId(null)}
+            onOpen={(destination) => {
+              if (destination === "t2i" || destination === "t2v") openTool(destination);
+              else setView(destination);
+            }}
+            recentContent={
+              homeCreations === null || galleryLoading ? galleryLoader : homeCreations.length === 0 ? (
+                <div className="flex flex-col items-center rounded-2xl border border-dashed border-border bg-card/30 px-6 py-12 text-center">
+                  <Images className="mb-3 size-6 text-muted-foreground" />
+                  <p className="text-sm font-medium">{query.trim() ? "No matching creations" : "Your next idea starts here"}</p>
+                  <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">{query.trim() ? "Try another phrase or explore your full library." : "Start with a video, image, or reference. Your finished creations will appear here."}</p>
+                  <Button variant="outline" className="mt-5 rounded-lg text-xs" onClick={() => query.trim() ? setQuery("") : openTool("t2v")}>
+                    {query.trim() ? "Clear search" : "Create a video"}
+                  </Button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                  {filtered.slice(0, 6).map((g, i) => renderCard(g, i))}
+                  {homeCreations.slice(0, 6).map((generation, index) => renderCard(generation, index, false))}
                 </div>
-              )}
-            </div>
+              )
+            }
+            progressContent={
+              activeVideoJobs.length > 0 && (
+              <div className="mx-auto mt-10 max-w-6xl">
+                <p className="mb-2 px-1 text-[11px] font-medium tracking-[0.16em] text-muted-foreground uppercase">
+                  In progress
+                </p>
+                <div className="space-y-2">
+                  {activeVideoJobs.slice(0, 3).map((job) => {
+                    const kind = isImageJob(job)
+                      ? "image"
+                      : job.kind === "v2v"
+                        ? "edit"
+                        : "video";
+                    return (
+                      <div
+                        key={job.id}
+                        className="cursor-pointer"
+                        onClick={() =>
+                          openTool(isImageJob(job) ? "t2i" : "t2v")
+                        }
+                      >
+                        <JobPlaceholderCard
+                          kind={kind}
+                          aspect={job.aspect || aspect}
+                          startedAtMs={new Date(job.created_at).getTime()}
+                          status={job.status === "queued" ? "queued" : "running"}
+                          prompt={job.final_prompt}
+                          cancelling={cancellingJobIds.has(job.id)}
+                          onCancel={() => void cancelJob(job)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                {activeVideoJobs.length > 3 && (
+                  <button
+                    type="button"
+                    onClick={() => openTool("t2v")}
+                    className="mt-2 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    +{activeVideoJobs.length - 3} more in progress →
+                  </button>
+                )}
+              </div>
+              )
+            }
+          />
+        )}
+
+        {view === "effects" && (
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-10 pb-12 md:px-10">
+            <VideoExplore onSelect={openRecipe} />
           </div>
         )}
 
@@ -4210,6 +4461,8 @@ export function Studio() {
             </div>
           </>
         )}
+
+        {view === "motion" && <MotionStudio />}
 
         {view === "transcribe" && (
           <>
@@ -4314,14 +4567,14 @@ export function Studio() {
 
         {(view === "create" || view === "library") && (
           <>
-            <header className="flex items-center justify-between px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
+            <header className="flex flex-wrap items-center justify-between gap-3 px-6 py-5 pl-16 sm:px-8 md:pl-6 lg:pl-8">
               <div>
                 <h1 className="athar-headline">
                   {view === "library"
                     ? "Library"
                     : mode === "t2i"
                       ? "Image Generator"
-                      : "Video Generator"}
+                      : cinemaOn ? "Cinema Studio" : "Video Studio"}
                 </h1>
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {view === "library"
@@ -4332,7 +4585,7 @@ export function Studio() {
                       ? `New outputs → ${activeProject.name}`
                       : mode === "t2i"
                         ? "Text → Image"
-                        : "Text → Video"}
+                        : cinemaOn ? "Direct the film look, camera, light and pacing of a new shot" : videoWorkflow === "edit" ? "Change existing footage with source-aware controls" : "Create with text, image references, or reference footage"}
                 </p>
               </div>
             </header>
@@ -4352,6 +4605,32 @@ export function Studio() {
             >
               {view === "create" ? (
                 <>
+                  {mode === "t2v" && !cinemaOn && (
+                    <VideoWorkspaceControls
+                      workflow={videoWorkflow}
+                      busy={
+                        uploadingVideoRef ||
+                        uploadingVideoSource ||
+                        generating
+                      }
+                      hasSource={!!videoEditSource}
+                      imageCount={videoSources.length}
+                      onChange={(next) => {
+                        if (next === videoWorkflow) return;
+                        setVideoWorkflow(next);
+                        setCinemaOn(false);
+                        setCamera(DEFAULT_CAMERA_ID);
+                        setAction("");
+                        setLighting("");
+                        setNegativeAdditions("");
+                        setVideoEditSource(null);
+                        if (next === "edit") setVideoRefSources([]);
+                        if (next !== "create") setTier("standard");
+                      }}
+                      onSource={() => editVideoFileInput.current?.click()}
+                      onImages={() => videoFileInput.current?.click()}
+                    />
+                  )}
                   {(() => {
                     const jobTiles = videoJobs.filter(
                       (j) =>
@@ -4486,20 +4765,130 @@ export function Studio() {
                         className="w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                       />
                     </div>
-                    <Select
-                      value={ownerFilter}
-                      onValueChange={(v) =>
-                        setOwnerFilter(v as typeof ownerFilter)
+                    <ChipPopover
+                      label="Owner"
+                      value={
+                        ownerFilter === "all"
+                          ? "Everyone"
+                          : ownerFilter === "mine"
+                            ? "Mine only"
+                            : (ownerFilterName ?? "Someone")
                       }
+                      active={ownerFilter !== "all"}
+                      icon={<Users className="size-3.5" />}
+                      width="w-72"
                     >
-                      <SelectTrigger className="h-10 w-auto min-w-[7rem] shrink-0 rounded-full border-border bg-card px-4 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Everyone</SelectItem>
-                        <SelectItem value="mine">Mine only</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <div className="space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOwnerFilter("all");
+                            setOwnerFilterName(null);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm transition",
+                            ownerFilter === "all"
+                              ? "bg-sidebar-accent text-gold"
+                              : "hover:bg-sidebar-accent/60"
+                          )}
+                        >
+                          Everyone
+                          {ownerFilter === "all" && <Check className="size-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOwnerFilter("mine");
+                            setOwnerFilterName(null);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm transition",
+                            ownerFilter === "mine"
+                              ? "bg-sidebar-accent text-gold"
+                              : "hover:bg-sidebar-accent/60"
+                          )}
+                        >
+                          Mine only
+                          {ownerFilter === "mine" && <Check className="size-3.5" />}
+                        </button>
+                      </div>
+
+                      {/* Picking one person by name is an admin tool — it
+                          reads from the same team-management list, which
+                          only admins can fetch. Everyone else keeps the two
+                          choices above. */}
+                      {isManagement && (
+                        <>
+                          <div className="my-1.5 h-px bg-border" />
+                          <div className="px-2 pb-1">
+                            <div className="flex items-center gap-1.5 rounded-lg bg-white/5 px-2 py-1 ring-1 ring-white/10">
+                              <Search className="size-3 shrink-0 text-muted-foreground" />
+                              <input
+                                value={ownerSearchQuery}
+                                onChange={(e) => setOwnerSearchQuery(e.target.value)}
+                                onFocus={loadTeamMembers}
+                                placeholder="Find a teammate…"
+                                className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                              />
+                            </div>
+                          </div>
+                          <div className="max-h-48 space-y-0.5 overflow-y-auto">
+                            {teamMembersLoading ? (
+                              <p className="px-2 py-2 text-xs text-muted-foreground">
+                                Loading…
+                              </p>
+                            ) : (
+                              (teamMembers ?? [])
+                                .filter((m) => {
+                                  const q = ownerSearchQuery.trim().toLowerCase();
+                                  if (!q) return true;
+                                  return (
+                                    (m.name ?? "").toLowerCase().includes(q) ||
+                                    m.email.toLowerCase().includes(q)
+                                  );
+                                })
+                                .map((m) => (
+                                  <button
+                                    key={m.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setOwnerFilter(m.id);
+                                      setOwnerFilterName(m.name || m.email);
+                                    }}
+                                    className={cn(
+                                      "flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-sm transition",
+                                      ownerFilter === m.id
+                                        ? "bg-sidebar-accent text-gold"
+                                        : "hover:bg-sidebar-accent/60"
+                                    )}
+                                  >
+                                    <span className="min-w-0 truncate">
+                                      {m.name || m.email}
+                                    </span>
+                                    {ownerFilter === m.id && (
+                                      <Check className="size-3.5 shrink-0" />
+                                    )}
+                                  </button>
+                                ))
+                            )}
+                            {!teamMembersLoading &&
+                              teamMembers !== null &&
+                              teamMembers.filter((m) => {
+                                const q = ownerSearchQuery.trim().toLowerCase();
+                                if (!q) return true;
+                                return (
+                                  (m.name ?? "").toLowerCase().includes(q) ||
+                                  m.email.toLowerCase().includes(q)
+                                );
+                              }).length === 0 && (
+                                <p className="px-2 py-2 text-xs text-muted-foreground">
+                                  No match
+                                </p>
+                              )}
+                          </div>
+                        </>
+                      )}
+                    </ChipPopover>
                     <Select
                       value={typeFilter}
                       onValueChange={(v) =>
@@ -4640,13 +5029,14 @@ export function Studio() {
                               ? "New work you generate is tagged to this project."
                               : "Generate an image or video and it lands here."}
                           </p>
-                          {(activeClientId || ownerFilter === "mine") && (
+                          {(activeClientId || ownerFilter !== "all") && (
                             <button
                               type="button"
                               onClick={() => {
                                 onActiveClientChange(null);
                                 setActiveProjectId(null);
                                 setOwnerFilter("all");
+                                setOwnerFilterName(null);
                               }}
                               className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                             >
@@ -5032,7 +5422,7 @@ export function Studio() {
               </button>
               <button
                 type="button"
-                onClick={() => mode !== "t2v" && openTool("t2v")}
+                onClick={() => (mode !== "t2v" || cinemaOn) && openTool("t2v")}
                 aria-pressed={mode === "t2v"}
                 title="Video Generator"
                 className={cn(
@@ -5107,7 +5497,7 @@ export function Studio() {
                 <input
                   ref={audioFileInput}
                   type="file"
-                  accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg"
+                  accept="audio/mpeg,audio/wav,.mp3,.wav"
                   multiple
                   className="hidden"
                   onChange={(e) => void onAudioFiles(e.target.files)}
@@ -5124,6 +5514,8 @@ export function Studio() {
                   onChange={(e) => void onReferenceVideoFiles(e.target.files)}
                 />
               )}
+
+              {mode === "t2v" && <input ref={editVideoFileInput} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" className="hidden" onChange={(e) => void onEditVideoFile(e.target.files?.[0])} />}
 
               {!composerCollapsed && mode === "t2v" && videoEditSource && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
@@ -5499,7 +5891,7 @@ export function Studio() {
                 )}
               </div>
             ) : (
-              <div className="relative">
+              <div className="relative rounded-2xl bg-input/30">
               {/* Sits behind the transparent-text textarea and re-renders the
                   prompt so @image/@video/@audio tags read as linked, not prose.
                   Typography must mirror the textarea exactly or the caret and
@@ -5535,7 +5927,7 @@ export function Studio() {
                         : videoEditSource.intent === "vary"
                           ? "Vary @video1 — same scene, new take"
                           : "Change @video1 — what should be different?"
-                      : "Describe the shot — subject, action, camera, mood…"
+                      : videoWorkflow === "edit" ? "Describe what to change in the source video…" : "Describe the shot — subject, action, camera, mood…"
                     : referenceUrls.length > 0
                       ? "Describe the change you want from the reference…"
                       : "Describe what you want to create — subject, setting, lighting, mood…"
@@ -5597,7 +5989,7 @@ export function Studio() {
                 }}
                 rows={6}
                 className={cn(
-                  "field-sizing-fixed relative block h-40 max-h-40 min-h-40 resize-none overflow-y-auto border-0 bg-transparent text-white shadow-none caret-white [-webkit-text-fill-color:transparent] focus-visible:ring-0",
+                  "field-sizing-fixed relative block h-24 max-h-24 min-h-24 resize-none overflow-y-auto border-0 bg-transparent text-white shadow-none caret-white [-webkit-text-fill-color:transparent] placeholder:[-webkit-text-fill-color:var(--athar-text-muted)] focus-visible:ring-0 md:h-40 md:max-h-40 md:min-h-40 dark:bg-transparent",
                   PROMPT_FIELD_TYPE
                 )}
               />
@@ -5629,11 +6021,8 @@ export function Studio() {
                     role="option"
                     aria-selected={i === mentionIndex}
                     onMouseEnter={() => setMentionIndex(i)}
-                    onMouseDown={(e) => {
-                      // mousedown, not click: blur would close the menu first.
-                      e.preventDefault();
-                      insertMention(t);
-                    }}
+                    data-mention-index={i}
+                    onMouseDown={handleMentionMouseDown}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition",
                       i === mentionIndex ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
@@ -5676,11 +6065,12 @@ export function Studio() {
               </div>
             )}
 
-              {!generating && !composerCollapsed && (
+              {!generating && !composerCollapsed && (mode === "t2i" || cinemaOn) && (
               <div className="mt-1 flex items-center justify-between gap-2 px-1">
                 <button
                   type="button"
                   onClick={() => setDetailsOpen((o) => !o)}
+                  data-tour="prompt-details"
                   className="flex items-center gap-1 text-[11px] text-muted-foreground transition hover:text-foreground"
                 >
                   <ChevronDown
@@ -5694,23 +6084,11 @@ export function Studio() {
                     <span className="ml-1 size-1.5 rounded-full bg-gold" />
                   )}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setEditorOpen(true)}
-                  data-tour="prompt-editor"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-muted-foreground transition hover:border-gold/30 hover:text-foreground"
-                  title="Prompt editor (⌘E)"
-                >
-                  <SquarePen className="size-3" />
-                  Prompt editor
-                  <kbd className="ml-0.5 hidden font-mono text-[9px] opacity-60 sm:inline">
-                    ⌘E
-                  </kbd>
-                </button>
+
           </div>
               )}
 
-              {!generating && !composerCollapsed && detailsOpen && (
+              {!generating && !composerCollapsed && detailsOpen && (mode === "t2i" || cinemaOn) && (
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
             <Input
                     placeholder="Action"
@@ -5782,7 +6160,7 @@ export function Studio() {
                   {mode === "t2i" && (
                     <button
                       type="button"
-                      disabled={uploadingRef || referenceUrls.length >= 4}
+                      disabled={uploadingRef || referenceUrls.length >= maxRefs}
                       onClick={() => refFileInput.current?.click()}
                       aria-label="Attach reference"
                       className={cn(
@@ -5802,7 +6180,7 @@ export function Studio() {
                     </button>
                   )}
 
-                  {mode === "t2v" && (
+                  {mode === "t2v" && videoWorkflow === "create" && (
                     <button
                       type="button"
                       disabled={
@@ -5824,21 +6202,21 @@ export function Studio() {
                       )}
                       {videoSources.length === 0
                         ? "Attach"
-                        : videoSources.length === 1
+                        : firstFrame
                           ? "First frame"
                           : `${videoSources.length} images`}
                     </button>
                   )}
 
-                  {mode === "t2v" && (
+                  {mode === "t2v" && (videoCaps.audioOnly || videoSources.length > 0 || videoRefSources.length > 0 || !!videoEditSource) && (
                     <button
                       type="button"
                       disabled={
                         uploadingAudio ||
-                        audioSources.length >= MAX_AUDIO_CLIPS
+                        audioSources.length >= videoCaps.maxAudios
                       }
                       onClick={() => audioFileInput.current?.click()}
-                      aria-label="Attach lip-sync audio"
+                      aria-label="Attach reference audio"
                       className={cn(
                         "inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground transition hover:text-foreground disabled:opacity-50",
                         audioSources.length > 0 &&
@@ -5856,7 +6234,7 @@ export function Studio() {
                     </button>
                   )}
 
-                  {mode === "t2v" && !videoEditSource && (
+                  {mode === "t2v" && videoWorkflow === "create" && !videoEditSource && (
                     <button
                       type="button"
                       disabled={
@@ -5951,14 +6329,14 @@ export function Studio() {
                       // the still-model list.
                       <Select
                         value={tier}
-                        onValueChange={(v) => setTier(v as Tier)}
+                        onValueChange={(v) => selectVideoTier(v as Tier)}
                       >
                         <SelectTrigger className="h-8 w-auto min-w-[9.5rem] rounded-full border-white/10 bg-white/5 px-3 text-xs">
                           <Cpu className="size-3.5 shrink-0 text-muted-foreground" />
                           <SelectValue>{selectedModelLabel}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
-                          {modelOptions.map((m) => (
+                          {modelOptions.filter(m => videoWorkflow !== "edit" || videoCapabilities(m.tier).editing).map((m) => (
                             <SelectItem key={m.tier} value={m.tier}>
                               <span className="flex flex-col items-start gap-0.5 py-0.5">
                                 <span>{m.label}</span>
@@ -6044,7 +6422,7 @@ export function Studio() {
                   onClick={() => setSmartMode((s) => !s)}
                   aria-pressed={smartMode}
                   data-tour="smart"
-                  title="Smart: pick the best of the batch, upscale the winner, and brand-check it — automatically."
+                  title="Smart: compare options, finish a 1K winner, and check brand fit. Keep this tab open for automatic finishing."
                   className={cn(
                     "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition",
                     smartMode
@@ -6083,7 +6461,33 @@ export function Studio() {
                 </Select>
               )}
 
-              <span data-tour="output" className="inline-flex">
+              {mode === "t2v" && (
+                <button
+                  type="button"
+                  aria-pressed={generateAudio || audioSources.length > 0}
+                  disabled={audioSources.length > 0}
+                  onClick={() => setGenerateAudio((value) => !value)}
+                  title={
+                    audioSources.length
+                      ? "Reference audio requires sound output"
+                      : "Generate sound with the video"
+                  }
+                  className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs disabled:opacity-60"
+                >
+                  <AudioLines className="size-3.5" />
+                  {generateAudio || audioSources.length ? "Sound on" : "Sound off"}
+                </button>
+              )}
+              <span data-tour="output" className="inline-flex items-center gap-2">
+              {mode === "t2i" && googleModel === "nano-banana" ? (
+                <span className="px-2 text-xs text-muted-foreground">
+                  Auto frame &amp; size
+                </span>
+              ) : mode === "t2v" && videoRatioLocked ? (
+                <span className="px-2 text-xs text-muted-foreground">
+                  {videoWorkflow === "edit" ? "Source ratio" : "First-frame ratio"}
+                </span>
+              ) : (
               <ChipPopover
                 label="Ratio"
                 value={aspect}
@@ -6095,7 +6499,7 @@ export function Studio() {
                   Aspect ratio
                 </p>
                 <div className="grid grid-cols-3 gap-1.5 p-1">
-                  {ASPECT_RATIOS.map((a) => {
+                  {(mode === "t2v" ? videoCaps.aspects : ASPECT_RATIOS).map((a) => {
                     const selected = a === aspect;
                     return (
                       <button
@@ -6126,8 +6530,9 @@ export function Studio() {
                   })}
                 </div>
               </ChipPopover>
+              )}
 
-                {mode === "t2i" && (
+                {mode === "t2i" && googleModel !== "nano-banana" && (
                   <Select
                     value={resolution}
                     onValueChange={(v) => setResolution(v as ImageResolution)}
@@ -6153,13 +6558,13 @@ export function Studio() {
                   </Select>
                 )}
 
-                {mode === "t2v" && videoEditSource ? (
+                {mode === "t2v" && videoWorkflow === "edit" && videoEditSource?.intent !== "extend" ? (
                   <span
                     title="Seedance keeps the source clip's length when you edit a video"
                     className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-3 text-xs text-muted-foreground"
                   >
                     <Clock className="size-3.5 shrink-0" />
-                    {videoEditSource.durationS
+                    {videoEditSource?.durationS
                       ? `${Math.round(Number(videoEditSource.durationS))}s source`
                       : "Same as source"}
                   </span>
@@ -6180,14 +6585,14 @@ export function Studio() {
                         </p>
                         <Slider
                           min={4}
-                          max={model.maxDuration || 30}
+                          max={videoCaps.maxDuration}
                           step={1}
                           value={[durationS]}
                           onValueChange={([v]) => setDurationS(v)}
                         />
                         <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
                           <span>4s</span>
-                          <span>{model.maxDuration || 30}s</span>
+                          <span>{videoCaps.maxDuration}s</span>
                         </div>
                       </div>
                     </ChipPopover>
@@ -6205,13 +6610,7 @@ export function Studio() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="480p">480p · fast</SelectItem>
-                        <SelectItem value="720p">720p</SelectItem>
-                        {/* Seedance 2.5 only — the draft tier's 2.0 Mini has
-                            no 1080p path, so it is clamped server-side. */}
-                        <SelectItem value="1080p" disabled={tier === "draft"}>
-                          1080p{tier === "draft" ? " · needs Standard+" : ""}
-                        </SelectItem>
+                        {videoCaps.resolutions.map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   ) : (
@@ -6281,7 +6680,7 @@ export function Studio() {
             // button inert to both mouse hover (native title tooltips don't
             // fire through disabled:pointer-events-none) and click, leaving
             // no way to discover why. onGenerate() shows the toast instead.
-            disabled={generating}
+            disabled={generating || uploadingVideoRef || uploadingVideoSource || uploadingAudio}
             title={
               !activeClientId
                 ? "Pick a client first — generations are always attributed to one"
@@ -6565,34 +6964,7 @@ export function Studio() {
             </DialogContent>
           </Dialog>
 
-          <PromptEditor
-            open={editorOpen}
-            onOpenChange={setEditorOpen}
-            mode={mode}
-            value={{
-              subject,
-              action,
-              lighting,
-              brandTokens,
-              negativeAdditions: negativeAdditions || undefined,
-            }}
-            onApply={(next) => {
-              setSubject(next.subject);
-              setAction(next.action ?? "");
-              setLighting(next.lighting ?? "");
-              setBrandTokens(next.brandTokens ?? "");
-              setNegativeAdditions(next.negativeAdditions ?? "");
-              setDetailsOpen(
-                Boolean(
-                  next.action ||
-                    next.lighting ||
-                    next.brandTokens ||
-                    next.negativeAdditions
-                )
-              );
-              toast.success("Prompt applied");
-            }}
-          />
+
           </>
         )}
       </main>

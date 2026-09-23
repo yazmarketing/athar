@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local build checks, preserved work, and private production media.
+    ".deploy-check/**",
+    ".wip-backup/**",
+    ".athar/**",
   ]),
 ]);
 

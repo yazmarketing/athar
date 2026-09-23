@@ -1,0 +1,30 @@
+import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+const auth = vi.hoisted(() => ({ user: { id: "owner", role: "creator" } as { id: string; role: string } | null }));
+vi.mock("../src/lib/auth-session", () => ({ getSessionUser: async () => auth.user }));
+vi.mock("../src/lib/authz", () => ({ canGenerate: (role: string) => role === "admin" || role === "creator" }));
+import { createProject, filePath, withRecord } from "../src/lib/director/store";
+import { parseRange, serveDirectorMedia } from "../src/lib/director/http";
+let dir: string; const previous = process.env.ATHAR_DIRECTOR_ROOT;
+beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "athar-director-http-")); process.env.ATHAR_DIRECTOR_ROOT = dir; auth.user = { id: "owner", role: "creator" }; });
+afterEach(async () => { if (previous) process.env.ATHAR_DIRECTOR_ROOT = previous; else delete process.env.ATHAR_DIRECTOR_ROOT; await rm(dir, { recursive: true, force: true }); });
+it("serves private playback ranges only to the owner, including HEAD and suffix ranges", async () => {
+  const p = await createProject("owner", {}); const id = randomUUID(); const filename = `assets/${id}.mp4`;
+  await writeFile(filePath(p.id, filename), "0123456789");
+  await withRecord(p.id, (r) => { r.files[id] = { filename, mime: "video/mp4" }; });
+  const url = `http://localhost/api/director/projects/${p.id}/media/${id}`;
+  const partial = await serveDirectorMedia(new Request(url, { headers: { range: "bytes=2-5" } }), p.id, id);
+  expect(partial.status).toBe(206); expect(partial.headers.get("content-range")).toBe("bytes 2-5/10"); expect(await partial.text()).toBe("2345");
+  const suffix = await serveDirectorMedia(new Request(url, { headers: { range: "bytes=-3" } }), p.id, id); expect(await suffix.text()).toBe("789");
+  const head = await serveDirectorMedia(new Request(url), p.id, id, true); expect(head.headers.get("content-length")).toBe("10"); expect(await head.text()).toBe("");
+  const invalid = await serveDirectorMedia(new Request(url, { headers: { range: "bytes=500-" } }), p.id, id); expect(invalid.status).toBe(416);
+  auth.user = { id: "other", role: "admin" }; await expect(serveDirectorMedia(new Request(url), p.id, id)).rejects.toMatchObject({ status: 404 });
+  auth.user = null; await expect(serveDirectorMedia(new Request(url), p.id, id)).rejects.toMatchObject({ status: 401 });
+});
+it("rejects multi-range and impossible byte requests", () => {
+  expect(() => parseRange("bytes=0-1,5-7", 10)).toThrow(); expect(() => parseRange("bytes=8-2", 10)).toThrow();
+  expect(parseRange("bytes=2-100", 10)).toEqual({ start: 2, end: 9 });
+});

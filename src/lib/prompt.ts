@@ -96,7 +96,6 @@ export function buildPrompt(inputs: PromptInputs): {
   ].filter((p): p is string => Boolean(p));
 
   // Decide against everything the user actually wrote, not just the subject.
-  const positiveText = parts.join(" ");
   // Spoken dialogue is sound, not on-screen lettering — the quotes in an
   // injected lip-sync line must not disable the text/watermark bans.
   const visualText = parts
@@ -104,12 +103,13 @@ export function buildPrompt(inputs: PromptInputs): {
     .join(" ");
 
   /**
-   * Gulf subjects get the garment construction and the features spelled out,
-   * plus a ban on the renderings the model would otherwise reach for. Applied
+   * Cultural guidance preserves the brief’s country, setting and wardrobe
+   * without prescribing identity through appearance or costume. Applied
    * here rather than in any one caller so every path benefits — the dock, the
    * assistant, storyboards and campaigns alike.
    */
-  const cultural = culturalGuidance(positiveText);
+  // Spoken place names describe dialogue, not the visible scene.
+  const cultural = culturalGuidance(visualText);
 
   const negativeParts = [
     BASE_NEGATIVE,

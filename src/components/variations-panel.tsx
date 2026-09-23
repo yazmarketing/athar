@@ -119,7 +119,7 @@ export function VariationsPanel({
   const [results, setResults] = useState<GenerationRecord[]>([]);
 
   const cost = useMemo(
-    () => imageModelCost(imageModelId, resolution, count) ?? 0,
+    () => imageModelCost(imageModelId, resolution, count),
     [imageModelId, resolution, count]
   );
 
@@ -205,7 +205,7 @@ export function VariationsPanel({
           </button>
         )}
         <span className="hidden rounded-full bg-white/5 px-2.5 py-1 font-mono text-[10px] text-muted-foreground ring-1 ring-white/8 sm:inline">
-          ~${cost.toFixed(3)}
+          {cost === null ? "Usage-based" : `~$${cost.toFixed(3)}`}
         </span>
       </header>
 

@@ -97,37 +97,15 @@ function systemPrompt(
     "`prompt` — an image model renders the sentence instead of the picture.",
     "Put any camera move or transition in `motion` instead.",
 
-    // 4. Cultural precision. Vague cultural nouns produce wrong, often
-    //    offensive output, so force concrete, correct description.
-    "CULTURAL ACCURACY IS MANDATORY. Never use a bare nationality or a vague",
-    "garment name and hope the model knows it. Describe the actual garment,",
-    "how it is worn, and the setting, precisely and respectfully.",
-    "For Emirati/Gulf subjects specifically:",
-    "— An Emirati woman wears a flowing black abaya (an open or closed robe worn",
-    "  over her clothes, often with subtle embroidery or a tailored modern cut)",
-    "  with a shayla: a long black rectangular scarf draped over the head and",
-    "  swept over the shoulders. It is NOT a chador, NOT a tight wrapped hijab,",
-    "  and NOT a shapeless enveloping cloak.",
-    "— An Emirati man wears a crisp white kandura (ankle-length robe) with a",
-    "  ghutra headscarf (white or red-and-white checked) held by a black agal.",
-    "— An Emirati BOY wears a white kandura like the men, usually without the",
-    "  ghutra and agal at a young age; sandals are normal. An Emirati GIRL wears",
-    "  a modest dress or a jalabiya; a young girl need not be covered.",
-    "— Emirati architecture and interiors are contemporary and high-specification;",
-    "  avoid generic orientalist or desert-cliché staging unless the brief asks.",
-    "Apply the same specificity to any other culture, faith or region in the brief.",
-
-    // 4b. The failure this exists to stop: the planner is free to choose the
-    //     wardrobe when the brief does not name one, and on one pass it chose
-    //     national dress and on the next a shirt and trousers. National dress
-    //     is the default, not a coin flip.
-    "WARDROBE IS NOT A FREE CHOICE. When the brief does not state what the",
-    "subject wears and the subject belongs to a culture with national dress,",
-    "you MUST dress them in that national dress. For Emirati, Gulf, Khaleeji or",
-    "UAE subjects that means the kandura / abaya described above. NEVER put such",
-    "a subject in Western casual clothing — no t-shirt, polo, cotton work shirt,",
-    "jeans, chinos, olive trousers, hoodie or sneakers — unless the brief",
-    "explicitly asks for it.",
+    // 4. Cultural precision serves the brief; it must not impose a costume.
+    "Represent each named country and culture distinctly and respectfully.",
+    "Do not substitute Emirati details for a broad Gulf context or another country.",
+    "Preserve the brief's clothing, place, time period and reference identities.",
+    "When clothing is unspecified, choose wardrobe appropriate to the activity",
+    "and setting; national identity alone does not mandate traditional dress.",
+    "Describe requested traditional garments accurately, without adding garments",
+    "or face coverings that were not requested. Never infer nationality from",
+    "skin tone or facial features, or exclude an ethnic group's appearance.",
 
     // 4c. Anything the brief actually specifies outranks the planner.
     "THE BRIEF OUTRANKS YOU. Any garment, prop, location, colour, action or",
@@ -246,17 +224,14 @@ export async function planShots(
   // large one.
   const maxTokens = Math.min(1200 + count * 320, 6000);
 
-  // Try OpenAI, then fall back to ModelArk. One provider being unhappy — an
-  // empty completion, a rate limit, a model that isn't open on the account —
-  // shouldn't be the difference between having a storyboard and not.
+  // An explicitly configured model must fail visibly instead of silently
+  // producing the plan with another provider. No-key deployments can use Ark.
   let raw = "";
   let firstError: Error | null = null;
-  const providers = openaiConfigured() ? [openaiChat, arkChat] : [arkChat];
+  const providers = openaiConfigured() ? [openaiChat] : [arkChat];
   for (const chat of providers) {
     try {
-        // Low temperature on purpose. Shot ideas benefit from variety; the
-      // wardrobe of an Emirati boy does not, and 0.6 was enough to make it a
-      // coin flip between a kandura and a cotton shirt.
+      // Legacy chat models use a restrained temperature for stable plans.
       raw = await chat({ messages, temperature: 0.25, maxTokens });
       break;
     } catch (err) {

@@ -133,6 +133,7 @@ export type ArkVideoRequest = {
   /** Clip length in seconds (2.5: 4–30) */
   duration: number;
   generateAudio?: boolean;
+  taskType?: "reference" | "edit" | "extend";
   /**
    * Optional attached image URL(s). One image = exact first frame (i2v);
    * two or more = reference images the model blends into the clip.
@@ -310,8 +311,7 @@ export function buildArkVideoPayload(
     model: req.model,
     content,
     resolution: req.resolution ?? "720p",
-    // Reference-video tasks (edit/extend) must send -1: Seedance derives the
-    // output duration (and ratio) from the input clip and rejects fixed values.
+    // Editing inherits source duration. Extension overrides this below.
     duration: videos.length > 0 ? -1 : req.duration,
     // A reference audio track is pointless in a silent clip — lip-sync only
     // exists when the output carries audio, so it overrides the flag.
@@ -325,10 +325,15 @@ export function buildArkVideoPayload(
   if (videos.length > 0) {
     payload.output_format = "mov";
   }
-  // First-frame generation must not set ratio — the output follows the
-  // first-frame image's aspect ratio (ModelArk rejects the param otherwise).
-  // Same rule for a reference video: output follows the source clip.
-  if (!firstFrameMode && videos.length === 0) {
+  if (req.model.includes("seedance-2-5")) {
+    if (videos.length || refVideos.length || audios.length || (images.length && !firstFrameMode)) {
+      payload.omni_reference_task_type = req.taskType ?? (videos.length ? "edit" : "reference");
+    }
+    if (videos.length || firstFrameMode) payload.ratio = "adaptive";
+    if (req.taskType === "extend") payload.duration = req.duration;
+  }
+  // Mini supports an explicit first-frame ratio; 2.5 requires adaptive.
+  if (videos.length === 0 && (!firstFrameMode || !req.model.includes("seedance-2-5"))) {
     payload.ratio = req.ratio;
   }
   return payload;
@@ -429,4 +434,3 @@ export async function arkChat(opts: {
   }
   return text;
 }
-

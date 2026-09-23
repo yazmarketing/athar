@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildArkVideoPayload } from "@/lib/byteplus-server";
 
 const base = {
-  model: "seedance-2.5",
+  model: "seedance-2-5-260807",
   prompt: "a camel walks across a dune",
   ratio: "16:9",
   duration: 8,
@@ -22,6 +22,17 @@ function content(payload: Record<string, unknown>): ContentItem[] {
 }
 
 describe("buildArkVideoPayload", () => {
+  it("sends distinct reference, edit and extension operations to the provider", () => {
+    const source = { ...base, videoUrls: ["https://cdn/source.mp4"] };
+    expect(buildArkVideoPayload({ ...source, taskType: "edit" })).toMatchObject({ omni_reference_task_type: "edit", duration: -1, ratio: "adaptive" });
+    expect(buildArkVideoPayload({ ...source, taskType: "extend", duration: 12 })).toMatchObject({ omni_reference_task_type: "extend", duration: 12, ratio: "adaptive" });
+    expect(buildArkVideoPayload({ ...base, referenceVideoUrls: source.videoUrls, taskType: "reference" })).toMatchObject({ omni_reference_task_type: "reference", duration: 8, ratio: "16:9" });
+  });
+  it("keeps Mini's supported first-frame ratio without sending a 2.5-only task field", () => {
+    const payload = buildArkVideoPayload({ ...base, model: "dreamina-seedance-2-0-mini-260615", imageUrls: ["https://cdn/image.png"], ratio: "21:9", generateAudio: false });
+    expect(payload).toMatchObject({ ratio: "21:9", generate_audio: false });
+    expect(payload.omni_reference_task_type).toBeUndefined();
+  });
   it("text-to-video sends ratio and fixed duration", () => {
     const p = buildArkVideoPayload(base);
     expect(p.ratio).toBe("16:9");
@@ -72,7 +83,7 @@ describe("buildArkVideoPayload", () => {
       referenceVideoUrls: ["https://cdn.example.com/style.mp4"],
     });
     expect(p.duration).toBe(-1);
-    expect(p.ratio).toBeUndefined();
+    expect(p.ratio).toBe("adaptive");
     expect(p.output_format).toBe("mov");
     expect(content(p).filter((c) => c.type === "video_url")).toHaveLength(2);
   });
@@ -86,15 +97,15 @@ describe("buildArkVideoPayload", () => {
     expect(buildArkVideoPayload(base).output_format).toBeUndefined();
   });
 
-  it("a single plain image becomes the first frame and drops ratio", () => {
+  it("a single plain image becomes the first frame and inherits its ratio", () => {
     const p = buildArkVideoPayload({
       ...base,
       imageUrls: ["https://cdn.example.com/a.png"],
     });
     const img = content(p).find((c) => c.type === "image_url");
     expect(img?.role).toBe("first_frame");
-    // ModelArk rejects ratio in first-frame mode
-    expect(p.ratio).toBeUndefined();
+    // Seedance 2.5 requires adaptive ratio in first-frame mode
+    expect(p.ratio).toBe("adaptive");
   });
 
   it("tells the model to hold the reference image's subject in first-frame mode", () => {
@@ -176,7 +187,7 @@ describe("buildArkVideoPayload", () => {
       videoUrls: ["https://x/clip.mp4"],
     });
     expect(p.duration).toBe(-1);
-    expect(p.ratio).toBeUndefined();
+    expect(p.ratio).toBe("adaptive");
     const video = content(p).find((c) => c.type === "video_url");
     expect(video?.role).toBe("reference_video");
     const img = content(p).find((c) => c.type === "image_url");

@@ -718,6 +718,13 @@ export const IMAGE_MODEL_CHOICES: ImageModelChoice[] = [
   },
 ];
 
+/** Shared recommendation catalog; routes may export only Next.js route fields. */
+export const IMAGE_MODELS = IMAGE_MODEL_CHOICES.map((model) => ({
+  id: model.id,
+  label: model.label,
+  bestFor: model.bestFor,
+}));
+
 export const DEFAULT_IMAGE_MODEL_ID = "standard";
 
 export function imageModelChoice(id: string | null | undefined) {
@@ -845,6 +852,19 @@ export function resolveModel(capability: Capability, tier: Tier): ModelEndpoint 
 /** Ordered fallback chain (excluding the primary) for a capability. */
 export function resolveFallbacks(capability: Capability): ModelEndpoint[] {
   return MODEL_REGISTRY[capability].fallbacks;
+}
+
+/** Video picker options without duplicate provider endpoints. */
+export function listVideoModelOptions(
+  capability: "t2v" | "i2v" | "v2v" = "t2v"
+) {
+  const seen = new Set<string>();
+  return listModelOptions(capability).filter((option) => {
+    const key = `${option.provider}:${option.slug}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** UI options for picking a model (maps 1:1 to tier today). */

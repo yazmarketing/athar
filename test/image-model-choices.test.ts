@@ -9,8 +9,8 @@ import {
   imageModelRequest,
   GOOGLE_IMAGE_MODELS,
   OPENAI_IMAGE_MODELS,
+  IMAGE_MODELS,
 } from "@/config/models";
-import { IMAGE_MODELS } from "@/app/api/recommend-model/route";
 
 describe("the image-model list", () => {
   it("has unique ids and a valid default", () => {

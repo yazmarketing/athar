@@ -35,7 +35,15 @@ export async function GET(req: NextRequest) {
     if (clientId && !UUID_RE.test(clientId)) {
       return NextResponse.json({ error: "Invalid clientId" }, { status: 400 });
     }
-    const mineOnly = qs.get("createdBy") === "me";
+    // "me" or a specific teammate's user id — the Library's owner filter
+    // covers both ("Mine only" vs. picking one person by name).
+    const createdByParam = qs.get("createdBy");
+    const createdByUserId =
+      createdByParam === "me"
+        ? sessionUser.id
+        : createdByParam && UUID_RE.test(createdByParam)
+          ? createdByParam
+          : null;
     const sortOldest = qs.get("sort") === "oldest";
     const type = qs.get("type");
     const favoritesOnly =
@@ -68,8 +76,8 @@ export async function GET(req: NextRequest) {
         `(g.project_id in (select id from projects where client_id = $${values.length}) or g.project_id is null)`
       );
     }
-    if (mineOnly) {
-      values.push(sessionUser.id);
+    if (createdByUserId) {
+      values.push(createdByUserId);
       where.push(`g.user_id = $${values.length}`);
     }
     if (favoritesOnly) {

@@ -6,22 +6,10 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
- * Local mirror of the server's `users.onboarded_at`. It exists purely so a
- * returning user never sees a flash of the tour while the check is in flight —
- * the DB row is the source of truth. Bumping the suffix re-runs onboarding for
- * everyone, which is the intended way to reintroduce it after a significant UI
- * change (clear `users.onboarded_at` alongside it to replay it team-wide).
+ * Legacy local completion mirror. The server's users.onboarded_at is the
+ * source of truth for deciding whether to show the signed-in person a tour.
  */
 const TOUR_STORAGE_KEY = "athar-onboarding-completed-v3";
-
-/** Read the local mirror. Never throws — private mode has no storage. */
-function readLocalTourCompleted(): boolean {
-  try {
-    return Boolean(localStorage.getItem(TOUR_STORAGE_KEY));
-  } catch {
-    return false;
-  }
-}
 
 function writeLocalTourCompleted(done: boolean) {
   try {
@@ -35,13 +23,11 @@ function writeLocalTourCompleted(done: boolean) {
 /**
  * Should the walkthrough run for this sign-in?
  *
- * The local mirror short-circuits the common case. Otherwise ask the server:
- * a new browser, a private window or cleared storage must NOT replay a tour
- * the person already finished. A failed request answers "don't run it" —
- * showing the tour again is the worse failure.
+ * Ask the server for the signed-in person's completion. A browser-wide local
+ * flag can belong to a previous teammate on a shared computer. A failed
+ * request leaves the manual tour available without interrupting creation.
  */
 export async function shouldRunTour(): Promise<boolean> {
-  if (readLocalTourCompleted()) return false;
   try {
     const res = await fetch("/api/me/onboarding", { cache: "no-store" });
     if (!res.ok) return false;

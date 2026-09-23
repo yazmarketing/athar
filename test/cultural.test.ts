@@ -3,76 +3,53 @@ import { culturalGuidance } from "@/config/cultural";
 import { buildPrompt } from "@/lib/prompt";
 
 describe("culturalGuidance", () => {
-  it("stays out of prompts with no Gulf subject", () => {
-    expect(culturalGuidance("a wide shot of a desert at dawn")).toBeNull();
-    expect(culturalGuidance("a woman in a Paris cafe")).toBeNull();
+  it("leaves unrelated subjects alone", () => {
+    for (const prompt of ["desert at dawn", "a woman in a Paris cafe", "Roman architecture"]) {
+      expect(culturalGuidance(prompt)).toBeNull();
+    }
   });
 
-  it("describes the abaya and shayla as constructions, not labels", () => {
-    const g = culturalGuidance("an Emirati woman in a modern office")!;
-    expect(g.positive).toMatch(/abaya/);
-    expect(g.positive).toMatch(/drapes rather than hangs shapeless/);
-    expect(g.positive).toMatch(/shayla/);
-    expect(g.positive).toMatch(/away from the face/);
+  it.each([
+    ["Emirati", "United Arab Emirates"], ["Saudi", "Saudi Arabia"],
+    ["Qatari", "Qatar"], ["Kuwaiti", "Kuwait"],
+    ["Bahraini", "Bahrain"], ["Omani", "Oman"],
+    ["امرأة سعودية", "Saudi Arabia"],
+  ])("keeps %s context specific", (subject, country) => {
+    const g = culturalGuidance(`${subject} cyclist in sportswear`)!;
+    expect(g.positive).toContain(country);
+    if (country !== "United Arab Emirates") expect(g.positive).not.toContain("United Arab Emirates");
+    expect(g.positive).not.toMatch(/she wears|he wears|white kandura|black abaya/);
+    expect(g.negative).toBe("");
   });
 
-  it("bans what the model would otherwise draw instead", () => {
-    const g = culturalGuidance("an Emirati woman walking through a majlis")!;
-    expect(g.negative).toContain("chador");
-    expect(g.negative).toContain("south asian features");
-    expect(g.negative).toContain("tightly wrapped hijab pinned under the chin");
-    expect(g.negative).toContain("niqab");
+  it("preserves explicit clothing, place, time and creative direction", () => {
+    const prompt = "An Emirati woman in a red suit, uncovered hair, in 1920s Paris, painted in gouache";
+    const { finalPrompt } = buildPrompt({ subject: prompt });
+    expect(finalPrompt).toContain(prompt);
+    expect(finalPrompt).toContain("Preserve the requested place, era, clothing");
+    expect(finalPrompt).not.toMatch(/modern Emirati setting|high-specification|shayla|abaya/);
   });
 
-  it("leaves a face covering alone when it was asked for", () => {
-    const g = culturalGuidance("an elderly Emirati woman wearing a niqab")!;
-    expect(g.negative).not.toContain("niqab");
-    expect(g.negative).toContain("chador");
+  it("does not infer a country from a shared garment or unspecified Gulf context", () => {
+    expect(culturalGuidance("woman in an abaya")!.positive).toContain("garment name alone");
+    const regional = culturalGuidance("a Khaleeji family at home")!;
+    expect(regional.positive).toContain("without a specific country");
+    expect(regional.positive).not.toContain("Emirati");
   });
 
-  it("does not put a second person in the frame", () => {
-    const man = culturalGuidance("an Emirati man at a desk")!;
-    expect(man.positive).toMatch(/kandura/);
-    expect(man.positive).not.toMatch(/abaya/);
-
-    const woman = culturalGuidance("an Emirati woman at a desk")!;
-    expect(woman.positive).toMatch(/abaya/);
-    expect(woman.positive).not.toMatch(/kandura/);
+  it("does not merge national traditions, add people or dress children", () => {
+    const g = culturalGuidance("an Omani father and Emirati daughter at a museum")!;
+    expect(g.positive).toContain("Oman");
+    expect(g.positive).toContain("United Arab Emirates");
+    expect(g.positive).toContain("keep regional traditions distinct");
+    expect(g.positive).toContain("without adding unrequested garments or people");
   });
 
-  it("dresses children as children", () => {
-    const boy = culturalGuidance("an Emirati boy running through a farm")!;
-    expect(boy.positive).toMatch(/without the ghutra and agal/);
-    const girl = culturalGuidance("an Emirati girl planting a seed")!;
-    expect(girl.positive).toMatch(/uncovered as is normal/);
-  });
-
-  it("covers both when the prompt names neither", () => {
-    const g = culturalGuidance("an Emirati family at home")!;
-    expect(g.positive).toMatch(/abaya/);
-    expect(g.positive).toMatch(/kandura/);
-  });
-
-  it("fires on the garment alone, without a nationality", () => {
-    expect(culturalGuidance("a woman in an abaya crossing a courtyard")).not.toBeNull();
-  });
-});
-
-describe("buildPrompt applies it on every path", () => {
-  it("adds guidance and negatives to an ordinary dock prompt", () => {
-    const { finalPrompt, negativePrompt } = buildPrompt({
-      subject: "an Emirati woman presenting to a boardroom",
-    });
-    expect(finalPrompt).toMatch(/Culturally accurate/);
-    expect(finalPrompt).toMatch(/shayla/);
-    expect(negativePrompt).toContain("chador");
-  });
-
-  it("leaves unrelated prompts exactly as they were", () => {
-    const { finalPrompt, negativePrompt } = buildPrompt({
-      subject: "a red sports car on a wet road",
-    });
-    expect(finalPrompt).not.toMatch(/Culturally accurate/);
-    expect(negativePrompt).not.toContain("chador");
+  it("respects coverings and excludes no ethnic appearance", () => {
+    const g = culturalGuidance("Saudi woman wearing a niqab")!;
+    expect(g.positive).toContain("face coverings");
+    expect(g.positive).toContain("Nationality does not prescribe a face");
+    expect(g.negative).toBe("");
+    expect(g.positive).not.toMatch(/not South Asian|Levantine|North African/);
   });
 });

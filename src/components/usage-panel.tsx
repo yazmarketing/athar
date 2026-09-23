@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  ArrowLeft,
   ChevronRight,
   ClipboardCopy,
   Download,
@@ -17,12 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { friendlyModelName } from "@/config/models";
@@ -181,7 +176,7 @@ export function UsagePanel({
   const [feedbackBusy, setFeedbackBusy] = useState(false);
   const [feedbackPreview, setFeedbackPreview] = useState("");
   // A user id (or the "unassigned" bucket) whose drill-down is open — see
-  // UserAuditDialog. Null closes it.
+  // UserAuditView. Null shows the normal dashboard.
   const [userDrillId, setUserDrillId] = useState<string | null>(null);
 
   async function fetchFeedback(): Promise<string> {
@@ -328,6 +323,16 @@ export function UsagePanel({
       cancelled = true;
     };
   }, [rangeKind, month, date]);
+
+  if (userDrillId) {
+    return (
+      <UserAuditView
+        id={userDrillId}
+        onBack={() => setUserDrillId(null)}
+        onOpenItem={onOpenItem}
+      />
+    );
+  }
 
   if (!data) {
     return (
@@ -479,6 +484,7 @@ export function UsagePanel({
         />
         <BreakdownTable
           title="By project"
+          subtitle="Work not tagged to a project lands in “No project” — set a project in the composer to track it here."
           rows={data.byProject.map((r) => ({
             label: r.label ?? "—",
             cost: r.cost,
@@ -486,13 +492,6 @@ export function UsagePanel({
           }))}
         />
       </div>
-
-      <UserAuditDialog
-        id={userDrillId}
-        open={userDrillId != null}
-        onOpenChange={(o) => !o && setUserDrillId(null)}
-        onOpenItem={onOpenItem}
-      />
 
       {/* Generation feedback — the thing we actually change the pipeline on */}
       <section>
@@ -829,10 +828,12 @@ function StatCard({
 
 function BreakdownTable({
   title,
+  subtitle,
   rows,
   onRowClick,
 }: {
   title: string;
+  subtitle?: string;
   rows: { label: string; cost: number; count: number; id?: string }[];
   /** When set, rows with an `id` open the per-person drill-down on click. */
   onRowClick?: (id: string) => void;
@@ -840,7 +841,12 @@ function BreakdownTable({
   const max = Math.max(...rows.map((r) => r.cost), 0.0001);
   return (
     <section>
-      <h3 className="mb-3 text-sm font-medium">{title}</h3>
+      <h3 className={cn("text-sm font-medium", subtitle ? "mb-0.5" : "mb-3")}>
+        {title}
+      </h3>
+      {subtitle && (
+        <p className="mb-2.5 text-[11px] text-muted-foreground">{subtitle}</p>
+      )}
       {rows.length === 0 ? (
         <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
           No data yet
@@ -919,22 +925,24 @@ type UserAuditData = {
  * project, and the individual renders worth pointing at. The "By user" table
  * only has a total — this is the audit trail behind it, for the actual
  * "you're spending a lot on X for Y, was that necessary?" conversation.
+ *
+ * Renders as its own view inside the Usage page (a back arrow to the
+ * overview), not a popup — a modal over a whole breakdown-plus-two-lists
+ * dashboard was cramped, and the thumbnails inside it are worth room to
+ * actually look at.
  */
-function UserAuditDialog({
+function UserAuditView({
   id,
-  open,
-  onOpenChange,
+  onBack,
   onOpenItem,
 }: {
-  id: string | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  id: string;
+  onBack: () => void;
   onOpenItem?: (item: { kind: "generation" | "transcript" | "tts"; id: string }) => void;
 }) {
   const [data, setData] = useState<UserAuditData | null>(null);
 
   useEffect(() => {
-    if (!id) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -955,89 +963,85 @@ function UserAuditDialog({
     };
   }, [id]);
 
-  const loading = id != null && data?.forId !== id;
+  const loading = data?.forId !== id;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className={cn(
-          // The base dialog's `sm:max-w-sm` is a responsive variant — a bare
-          // `max-w-none` doesn't win against it at sm+ (twMerge tracks each
-          // breakpoint separately), so this was silently pinned to 24rem
-          // regardless of the width set here, forcing the whole dialog to
-          // scroll horizontally instead of laying out normally.
-          "w-[min(42rem,calc(100vw-2rem))] sm:max-w-[min(42rem,calc(100vw-2rem))]",
-          "border-white/10 bg-[#161616] text-foreground ring-white/10"
-        )}
+    <div className="space-y-6 pb-10">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground"
       >
-        <DialogHeader>
-          <DialogTitle className="truncate pr-8">{data?.label ?? "Loading…"}</DialogTitle>
-        </DialogHeader>
+        <ArrowLeft className="size-4" />
+        Usage
+      </button>
 
-        {loading ? (
-          <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" />
-            Loading…
+      <h2 className="athar-headline truncate">{data?.label ?? "Loading…"}</h2>
+
+      {loading ? (
+        <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" />
+          Loading…
+        </div>
+      ) : data ? (
+        <div className="space-y-6">
+          <div className="grid gap-6 sm:grid-cols-2">
+            <BreakdownTable
+              title="By model"
+              rows={data.byModel.map((r) => ({
+                label: friendlyModelName(r.label),
+                cost: r.cost,
+                count: r.count,
+              }))}
+            />
+            <BreakdownTable
+              title="By project"
+              subtitle="Work not tagged to a project lands in “No project.”"
+              rows={data.byProject.map((r) => ({
+                label: r.label,
+                cost: r.cost,
+                count: r.count,
+              }))}
+            />
           </div>
-        ) : data ? (
-          <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-1">
-            <div className="grid gap-6 sm:grid-cols-2">
-              <BreakdownTable
-                title="By model"
-                rows={data.byModel.map((r) => ({
-                  label: friendlyModelName(r.label),
-                  cost: r.cost,
-                  count: r.count,
-                }))}
-              />
-              <BreakdownTable
-                title="By project"
-                rows={data.byProject.map((r) => ({
-                  label: r.label,
-                  cost: r.cost,
-                  count: r.count,
-                }))}
-              />
-            </div>
 
-            <section>
-              <h3 className="mb-3 text-sm font-medium">
-                Priciest renders — what to point at
-              </h3>
-              {data.recent.length === 0 ? (
-                <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
-                  No data yet
-                </p>
-              ) : (
-                <div className="space-y-1.5">
-                  {data.recent.map((item) => (
-                    <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
-                  ))}
-                </div>
-              )}
-            </section>
+          <section>
+            <h3 className="mb-3 text-sm font-medium">
+              Priciest renders — what to point at
+            </h3>
+            {data.recent.length === 0 ? (
+              <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
+                No data yet
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {data.recent.map((item) => (
+                  <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
+                ))}
+              </div>
+            )}
+          </section>
 
-            <section>
-              <h3 className="mb-3 text-sm font-medium">
-                All generations — {data.all.length}
-                {data.all.length >= 300 ? "+" : ""}
-              </h3>
-              {data.all.length === 0 ? (
-                <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
-                  No data yet
-                </p>
-              ) : (
-                <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
-                  {data.all.map((item) => (
-                    <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
-                  ))}
-                </div>
-              )}
-            </section>
-          </div>
-        ) : null}
-      </DialogContent>
-    </Dialog>
+          <section>
+            <h3 className="mb-3 text-sm font-medium">
+              All generations — {data.all.length}
+              {data.all.length >= 300 ? "+" : ""}
+            </h3>
+            {data.all.length === 0 ? (
+              <p className="rounded-2xl bg-card px-4 py-5 text-xs text-muted-foreground ring-1 ring-border">
+                No data yet
+              </p>
+            ) : (
+              <div className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                {data.all.map((item) => (
+                  <UserAuditItemRow key={item.id} item={item} onOpenItem={onOpenItem} />
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1052,16 +1056,35 @@ function UserAuditItemRow({
   const badge =
     item.kind === "transcript" ? "AUDIO" : item.kind === "tts" ? "VOICE" : item.type.toUpperCase();
   const clickable = Boolean(onOpenItem);
+  // A video generation's thumb is an .mp4 URL — a plain <img> can't paint
+  // that, it just silently fails. `type` is the row's mode ("t2v"/"i2v"/"v2v")
+  // for generation rows, same as the Library's own isVideo() check.
+  const isVideoThumb =
+    item.kind === "generation" &&
+    (item.type === "t2v" || item.type === "i2v" || item.type === "v2v");
 
   const content = (
     <>
       {item.thumb ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={item.thumb}
-          alt=""
-          className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
-        />
+        isVideoThumb ? (
+          // A plain <img> can't paint an .mp4 URL — the same "seek just past
+          // the start" trick VideoThumb uses, sized for this tiny avatar
+          // slot instead of a 16:9 tile.
+          <video
+            src={`${item.thumb}#t=0.1`}
+            className="size-9 shrink-0 rounded-md bg-black object-cover ring-1 ring-white/10"
+            muted
+            playsInline
+            preload="metadata"
+          />
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={item.thumb}
+            alt=""
+            className="size-9 shrink-0 rounded-md object-cover ring-1 ring-white/10"
+          />
+        )
       ) : (
         <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-white/5 text-[10px] text-muted-foreground ring-1 ring-white/10">
           {badge}

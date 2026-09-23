@@ -51,6 +51,8 @@ type Props = {
    * can be called more than once to build up a multi-reference set.
    */
   onAddReferenceVideo?: (g: GenerationRecord) => void;
+  /** An edit source is already attached in Create — reference videos are for a fresh generation, not an edit, so the two are mutually exclusive. */
+  hasEditSource?: boolean;
   /** Open the video generation this clip was edited/extended from */
   onOpenSourceVideo?: (generationId: string) => void;
   projects?: ProjectRecord[];
@@ -94,6 +96,7 @@ export function VideoDetail({
   onOpenSource,
   onEditVideo,
   onAddReferenceVideo,
+  hasEditSource,
   onOpenSourceVideo,
   projects = [],
   clients = [],
@@ -499,7 +502,7 @@ export function VideoDetail({
                 <Chip>{modelLabel}</Chip>
                 <Chip className="capitalize">{g.tier}</Chip>
                 <Chip className="uppercase">{g.mode}</Chip>
-                {SHOW_COST && <Chip>${Number(g.cost).toFixed(3)}</Chip>}
+                {SHOW_COST && <Chip>{g.cost == null ? "Cost pending" : `$${Number(g.cost).toFixed(3)}`}</Chip>}
               </div>
               {onMoveToProject && (
                 <div className="mt-3">
@@ -569,9 +572,14 @@ export function VideoDetail({
               {onAddReferenceVideo && videoUrl && (
                 <Button
                   variant="outline"
-                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent"
+                  className="h-11 w-full justify-start gap-2 rounded-xl border-white/10 bg-transparent disabled:opacity-40"
+                  disabled={hasEditSource}
                   onClick={() => onAddReferenceVideo(g)}
-                  title="Subject, motion or style reference for a fresh generation — not an edit source"
+                  title={
+                    hasEditSource
+                      ? "Remove the attached edit source in Create first — reference videos are for a fresh generation, not an edit"
+                      : "Subject, motion or style reference for a fresh generation — not an edit source"
+                  }
                 >
                   <Film className="size-4" />
                   Add as reference

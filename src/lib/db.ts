@@ -6,13 +6,16 @@ import { Pool, types } from "pg";
 types.setTypeParser(types.builtins.NUMERIC, parseFloat);
 types.setTypeParser(types.builtins.INT8, Number);
 
-let pool: Pool | null = null;
+// Next development reloads server modules. Retain the pool across reloads
+// rather than opening another five connections for each changed module.
+const poolState = globalThis as typeof globalThis & { atharDatabasePool?: Pool };
 
 /**
  * Lazily-created connection pool for DigitalOcean Managed Postgres.
  * Server-only — never import from client code.
  */
 export function db(): Pool {
+  let pool = poolState.atharDatabasePool;
   if (!pool) {
     const raw = process.env.DATABASE_URL;
     if (!raw) {
@@ -36,6 +39,7 @@ export function db(): Pool {
       connectionTimeoutMillis: 10_000,
       query_timeout: 30_000,
     });
+    poolState.atharDatabasePool = pool;
     // Idle clients: DO drops them; without a listener Node kills the process
     // (exit 128, no stack).
     pool.on("error", (err) => {

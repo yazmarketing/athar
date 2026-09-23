@@ -1,0 +1,189 @@
+/* Athar native After Effects bridge. ROOT is supplied by the authenticated download. */
+(function () {
+  var ROOT = "__ATHAR_WORKSPACE_ROOT__";
+  if (!ROOT || ROOT.indexOf("__ATHAR_") === 0) { alert("Open Athar Motion Design, prepare the bridge, then run Athar-After-Effects.jsx."); return; }
+  // ExtendScript has no JSON on some AE releases. Parse data without evaluating code.
+  function parse(s) {
+    var i=0;
+    function ws(){while (/\s/.test(s.charAt(i)) && i<s.length)i++;}
+    function value(){ws();var c=s.charAt(i),r,k,n;
+      if(c==='"'){i++;r='';while(i<s.length){c=s.charAt(i++);if(c==='"')return r;if(c==='\\'){c=s.charAt(i++);if(c==='u'){r+=String.fromCharCode(parseInt(s.substr(i,4),16));i+=4;}else {k={'"':'"','\\':'\\','/':'/','b':'\b','f':'\f','n':'\n','r':'\r','t':'\t'};if(k[c]===undefined)throw Error('Bad JSON escape');r+=k[c];}}else r+=c;}throw Error('Unterminated string');}
+      if(c==='['){i++;r=[];ws();if(s.charAt(i)===']'){i++;return r;}while(true){r.push(value());ws();c=s.charAt(i++);if(c===']')return r;if(c!==',')throw Error('Bad array');}}
+      if(c==='{'){i++;r={};ws();if(s.charAt(i)==='}'){i++;return r;}while(true){ws();if(s.charAt(i)!=='"')throw Error('Bad key');k=value();if(k==='__proto__'||k==='constructor'||k==='prototype')throw Error('Unsafe key');ws();if(s.charAt(i++)!==':')throw Error('Bad object');r[k]=value();ws();c=s.charAt(i++);if(c==='}')return r;if(c!==',')throw Error('Bad object');}}
+      n=s.substr(i).match(/^(true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/);if(!n)throw Error('Bad JSON');i+=n[0].length;if(n[0]==='true')return true;if(n[0]==='false')return false;if(n[0]==='null')return null;return Number(n[0]);
+    }var out=value();ws();if(i!==s.length)throw Error('Trailing JSON');return out;
+  }
+  function stringify(v){if(v===null||v===undefined)return 'null';if(typeof v==='string')return '"'+v.replace(/["\\\u0000-\u001f]/g,function(c){var n=c.charCodeAt(0).toString(16);return '\\u'+('0000'+n).slice(-4);})+'"';if(typeof v!=='object')return String(v);var a=[],k;if(v instanceof Array){for(k=0;k<v.length;k++)a.push(stringify(v[k]));return '['+a.join(',')+']';}for(k in v)if(v.hasOwnProperty(k))a.push(stringify(k)+':'+stringify(v[k]));return '{'+a.join(',')+'}';}
+  function read(file){file.encoding='UTF-8';if(!file.open('r'))throw Error('Cannot read '+file.name);var s=file.read();file.close();return parse(s);}
+  function write(file,data){var tmp=new File(file.fsName+'.tmp');tmp.encoding='UTF-8';if(!tmp.open('w'))throw Error('Enable Allow Scripts to Write Files and Access Network in After Effects settings.');tmp.write(stringify(data));tmp.close();if(file.exists)file.remove();if(!tmp.rename(file.name))throw Error('Cannot save bridge status');}
+  function inside(p){return typeof p==='string'&&p.indexOf(ROOT+'/projects/')===0&&p.indexOf('..')===-1;}
+  function rgb(hex){return [parseInt(hex.substr(1,2),16)/255,parseInt(hex.substr(3,2),16)/255,parseInt(hex.substr(5,2),16)/255];}
+  function compById(id){for(var i=1;i<=app.project.numItems;i++){var c=app.project.item(i);if(c.id===id&&c instanceof CompItem)return c;}throw Error('Composition is no longer open. Read the source again or rebuild.');}
+  function effects(layer,list){for(var i=0;i<list.length;i++){var e=list[i],fx;if(e.type==='blur'){fx=layer.property('ADBE Effect Parade').addProperty('ADBE Gaussian Blur 2');keyProperty(fx.property(1),e.amount,e.animation);fx.property(3).setValue(true);}else if(e.type==='glow'){fx=layer.property('ADBE Effect Parade').addProperty('ADBE Glo2');keyProperty(fx.property(4),e.amount,e.animation);}else if(e.type==='shadow'){fx=layer.property('ADBE Effect Parade').addProperty('ADBE Drop Shadow');keyProperty(fx.property(5),e.amount,e.animation);}else throw Error('Unsupported effect');}}
+  function required(group,name){var p=group.property(name);if(!p)throw Error("Native property unavailable: "+name);return p;}
+  function keyProperty(p,value,keys){
+    if(!p)throw Error("Native animation property unavailable for value "+stringify(value));
+    if(p.expressionEnabled)throw Error('This property has an expression. Disable it before editing.');
+    while(p.numKeys)p.removeKey(p.numKeys);if(value!==undefined)p.setValue(value);
+    var i,j,mode,interp,dim,ins,outs;
+    if(keys)for(i=0;i<keys.length;i++)p.setValueAtTime(keys[i].time,keys[i].value);
+    if(keys)for(i=0;i<keys.length;i++){
+      mode=keys[i].ease;interp=KeyframeInterpolationType.LINEAR;if(mode==='hold')interp=KeyframeInterpolationType.HOLD;else if(mode==='smooth')interp=KeyframeInterpolationType.BEZIER;
+      p.setInterpolationTypeAtKey(i+1,interp,interp);
+      if(p.isSpatial){p.setSpatialAutoBezierAtKey(i+1,false);var zero=[0,0];if(p.value.length===3)zero=[0,0,0];p.setSpatialTangentsAtKey(i+1,zero,zero);}
+      if(mode==='smooth'){dim=1;if(!p.isSpatial&&p.value instanceof Array)dim=p.value.length;ins=[];outs=[];for(j=0;j<dim;j++){ins.push(new KeyframeEase(0,keys[i].influenceIn||66));outs.push(new KeyframeEase(0,keys[i].influenceOut||66));}p.setTemporalEaseAtKey(i+1,ins,outs);}
+    }
+  }
+  function transforms(layer,data,fit){var names={position:'ADBE Position',scale:'ADBE Scale',rotation:'ADBE Rotate Z',opacity:'ADBE Opacity'},key,p,keys,i,v,t=layer.property('ADBE Transform Group');
+    function adjusted(value,k){var a=value;if(value instanceof Array)a=value.slice(0);if(k==='scale'&&fit){a[0]*=fit;a[1]*=fit;}if(a instanceof Array&&p.value.length===3&&a.length===2)a.push(p.value[2]);return a;}
+    for(key in names){if(!names.hasOwnProperty(key))continue;p=t.property(names[key]);keys=(data.animation||{})[key];if(data[key]===undefined&&(!keys||!keys.length))continue;if(p.dimensionsSeparated)throw Error('Join separated position dimensions before editing this layer.');var mapped=[];if(keys)for(i=0;i<keys.length;i++){v=parse(stringify(keys[i]));v.value=adjusted(v.value,key);mapped.push(v);}v=undefined;if(data[key]!==undefined)v=adjusted(data[key],key);keyProperty(p,v,mapped);}
+    if(data.threeD){var d=data.threeD,anim=d.animation||{};p=t.property('ADBE Position');p.dimensionsSeparated=true;keyProperty(p.getSeparationFollower(2),d.z,anim.z);keyProperty(required(t,'ADBE Rotate X'),d.rotationX,anim.rotationX);keyProperty(required(t,'ADBE Rotate Y'),d.rotationY,anim.rotationY);}
+  }
+  function vectorPath(d){var p=new Shape();p.vertices=d.vertices;p.closed=d.closed;var zeros=[],i;for(i=0;i<d.vertices.length;i++)zeros.push([0,0]);p.inTangents=d.inTangents||zeros;p.outTangents=d.outTangents||zeros;return p;}
+  function maskGeometry(data,mask,anchor){var geometry=parse(stringify(mask.path));if(mask.space==='text-box'||mask.space==='layer-box'){if(mask.space==='text-box'&&data.type!=='text')throw Error('Text-box masks require a text layer');if(data.type!=='text'&&data.type!=='rectangle'&&data.type!=='ellipse'&&data.type!=='path')throw Error('Layer-box masks require text or shape geometry');for(var i=0;i<geometry.vertices.length;i++){geometry.vertices[i][0]+=anchor[0]-data.width/2;geometry.vertices[i][1]+=anchor[1]-data.height/2;}}return geometry;}
+  function masks(layer,list,data){for(var i=0;i<list.length;i++){var d=list[i],m=layer.property('ADBE Mask Parade').addProperty('ADBE Mask Atom');m.name='Reveal '+(i+1);m.maskMode=MaskMode.ADD;if(d.mode==='subtract')m.maskMode=MaskMode.SUBTRACT;m.property('ADBE Mask Shape').setValue(vectorPath(maskGeometry(data,d,layer.property('ADBE Transform Group').property('ADBE Anchor Point').value)));m.property('ADBE Mask Feather').setValue([d.feather,d.feather]);keyProperty(m.property('ADBE Mask Offset'),d.expansion,(d.animation||{}).expansion);keyProperty(m.property('ADBE Mask Opacity'),d.opacity,(d.animation||{}).opacity);}}
+  function expandLayers(layers){var out=[],i,j,k,d,r,a,ch,key;
+    for(i=0;i<layers.length;i++){r=layers[i].repeat;var count=1;if(r)count=r.count;for(j=0;j<count;j++){d=parse(stringify(layers[i]));d.originId=layers[i].id;if(j){d.id+='__copy'+j;d.name+=' · '+(j+1);}delete d.repeat;
+      if(r){var factor=Math.pow(r.scale/100,j);if(!isFinite(factor)||factor>1000)throw Error('Repeat scale is too large');d.position[0]+=r.position[0]*j;d.position[1]+=r.position[1]*j;d.rotation+=r.rotation*j;d.scale[0]*=factor;d.scale[1]*=factor;d.start+=r.delay*j;d.end+=r.delay*j;
+        for(ch in d.animation)if(d.animation.hasOwnProperty(ch)){a=d.animation[ch];for(k=0;k<a.length;k++){a[k].time+=r.delay*j;if(ch==='position'){a[k].value[0]+=r.position[0]*j;a[k].value[1]+=r.position[1]*j;}if(ch==='scale'){a[k].value[0]*=factor;a[k].value[1]*=factor;}if(ch==='rotation')a[k].value+=r.rotation*j;}}
+        if(d.threeD){d.threeD.z+=r.position[2]*j;for(ch in d.threeD.animation)if(d.threeD.animation.hasOwnProperty(ch)){a=d.threeD.animation[ch];for(k=0;k<a.length;k++){a[k].time+=r.delay*j;if(ch==='z')a[k].value+=r.position[2]*j;}}}
+        if(d.effects)for(var ei=0;ei<d.effects.length;ei++){a=d.effects[ei].animation;if(a)for(k=0;k<a.length;k++)a[k].time+=r.delay*j;}
+        if(d.trim)for(ch in d.trim.animation)if(d.trim.animation.hasOwnProperty(ch)){a=d.trim.animation[ch];for(k=0;k<a.length;k++)a[k].time+=r.delay*j;}
+        if(d.masks)for(var mi=0;mi<d.masks.length;mi++)for(ch in d.masks[mi].animation)if(d.masks[mi].animation.hasOwnProperty(ch)){a=d.masks[mi].animation[ch];for(k=0;k<a.length;k++)a[k].time+=r.delay*j;}
+      }out.push(d);}
+    }return out;
+  }
+  function camera(comp,d){var l=comp.layers.addCamera('CAMERA · Creative direction',[comp.width/2,comp.height/2]),t=l.property('ADBE Transform Group'),o=l.property('ADBE Camera Options Group'),a=d.animation||{};keyProperty(t.property('ADBE Position'),d.position,a.position);keyProperty(required(t,'ADBE Anchor Point'),d.target,a.target);keyProperty(o.property('ADBE Camera Zoom'),d.zoom,a.zoom);o.property('ADBE Camera Depth of Field').setValue(d.depthOfField);keyProperty(o.property('ADBE Camera Focus Distance'),d.focusDistance,a.focusDistance);keyProperty(o.property('ADBE Camera Aperture'),d.aperture,a.aperture);}
+  function applySourceChanges(comp,changes){
+    for(var i=0;i<changes.length;i++){var d=changes[i],l=comp.layer(d.index);if(l.name!==d.name)throw Error('Reference layers changed. Refresh the study.');l.locked=false;l.enabled=d.enabled;
+      if(d.text!==undefined){var tp=l.property('ADBE Text Properties').property('ADBE Text Document');if(tp.numKeys||tp.expressionEnabled)throw Error('Keyed or expression-driven source text needs a dedicated native edit; it will not be overwritten.');var td=tp.value;td.text=d.text;tp.setValue(td);}
+      transforms(l,d,1);effects(l,d.effects||[]);
+    }
+  }
+  function addNativeModules(output,modules,allowed,createdItems){
+    for(var i=modules.length-1;i>=0;i--){var d=modules[i],snapshot=null;
+      for(var a=0;a<allowed.length;a++)if(allowed[a].id===d.compId&&allowed[a].name===d.sourceName)snapshot=allowed[a];
+      if(!snapshot)throw Error('Native module is not part of the captured reference');
+      var source=compById(d.compId);
+      if(source.name!==snapshot.name||source.numLayers!==snapshot.layers.length||source.width!==snapshot.width||source.height!==snapshot.height||Math.abs(source.duration-snapshot.duration)>0.001||Math.abs(source.frameRate-snapshot.fps)>0.001)throw Error('Reference composition changed. Refresh the study.');
+      for(var j=0;j<snapshot.layers.length;j++)if(source.layer(snapshot.layers[j].index).name!==snapshot.layers[j].name)throw Error('Reference layers changed. Refresh the study.');
+      // Duplicate the full local layer stack to preserve index/name expression
+      // links, parent chains and track mattes. Never mutate the referenced item.
+      var copy=source.duplicate();createdItems.push(copy);copy.name=d.name+' · Native reference';applySourceChanges(copy,d.changes||[]);
+      var layer=output.layers.add(copy);layer.name=d.name;layer.startTime=d.start-d.sourceOffset;layer.inPoint=d.start;layer.outPoint=d.end;
+      transforms(layer,d,1);if(d.masks)masks(layer,d.masks,{type:'media',width:source.width,height:source.height});
+    }
+  }
+  function build(cmd){var s=cmd.scene,c=null,l,d,i,j,asset,footage,shape,group,doc,rect,fit;app.beginUndoGroup('Athar motion design');
+    try {
+      var createdItems=[],designs=expandLayers(s.layers),built={},imported={},bi;
+      if(cmd.baseComp){var source=compById(cmd.baseComp.id);if(source.width!==s.width||source.height!==s.height||Math.abs(source.duration-s.duration)>0.001||Math.abs(source.frameRate-s.fps)>0.001)throw Error('Source composition settings changed. Read it again.');for(i=0;i<cmd.baseComp.layers.length;i++){d=cmd.baseComp.layers[i];if(source.numLayers<d.index||source.layer(d.index).name!==d.name)throw Error('Source layers changed. Read the composition again.');}c=source.duplicate();c.name=s.name+' · Athar';}
+      else {c=app.project.items.addComp(s.name,s.width,s.height,1,s.duration,s.fps);c.bgColor=rgb(s.background);if(!s.transparent){var bg=c.layers.addSolid(rgb(s.background),'Background',s.width,s.height,1,s.duration);createdItems.push(bg.source);bg.moveToEnd();}}
+      if(s.motionBlur){c.motionBlur=true;c.shutterAngle=s.motionBlur.shutterAngle;c.motionBlurSamplesPerFrame=s.motionBlur.samples;c.motionBlurAdaptiveSampleLimit=Math.max(16,s.motionBlur.samples);}
+      applySourceChanges(c,s.changes);
+      addNativeModules(c,s.nativeModules||[],cmd.referenceComps||[],createdItems);
+      for(i=designs.length-1;i>=0;i--){d=designs[i];fit=1;
+        if(d.type==='text'){l=c.layers.addText(d.text);doc=l.property('ADBE Text Properties').property('ADBE Text Document').value;doc.fontSize=d.fontSize;doc.fillColor=rgb(d.color);doc.applyFill=true;doc.applyStroke=false;doc.justification=ParagraphJustification.CENTER_JUSTIFY;if(d.font)doc.font=d.font;l.property('ADBE Text Properties').property('ADBE Text Document').setValue(doc);rect=l.sourceRectAtTime(0,false);l.property('ADBE Transform Group').property('ADBE Anchor Point').setValue([rect.left+rect.width/2,rect.top+rect.height/2]);}
+        else if(d.type==='null'){l=c.layers.addNull(s.duration);createdItems.push(l.source);l.property('ADBE Transform Group').property('ADBE Anchor Point').setValue([0,0]);}
+        else if(d.type==='rectangle'||d.type==='ellipse'||d.type==='path'){
+          l=c.layers.addShape();group=l.property('ADBE Root Vectors Group').addProperty('ADBE Vector Group').property('ADBE Vectors Group');
+          if(d.type==='path'){shape=group.addProperty('ADBE Vector Shape - Group');shape.property('ADBE Vector Shape').setValue(vectorPath(d.vector));}
+          else if(d.type==='rectangle'){shape=group.addProperty('ADBE Vector Shape - Rect');shape.property('ADBE Vector Rect Size').setValue([d.width,d.height]);}
+          else{shape=group.addProperty('ADBE Vector Shape - Ellipse');shape.property('ADBE Vector Ellipse Size').setValue([d.width,d.height]);}
+          if(!d.stroke||d.stroke.fill)group.addProperty('ADBE Vector Graphic - Fill').property('ADBE Vector Fill Color').setValue(rgb(d.color));
+          if(d.stroke){shape=group.addProperty('ADBE Vector Graphic - Stroke');shape.property('ADBE Vector Stroke Color').setValue(rgb(d.stroke.color));shape.property('ADBE Vector Stroke Width').setValue(d.stroke.width);}
+          if(d.trim){shape=group.addProperty('ADBE Vector Filter - Trim');keyProperty(shape.property('ADBE Vector Trim Start'),d.trim.start,d.trim.animation.start);keyProperty(shape.property('ADBE Vector Trim End'),d.trim.end,d.trim.animation.end);keyProperty(shape.property('ADBE Vector Trim Offset'),d.trim.offset,d.trim.animation.offset);}
+        }
+        else if(d.type==='media'){asset=null;for(j=0;j<cmd.assets.length;j++)if(cmd.assets[j].id===d.assetId)asset=cmd.assets[j];if(!asset||!inside(asset.path))throw Error('Asset unavailable');footage=imported['asset_'+asset.id];if(!footage){footage=app.project.importFile(new ImportOptions(new File(asset.path)));imported['asset_'+asset.id]=footage;createdItems.push(footage);}if(!footage.mainSource.isStill&&d.sourceOffset+d.end-d.start>footage.duration+1/s.fps)throw Error(asset.name+' is shorter than the requested section');l=c.layers.add(footage);l.startTime=d.start-d.sourceOffset;if(footage.width&&footage.height)fit=Math.min(d.width/footage.width,d.height/footage.height);}
+        else throw Error('Unsupported layer type');
+        l.name=d.name;l.inPoint=d.start;l.outPoint=Math.min(d.end,s.duration);if(d.threeD)l.threeDLayer=true;if(s.motionBlur)l.motionBlur=true;built[d.id]=l;var blend=BlendingMode.NORMAL;if(d.blend==='add')blend=BlendingMode.ADD;else if(d.blend==='screen')blend=BlendingMode.SCREEN;else if(d.blend==='multiply')blend=BlendingMode.MULTIPLY;l.blendingMode=blend;transforms(l,d,fit);effects(l,d.effects);if(d.masks)masks(l,d.masks,d);
+      }
+      for(bi=0;bi<designs.length;bi++){d=designs[bi];if(d.parentId)built[d.id].setParentWithJump(built[d.parentId]);}
+      if(s.precompositions)for(var gi=0;gi<s.precompositions.length;gi++){var section=s.precompositions[gi],indices=[];for(bi=0;bi<designs.length;bi++){d=designs[bi];for(var si=0;si<section.layerIds.length;si++)if(d.originId===section.layerIds[si]){indices.push(built[d.id].index);break;}}indices.sort(function(a,b){return a-b;});var nested=c.layers.precompose(indices,section.name,true);createdItems.push(nested);for(bi=1;bi<=c.numLayers;bi++)if(c.layer(bi).source===nested){c.layer(bi).collapseTransformation=section.collapse;break;}}
+      if(s.camera)camera(c,s.camera);
+      if(cmd.soundtrack){if(!inside(cmd.soundtrack))throw Error('Invalid soundtrack');footage=app.project.importFile(new ImportOptions(new File(cmd.soundtrack)));createdItems.push(footage);l=c.layers.add(footage);l.name='SOUND · Designed cues';l.moveToEnd();}
+      if(s.beats)for(bi=0;bi<s.beats.length;bi++){var beat=s.beats[bi];c.markerProperty.setValueAtTime(beat.time,new MarkerValue(beat.label+' — '+beat.direction));}
+      c.openInViewer();c.time=Math.min(s.duration/2,Math.max(0,s.duration-1/s.fps));app.project.save(new File(cmd.outputDir+'/project.aep'));return c;
+    }catch(err){var detail=String(err)+' · line '+err.line;if(d&&d.name)detail+=' · '+d.name;if(c)c.remove();for(var ci=createdItems.length-1;ci>=0;ci--)try{createdItems[ci].remove();}catch(ignore){}throw Error(detail);}finally{app.endUndoGroup();}
+  }
+  function render(cmd){var c=compById(cmd.compId),q=app.project.renderQueue,previous=[],item=null,i;
+    try{for(i=1;i<=q.numItems;i++)if(q.item(i).status===RQItemStatus.QUEUED){previous.push(q.item(i));q.item(i).render=false;}item=q.items.add(c);var om=item.outputModule(1);var template='Lossless';if(cmd.scene&&cmd.scene.transparent){template=null;var templates=om.templates;for(var ti=0;ti<templates.length;ti++)if(/^(Lossless|High Quality).*Alpha$/i.test(templates[ti])){template=templates[ti];break;}if(!template)throw Error('Install an After Effects output template named Lossless with Alpha or High Quality with Alpha to export this transparent master.');}om.applyTemplate(template);om=item.outputModule(1);om.setSettings({'Output Audio':'On'});om=item.outputModule(1);om.file=new File(cmd.outputDir+'/output.mov');app.project.save(new File(cmd.outputDir+'/project.aep'));q.render();if(item.status!==RQItemStatus.DONE)throw Error('Render was cancelled or failed');return c;}
+    finally{if(item)try{item.remove();}catch(ignore){}for(i=0;i<previous.length;i++)try{previous[i].render=true;}catch(ignore){}}
+  }
+  // Explicit source studies are read-only. Never render reference frames from a
+  // newly generated revision and label them as the original art direction.
+  function studyValue(v){
+    if(typeof v==='number')return isFinite(v)?v:null;
+    if(typeof v==='boolean')return v;
+    if(typeof v==='string')return v.substr(0,2000);
+    if(v instanceof Array){var a=[];for(var i=0;i<v.length&&i<256;i++)a.push(studyValue(v[i]));return a;}
+    if(v&&v.vertices)return {vertexCount:v.vertices.length,truncated:v.vertices.length>256,vertices:studyValue(v.vertices),inTangents:studyValue(v.inTangents),outTangents:studyValue(v.outTangents),closed:v.closed};
+    if(v&&typeof v.text==='string'){var d={text:v.text.substr(0,2000)};var fields=['font','fontSize','fillColor','strokeColor','applyFill','applyStroke','strokeWidth','tracking','leading','justification'];for(var j=0;j<fields.length;j++)try{d[fields[j]]=studyValue(v[fields[j]]);}catch(ignore){}return d;}
+    return null;
+  }
+  function studyProperties(group,time,duration,budget,depth){
+    var out=[];if(depth>20){budget.truncated=true;return out;}
+    for(var i=1;i<=group.numProperties;i++){
+      var p=group.property(i),d={name:p.name,matchName:p.matchName};
+      // Skip irrelevant default tracker/material/audio bookkeeping before it
+      // consumes the budget needed for real nested animation and artwork.
+      if(depth===0 && ('|ADBE Transform Group|ADBE Effect Parade|ADBE Root Vectors Group|ADBE Mask Parade|ADBE Text Properties|ADBE Time Remapping|ADBE Camera Options Group|ADBE Light Options Group|ADBE Layer Styles|').indexOf('|'+p.matchName+'|')<0)continue;
+      if(budget.left--<=0){budget.truncated=true;break;}
+      try{if(typeof p.enabled==='boolean')d.enabled=p.enabled;}catch(ignore){}
+      try{if(p.numProperties!==undefined){d.children=studyProperties(p,time,duration,budget,depth+1);}
+        else {d.value=studyValue(p.valueAtTime(time,false));d.expressionEnabled=!!p.expressionEnabled;if(d.expressionEnabled){d.expression=String(p.expression).substr(0,8000);if(String(p.expression).length>8000)budget.truncated=true;}
+          if(p.numKeys){d.keyCount=p.numKeys;d.keys=[];var count=Math.min(128,p.numKeys);if(p.numKeys>count)budget.truncated=true;
+            for(var k=0;k<count;k++){var index=count===1?1:1+Math.round(k*(p.numKeys-1)/(count-1));var key={time:p.keyTime(index),value:studyValue(p.keyValue(index))};
+              try{key.inInterpolation=String(p.keyInInterpolationType(index));key.outInterpolation=String(p.keyOutInterpolationType(index));var ins=p.keyInTemporalEase(index),outs=p.keyOutTemporalEase(index);key.inEase=[];key.outEase=[];for(var e=0;e<ins.length;e++)key.inEase.push({speed:ins[e].speed,influence:ins[e].influence});for(e=0;e<outs.length;e++)key.outEase.push({speed:outs[e].speed,influence:outs[e].influence});}catch(ignore){}
+              try{if(p.isSpatial){key.inSpatialTangent=studyValue(p.keyInSpatialTangent(index));key.outSpatialTangent=studyValue(p.keyOutSpatialTangent(index));key.roving=p.keyRoving(index);}}catch(ignore){}
+              d.keys.push(key);
+            }
+          }
+          if(d.expressionEnabled){d.samples=[];var fractions=[0,0.03,0.1,0.5,0.9];for(var q=0;q<fractions.length;q++){var at=duration*fractions[q];d.samples.push({time:at,value:studyValue(p.valueAtTime(at,false))});}}
+        }
+      }catch(ignore){d.unreadable=true;budget.unreadable=(budget.unreadable||0)+1;}
+      out.push(d);
+    }return out;
+  }
+  // The normal render pipeline avoids the false colours observed from
+  // saveFrameToPng on a real 32-bpc project. Restore all existing queue flags.
+  function renderStills(c,frames,directory,prefix){
+    var q=app.project.renderQueue,previous=[],items=[];
+    try {
+      for(var qi=1;qi<=q.numItems;qi++)if(q.item(qi).status===RQItemStatus.QUEUED){previous.push(q.item(qi));q.item(qi).render=false;}
+      for(var i=0;i<frames.length;i++){var item=q.items.add(c);items.push(item);item.timeSpanStart=frames[i].time;item.timeSpanDuration=1/c.frameRate;var om=item.outputModule(1);om.applyTemplate('Lossless');om.setSettings({'Output Audio':'Off'});om=item.outputModule(1);om.file=new File(directory+'/'+prefix+i+'.mov');}
+      q.render();for(var ri=0;ri<items.length;ri++)if(items[ri].status!==RQItemStatus.DONE)throw Error('Reference frame render failed or was cancelled');
+    }finally{for(var ii=items.length-1;ii>=0;ii--)try{items[ii].remove();}catch(ignore){}for(var pi=0;pi<previous.length;pi++)try{previous[pi].render=true;}catch(ignore){}}
+  }
+  function buildPreview(c,cmd){var times=cmd.previewTimes||[c.duration*0.1,c.duration*0.3,c.duration*0.5,c.duration*0.7,c.duration*0.9],frames=[];for(var i=0;i<times.length;i++)frames.push({time:Math.min(c.duration-1/c.frameRate,times[i])});frames.push({time:c.time});renderStills(c,frames,cmd.outputDir,'preview-');write(new File(cmd.outputDir+'/preview-times.json'),times);}
+  function inspectSource(cmd){
+    var c=compById(cmd.compId),comps=[],visited={},budget={left:24000,truncated:false};
+    function inspectComp(comp,depth){if(visited[comp.id])return;if(depth>8||comps.length>=64){budget.truncated=true;return;}visited[comp.id]=true;
+      var data={id:comp.id,name:comp.name,width:comp.width,height:comp.height,duration:comp.duration,fps:comp.frameRate,background:comp.bgColor,layers:[]};comps.push(data);
+      for(var i=1;i<=comp.numLayers&&i<=500;i++){
+        var l=comp.layer(i),d={index:i,name:l.name,enabled:l.enabled,start:l.inPoint,end:l.outPoint,startTime:l.startTime,stretch:l.stretch,threeD:l.threeDLayer,type:'media'};
+        try{d.parentIndex=l.parent?l.parent.index:null;d.id=l.id;d.trackMatteIndex=l.trackMatteLayer?l.trackMatteLayer.index:null;d.trackMatteType=String(l.trackMatteType);d.audioEnabled=l.audioEnabled;d.guideLayer=l.guideLayer;d.blend=String(l.blendingMode);d.motionBlur=l.motionBlur;d.collapse=l.collapseTransformation;d.adjustment=l.adjustmentLayer;}catch(ignore){}
+        try{if(l.nullLayer)d.type='null';else if(l instanceof ShapeLayer)d.type='shape';else if(l.property('ADBE Text Properties')){d.type='text';d.text=l.property('ADBE Text Properties').property('ADBE Text Document').value.text;}}catch(ignore){}
+        try{if(l.source){d.source={id:l.source.id,name:l.source.name,width:l.source.width,height:l.source.height,footageMissing:!!l.source.footageMissing};if(l.source instanceof CompItem)d.source.compId=l.source.id;else if(l.source.mainSource.color)d.source.solidColor=l.source.mainSource.color;}}catch(ignore){}
+        d.properties=studyProperties(l,Math.min(comp.time,comp.duration-1/comp.frameRate),comp.duration,budget,0);data.layers.push(d);
+      }
+      if(comp.numLayers>500)budget.truncated=true;
+      for(var j=1;j<=comp.numLayers&&j<=500;j++)try{if(comp.layer(j).source instanceof CompItem)inspectComp(comp.layer(j).source,depth+1);}catch(ignore){}
+    }
+    inspectComp(c,0);
+    var frames=[],fractions=[0,0.05,0.12,0.25,0.55,0.97],start=c.workAreaStart,duration=c.workAreaDuration;
+    for(var i=0;i<fractions.length;i++){var t=Math.max(0,Math.min(c.duration-1/c.frameRate,start+duration*fractions[i]));frames.push({time:Math.floor(t*c.frameRate)/c.frameRate});}
+    var full=[0.1,0.3,0.5,0.7,0.9,1];for(i=0;i<full.length;i++)frames.push({time:Math.floor(Math.min(c.duration-1/c.frameRate,c.duration*full[i])*c.frameRate)/c.frameRate});
+    renderStills(c,frames,cmd.outputDir,'source-');
+    write(new File(cmd.outputDir+'/study.json'),{version:2,coverage:{properties:24000-budget.left,unreadableProperties:budget.unreadable||0,compositions:comps.length,fullDuration:c.duration,includesExpressionCode:true},comp:comps[0],compositions:comps,frames:frames,truncated:budget.truncated,workArea:{start:start,duration:duration},colorContext:{bitsPerChannel:app.project.bitsPerChannel,workingSpace:app.project.workingSpace},limitations:['Frames are sampled stills, not full video playback.','Property and nested-composition inspection is bounded; external footage internals and third-party effect implementations are not available.','Existing expression source is supplied as untrusted reference data for analysis, never generated or executed by Astra. External project links and plugins require native verification.']});
+    return c;
+  }
+  var fonts=[];try{var all=app.fonts.allFonts;for(var a=0;a<all.length;a++)for(var b=0;b<all[a].length;b++)fonts.push(all[a][b].postScriptName);}catch(ignore){}
+  function heartbeat(){var c=app.project.activeItem,active=null;if(c instanceof CompItem){var layers=[];for(var i=1;i<=c.numLayers&&i<=500;i++){var l=c.layer(i),text=null;try{text=l.property('ADBE Text Properties').property('ADBE Text Document').value.text;}catch(ignore){}var transform={};try{var tg=l.property("ADBE Transform Group");transform={position:tg.property("ADBE Position").value,scale:tg.property("ADBE Scale").value,opacity:tg.property("ADBE Opacity").value,rotation:tg.property("ADBE Rotate Z").value};}catch(ignore){}var layerType='media';if(text!==null)layerType='text';else if(l instanceof ShapeLayer)layerType='shape';layers.push({start:l.inPoint,end:l.outPoint,threeD:l.threeDLayer,transform:transform,index:i,name:l.name,type:layerType,text:text,enabled:l.enabled});}active={id:c.id,name:c.name,width:c.width,height:c.height,duration:c.duration,fps:c.frameRate,layers:layers};}write(new File(ROOT+'/heartbeat.json'),{updatedAt:new Date().getTime(),version:app.version,capabilities:6,activeComp:active,fonts:fonts});}
+  if($.global.__atharMotionStop)$.global.__atharMotionStop();
+  var running=false,task=null;var panel=new Window('palette','Athar · After Effects',undefined,{resizeable:true});panel.orientation='column';panel.alignChildren='fill';panel.add('statictext',undefined,'Native motion design · This Mac');var status=panel.add('statictext',undefined,'Ready to connect',{multiline:true});status.preferredSize=[380,60];var button=panel.add('button',undefined,'Connect Athar');
+  function stop(){running=false;if(task)app.cancelTask(task);task=null;button.text='Connect Athar';status.text='Disconnected';try{var f=new File(ROOT+'/heartbeat.json');if(f.exists)f.remove();}catch(ignore){}}
+  $.global.__atharMotionStop=function(){stop();panel.close();};
+  $.global.__atharMotionTick=function(){if(!running)return;try{heartbeat();var inbox=new Folder(ROOT+'/inbox');var files=inbox.exists?inbox.getFiles('*.json'):[];files.sort(function(a,b){return a.modified-b.modified;});if(files.length){var file=files[0],cmd=read(file);if(!inside(cmd.outputDir)||!new Folder(cmd.outputDir).exists)throw Error('Invalid command output');if(!file.rename(file.name+'.working'))throw Error('Cannot claim command');try{if(new Date().getTime()-cmd.createdAt>120000)throw Error('Command expired. Retry in Athar.');write(new File(cmd.outputDir+'/started.json'),{at:new Date().getTime()});status.text=cmd.kind==='inspect'?'Studying source frames and animation…':cmd.kind==='render'?'Rendering in After Effects…':'Building editable layers…';panel.update();var c=null,previewError=null;if(cmd.kind==='build'){c=build(cmd);try{buildPreview(c,cmd);}catch(previewFailure){previewError=String(previewFailure);}}else if(cmd.kind==='render'){c=render(cmd);}else if(cmd.kind==='inspect'){c=inspectSource(cmd);}if(!c)throw Error('Unknown operation');write(new File(cmd.outputDir+'/result.json'),{ok:true,compId:c.id,previewError:previewError});status.text='Connected · Last operation completed';}catch(err){write(new File(cmd.outputDir+'/result.json'),{ok:false,error:String(err)});status.text=String(err);}file.remove();heartbeat();}else status.text='Connected · Waiting for Athar';}catch(err){status.text=String(err);stop();status.text=String(err);}if(running)task=app.scheduleTask('$.global.__atharMotionTick()',1500,false);};
+  button.onClick=function(){if(running){stop();return;}try{new Folder(ROOT).create();new Folder(ROOT+'/inbox').create();running=true;button.text='Disconnect';$.global.__atharMotionTick();}catch(err){stop();status.text=String(err);}};panel.onClose=stop;panel.defaultElement=button;panel.show();button.onClick();
+})();

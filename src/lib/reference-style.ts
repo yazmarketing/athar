@@ -1,6 +1,6 @@
 import "server-only";
 
-import { openaiModel } from "@/lib/openai-server";
+import { openaiChat, type OpenAIContent } from "@/lib/openai-server";
 import type { ReferenceStyleFingerprint } from "@/lib/types";
 
 /**
@@ -17,7 +17,6 @@ import type { ReferenceStyleFingerprint } from "@/lib/types";
  * same words, same look.
  */
 
-const OPENAI_BASE = "https://api.openai.com/v1";
 
 /** Longest style brief we will carry into an image prompt. */
 const BRIEF_MAX = 900;
@@ -100,46 +99,19 @@ export async function analyzeReferenceStyle(
   const urls = imageUrls.map((u) => u.trim()).filter(Boolean);
   if (urls.length === 0) throw new Error("No reference images to analyze");
 
-  const content: unknown[] = [
+  const content: OpenAIContent[] = [
     {
       type: "text",
       text: `Analyze the shared visual style of these ${urls.length} reference image(s):`,
     },
-    ...urls.map((url) => ({ type: "image_url", image_url: { url } })),
+    ...urls.map((url): OpenAIContent => ({ type: "image_url", image_url: { url } })),
   ];
 
-  const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: openaiModel(),
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content },
-      ],
-      max_completion_tokens: 700,
-      response_format: { type: "json_object" },
-    }),
+  const raw = await openaiChat({
+    messages: [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content }],
+    maxTokens: 1200,
+    json: true,
   });
-
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? "";
-    } catch {
-      detail = await res.text().catch(() => "");
-    }
-    throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const raw = json.choices?.[0]?.message?.content?.trim() ?? "{}";
   const fingerprint = coerceStyleFingerprint(JSON.parse(raw), urls);
   if (!fingerprint) {
     throw new Error("Style analysis came back empty — try re-analyzing");

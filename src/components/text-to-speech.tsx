@@ -6,6 +6,7 @@ import {
   BookOpen,
   Briefcase,
   Clapperboard,
+  ChevronDown,
   Clock,
   Download,
   Headphones,
@@ -262,7 +263,11 @@ export function TextToSpeech({
         ? "Pick a voice for every speaker"
         : overLimit
           ? `Over the ${MAX_TTS_CHARACTERS.toLocaleString()} character limit`
-          : null;
+          : !title.trim()
+            ? "Give it a title"
+            : !clientId && clients.length > 0
+              ? "Pick a client first — voice-overs are always attributed to one"
+              : null;
 
   const updateBlock = (id: string, patch: Partial<SpeakerBlock>) => {
     setBlocks((prev) =>
@@ -295,11 +300,6 @@ export function TextToSpeech({
   const applyPreset = (preset: (typeof TTS_PRESETS)[number]) => {
     setStability(preset.stability);
     setSpeed(preset.speed);
-    setBlocks((prev) => {
-      const first = prev.find((b): b is SpeakerBlock => b.kind === "speaker");
-      if (!first) return prev;
-      return prev.map((b) => (b.id === first.id ? { ...b, text: preset.text } : b));
-    });
   };
 
   const runTashkil = async (block: SpeakerBlock) => {
@@ -554,10 +554,17 @@ export function TextToSpeech({
                   <button
                     type="button"
                     onClick={() => openLibraryFor(block.id)}
-                    className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-1 text-xs font-medium ring-1 ring-white/10 transition hover:ring-gold/40"
+                    title={block.voiceName ? "Change voice actor" : "Select a voice actor — required"}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ring-1 transition",
+                      block.voiceName
+                        ? "bg-white/5 ring-white/10 hover:ring-gold/40"
+                        : "bg-gold/15 text-gold ring-gold/40 hover:bg-gold/25"
+                    )}
                   >
-                    <Mic className="size-3 text-gold" />
-                    {block.voiceName || "Choose a voice"}
+                    <Mic className="size-3.5 text-gold" />
+                    {block.voiceName || "Select voice actor"}
+                    <ChevronDown className="size-3 opacity-70" />
                   </button>
                   <button
                     type="button"
@@ -604,36 +611,41 @@ export function TextToSpeech({
             </Button>
           </div>
 
-          {!hasText && (
-            <div className="pt-2">
-              <p className="mb-2 text-[11px] tracking-wide text-muted-foreground uppercase">
-                Get started with — fills in sample text and matching pacing:
-              </p>
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                {TTS_PRESETS.map((preset) => {
-                  const Icon = PRESET_ICONS[preset.icon] ?? Sparkles;
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      onClick={() => applyPreset(preset)}
-                      className="flex items-start gap-2.5 rounded-lg bg-white/5 px-3 py-2 text-left ring-1 ring-white/10 transition hover:bg-white/8 hover:ring-gold/30"
-                    >
-                      <Icon className="mt-0.5 size-3.5 shrink-0 text-gold" />
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium text-foreground">
-                          {preset.label}
-                        </span>
-                        <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                          {preset.description}
-                        </span>
+          <div className="pt-2">
+            <p className="mb-2 text-[11px] tracking-wide text-muted-foreground uppercase">
+              Voice character — sets Stability &amp; Speed, leaves your text alone:
+            </p>
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {TTS_PRESETS.map((preset) => {
+                const Icon = PRESET_ICONS[preset.icon] ?? Sparkles;
+                const active = stability === preset.stability && speed === preset.speed;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    aria-pressed={active}
+                    className={cn(
+                      "flex items-start gap-2.5 rounded-lg px-3 py-2 text-left ring-1 transition",
+                      active
+                        ? "bg-gold/10 ring-gold/40"
+                        : "bg-white/5 ring-white/10 hover:bg-white/8 hover:ring-gold/30"
+                    )}
+                  >
+                    <Icon className={cn("mt-0.5 size-3.5 shrink-0", active ? "text-gold" : "text-gold/80")} />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-foreground">
+                        {preset.label}
                       </span>
-                    </button>
-                  );
-                })}
-              </div>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                        {preset.description}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between">
@@ -709,26 +721,32 @@ export function TextToSpeech({
 
           <TabsContent value="settings" className="mt-4 space-y-5">
             <div className="space-y-1.5">
-              <label className="text-[11px] text-muted-foreground">Title</label>
+              <label className="text-[11px] text-muted-foreground">
+                Title <span className="text-red-400">*</span>
+              </label>
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Untitled voice-over"
-                className="h-9 text-sm"
+                placeholder="Name this voice-over"
+                className={cn("h-9 text-sm", !title.trim() && "ring-1 ring-red-400/30")}
               />
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[11px] text-muted-foreground">Client</label>
+              <label className="text-[11px] text-muted-foreground">
+                Client{clients.length > 0 && <span className="text-red-400"> *</span>}
+              </label>
               <Select
                 value={clientId ?? NO_CLIENT}
                 onValueChange={(v) => setClientId(v === NO_CLIENT ? null : v)}
               >
                 <SelectTrigger className="h-9 text-xs">
-                  <SelectValue />
+                  <SelectValue placeholder="Pick a client" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={NO_CLIENT}>No client</SelectItem>
+                  {clients.length === 0 && (
+                    <SelectItem value={NO_CLIENT}>No clients yet</SelectItem>
+                  )}
                   {clients.map((c) => (
                     <SelectItem key={c.id} value={c.id}>
                       {c.name}
@@ -783,29 +801,29 @@ export function TextToSpeech({
 
             <label className="flex items-center justify-between gap-3">
               <span className="text-sm">
-                Enable Streaming
+                Play audio as it renders
                 {!canStream && streaming && (
                   <span className="ml-1.5 text-[10px] text-muted-foreground">
-                    (off — multiple speakers or pauses)
+                    (needs a single speaker with no pauses)
                   </span>
                 )}
               </span>
               <Switch checked={streaming} onCheckedChange={setStreaming} />
             </label>
             <p className="-mt-3 text-[11px] text-muted-foreground">
-              When enabled, audio streams as it&apos;s generated — only for a
-              single speaker with no pauses. When disabled, or when the
-              request has more than one part, you get the complete file after
-              generation.
+              Starts playing immediately instead of waiting for the whole
+              clip. Only works for a single speaker with no pauses between
+              lines — anything else generates the complete file first, then
+              plays it.
             </p>
 
             <label className="flex items-center justify-between gap-3">
-              <span className="text-sm">Enable word timestamps</span>
+              <span className="text-sm">Word-by-word timing</span>
               <Switch checked={wordTimestamps} onCheckedChange={setWordTimestamps} />
             </label>
             <p className="-mt-3 text-[11px] text-muted-foreground">
-              Get per-word timings alongside the audio — useful for captions.
-              Disables streaming for this generation.
+              Adds timing data for each word, for captions and subtitles.
+              Turns off streaming (above) for this generation.
             </p>
           </TabsContent>
 

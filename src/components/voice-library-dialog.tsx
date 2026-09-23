@@ -217,8 +217,21 @@ export function VoiceLibraryDialog({
     return (
       <div
         key={voice.voice_id}
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          onSelect(voice);
+          onOpenChange(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(voice);
+            onOpenChange(false);
+          }
+        }}
         className={cn(
-          "flex items-center gap-3 rounded-xl p-3 ring-1 ring-white/8 transition",
+          "flex cursor-pointer items-center gap-3 rounded-xl p-3 ring-1 ring-white/8 transition",
           selected ? "bg-gold-soft/20 ring-gold/40" : "hover:bg-white/[0.03]"
         )}
       >
@@ -245,7 +258,10 @@ export function VoiceLibraryDialog({
         </div>
         <button
           type="button"
-          onClick={() => onToggleFavorite(voice)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleFavorite(voice);
+          }}
           className={cn(
             "flex size-8 shrink-0 items-center justify-center rounded-full transition",
             favoriteVoiceIds.has(voice.voice_id)
@@ -266,7 +282,10 @@ export function VoiceLibraryDialog({
         {voice.sample_url && (
           <button
             type="button"
-            onClick={() => togglePreview(voice)}
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePreview(voice);
+            }}
             className="flex size-8 shrink-0 items-center justify-center rounded-full bg-white/5 text-muted-foreground transition hover:bg-white/10 hover:text-foreground"
             title="Preview"
           >
@@ -284,7 +303,8 @@ export function VoiceLibraryDialog({
             "h-8 shrink-0 rounded-full px-4 text-xs",
             selected && "bg-gold text-primary-foreground"
           )}
-          onClick={() => {
+          onClick={(e) => {
+            e.stopPropagation();
             onSelect(voice);
             onOpenChange(false);
           }}
@@ -294,7 +314,10 @@ export function VoiceLibraryDialog({
         {voice.source === "cloned" && voice.id && (
           <button
             type="button"
-            onClick={() => void deleteVoice(voice)}
+            onClick={(e) => {
+              e.stopPropagation();
+              void deleteVoice(voice);
+            }}
             disabled={deletingId === voice.id}
             title="Remove from My Voices"
             className="flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition hover:bg-white/8 hover:text-destructive disabled:opacity-50"

@@ -542,7 +542,7 @@ export function ImageDetail({
                 <Chip>{modelLabel}</Chip>
                 <Chip className="capitalize">{g.tier}</Chip>
                 {g.seed != null && <Chip>seed {g.seed}</Chip>}
-                {SHOW_COST && <Chip>${Number(g.cost).toFixed(3)}</Chip>}
+                {SHOW_COST && <Chip>{g.cost == null ? "Cost pending" : `$${Number(g.cost).toFixed(3)}`}</Chip>}
               </div>
               {onMoveToProject && (
                 <div className="mt-3">

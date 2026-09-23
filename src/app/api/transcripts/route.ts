@@ -6,6 +6,19 @@ import { logAudit } from "@/lib/audit";
 import { createTranscript, listTranscripts, updateTranscript } from "@/lib/transcripts";
 import { whisperApiConfigured } from "@/lib/openai-whisper";
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** "mine" or a specific teammate's user id — same owner filter as generations. */
+function resolveOwnerParam(
+  owner: string | null,
+  sessionUserId: string
+): string | null {
+  if (owner === "mine") return sessionUserId;
+  if (owner && UUID_RE.test(owner)) return owner;
+  return null;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const sessionUser = await getSessionUser();
@@ -16,7 +29,7 @@ export async function GET(req: NextRequest) {
     const transcripts = await listTranscripts({
       clientId: params.get("clientId"),
       projectId: params.get("projectId"),
-      createdBy: params.get("owner") === "mine" ? sessionUser.id : null,
+      createdBy: resolveOwnerParam(params.get("owner"), sessionUser.id),
       includeArchived: params.get("archived") === "true",
       limit: Number(params.get("limit")) || undefined,
     });

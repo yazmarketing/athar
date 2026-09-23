@@ -65,6 +65,9 @@ export type PromptInputs = {
 };
 
 export type GenerateRequest = {
+  videoWorkflow?: "create" | "edit";
+  videoIntent?: "edit" | "extend" | "vary";
+  generateAudio?: boolean;
   mode: Capability;
   tier: Tier;
   /** Image provider/model override — "nano-banana" / "nano-banana-2" / "nano-banana-pro" routes to Google Gemini; "gpt-image-2" / "gpt-image-2.5-flare" / "gpt-image-2.5-sunburst" routes to OpenAI. */
@@ -257,7 +260,8 @@ export type GenerationRecord = {
   output_url: string | null;
   fal_url: string | null;
   request_id: string | null;
-  cost: number;
+  /** Null when the provider did not report enough usage to price the render. */
+  cost: number | null;
   duration_s: number | null;
   resolution: string | null;
   aspect: string;

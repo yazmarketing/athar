@@ -1,122 +1,136 @@
 import "server-only";
 
-/**
- * OpenAI chat client (Layer 1 — prompt translation / copilot). SERVER ONLY.
- *
- * Same shape as `arkChat` in byteplus-server so callers can swap providers.
- * Key + model come from env: OPENAI_API_KEY, OPENAI_CHAT_MODEL (default below).
- */
-
-const OPENAI_BASE = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
-
+/** Shared server client. Astra uses Responses; explicitly selected legacy
+ * chat models keep their compatible endpoint. Model access errors surface
+ * unchanged: this layer never silently chooses another model. */
 export function openaiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
 
 export function openaiModel(): string {
-  return process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-4o-mini";
+  return process.env.OPENAI_CHAT_MODEL?.trim() || "gpt-6-astra";
 }
 
+export type OpenAIContent =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
 export type ChatMessage = {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | OpenAIContent[];
 };
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+export class OpenAIError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly type: string | null;
+  readonly param: string | null;
+  readonly requestId: string | null;
+  constructor(message: string, details: {
+    status?: number; code?: string | null; type?: string | null;
+    param?: string | null; requestId?: string | null;
+  } = {}) {
+    super(message);
+    this.name = "OpenAIError";
+    this.status = details.status ?? 502;
+    this.code = details.code ?? null;
+    this.type = details.type ?? null;
+    this.param = details.param ?? null;
+    this.requestId = details.requestId ?? null;
+  }
+}
+
+/** Parse once, preserving HTTP status and request id even for non-JSON errors. */
+export async function readOpenAIResponse<T>(res: Response): Promise<T> {
+  const raw = await res.text();
+  let body: Record<string, unknown>;
+  try { body = JSON.parse(raw); } catch {
+    throw new OpenAIError(`OpenAI ${res.status}: ${res.ok ? "Invalid JSON response" : raw.slice(0, 300) || res.statusText}`, {
+      status: res.ok ? 502 : res.status, code: "invalid_response", requestId: res.headers.get("x-request-id"),
+    });
+  }
+  if (!body || typeof body !== "object") {
+    throw new OpenAIError("OpenAI returned an invalid response", { code: "invalid_response" });
+  }
+  if (!res.ok || body.error) {
+    const err = (body.error && typeof body.error === "object" ? body.error : {}) as Record<string, unknown>;
+    const str = (value: unknown) => typeof value === "string" ? value : null;
+    throw new OpenAIError(`OpenAI ${res.status}: ${(str(err.message) || res.statusText || "Request failed").slice(0, 300)}`, {
+      status: res.ok ? 502 : res.status, code: str(err.code), type: str(err.type),
+      param: str(err.param), requestId: res.headers.get("x-request-id"),
+    });
+  }
+  return body as T;
+}
 
 export async function openaiChat(opts: {
+  model?: string;
   messages: ChatMessage[];
   temperature?: number;
+  /** Existing callers specify desired visible output; reasoning gets headroom. */
   maxTokens?: number;
+  /** Explicit Responses total budget, including reasoning. */
+  maxOutputTokens?: number;
+  reasoningEffort?: ReasoningEffort;
+  json?: boolean;
+  signal?: AbortSignal;
 }): Promise<string> {
   const key = process.env.OPENAI_API_KEY?.trim();
-  if (!key) throw new Error("Missing OPENAI_API_KEY env var");
-
-  const model = openaiModel();
-  // GPT-4 family uses classic params (max_tokens + free temperature).
-  // GPT-5 / o-series require max_completion_tokens and only accept the default
-  // temperature, so we send max_completion_tokens universally (forward-safe)
-  // and only pass temperature for the older families.
-  const legacyParams = /^(gpt-4o|gpt-4\.1|gpt-4-|gpt-4$|gpt-3)/.test(model);
-  const want = opts.maxTokens ?? 1200;
-
-  /**
-   * On a reasoning model `max_completion_tokens` is a budget for thinking AND
-   * writing, and thinking is billed first. Ask for exactly the output size and
-   * a long brief can burn the whole allowance before a single visible token is
-   * emitted — the response comes back `finish_reason: "length"` with empty
-   * content, which is what "OpenAI returned empty text" actually was.
-   *
-   * So reasoning models get headroom on top of the caller's output budget,
-   * and a truncated first attempt is retried once with a lot more.
-   */
-  const REASONING_HEADROOM = 6000;
-  const budget = legacyParams ? want : want + REASONING_HEADROOM;
-
-  const send = async (maxCompletionTokens: number) => {
-    const payload: Record<string, unknown> = {
-      model,
-      messages: opts.messages,
-      max_completion_tokens: maxCompletionTokens,
-    };
-    if (legacyParams) payload.temperature = opts.temperature ?? 0.4;
-
-    const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      // Surface OpenAI's own error message (invalid_api_key, model_not_found…)
-      let detail = "";
-      try {
-        const body = (await res.json()) as { error?: { message?: string } };
-        detail = body.error?.message ?? "";
-      } catch {
-        detail = await res.text().catch(() => "");
+  if (!key) throw new OpenAIError("Missing OPENAI_API_KEY env var", { status: 503, code: "missing_api_key" });
+  const model = opts.model ?? openaiModel();
+  const legacy = /^(gpt-4|gpt-3)/.test(model);
+  const reasoning = /^(gpt-[56]|o[134])/.test(model);
+  const budget = opts.maxOutputTokens ?? ((opts.maxTokens ?? 1200) + (reasoning ? 6000 : 0));
+  if (!Number.isSafeInteger(budget) || budget <= 0 || budget > 128_000) {
+    throw new OpenAIError("Output token budget must be between 1 and 128000", { status: 400, code: "invalid_token_budget" });
+  }
+  const payload: Record<string, unknown> = legacy
+    ? {
+        model, messages: opts.messages, max_completion_tokens: budget,
+        temperature: opts.temperature ?? 0.4,
+        ...(opts.json ? { response_format: { type: "json_object" } } : {}),
       }
-      throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
-    }
-
-    const json = (await res.json()) as {
-      choices?: {
-        finish_reason?: string;
-        message?: { content?: string; refusal?: string };
-      }[];
-      usage?: { completion_tokens_details?: { reasoning_tokens?: number } };
-    };
-    const choice = json.choices?.[0];
-    return {
-      text: choice?.message?.content?.trim() ?? "",
-      refusal: choice?.message?.refusal ?? "",
-      finish: choice?.finish_reason ?? "",
-      reasoning: json.usage?.completion_tokens_details?.reasoning_tokens ?? 0,
-    };
-  };
-
-  let out = await send(budget);
-  if (!out.text && out.finish === "length" && !legacyParams) {
-    out = await send(budget * 2);
+    : {
+        model,
+        input: opts.messages.map((message) => ({
+          role: message.role,
+          content: typeof message.content === "string" ? message.content : message.content.map((part) =>
+            part.type === "text"
+              ? { type: "input_text", text: part.text }
+              : { type: "input_image", image_url: part.image_url.url, detail: part.image_url.detail ?? "auto" }
+          ),
+        })),
+        max_output_tokens: budget,
+        store: false,
+        ...(reasoning ? { reasoning: { effort: opts.reasoningEffort ?? "medium" } } : {}),
+        ...(opts.json ? { text: { format: { type: "json_object" } } } : {}),
+      };
+  const base = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1").replace(/\/$/, "");
+  const res = await fetch(`${base}/${legacy ? "chat/completions" : "responses"}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify(payload),
+    signal: opts.signal ?? AbortSignal.timeout(240_000),
+  });
+  const json = await readOpenAIResponse<{
+    status?: string;
+    incomplete_details?: { reason?: string };
+    output?: { type?: string; content?: { type?: string; text?: string; refusal?: string }[] }[];
+    choices?: { finish_reason?: string; message?: { content?: string; refusal?: string } }[];
+  }>(res);
+  const choice = json.choices?.[0];
+  const content = (json.output ?? []).filter((item) => item.type === "message").flatMap((item) => item.content ?? []);
+  const refusal = legacy ? choice?.message?.refusal : content.find((part) => part.type === "refusal")?.refusal;
+  if (refusal) throw new OpenAIError(`OpenAI declined this request: ${refusal.slice(0, 200)}`, { code: "refusal" });
+  if (json.status === "incomplete" || choice?.finish_reason === "length") {
+    throw new OpenAIError(`${model} returned an incomplete response (${json.incomplete_details?.reason ?? "output token limit"}). Increase the output budget or shorten the request.`, { code: "incomplete_response", requestId: res.headers.get("x-request-id") });
   }
-
-  if (!out.text) {
-    if (out.refusal) {
-      throw new Error(`OpenAI declined this request: ${out.refusal.slice(0, 200)}`);
-    }
-    if (out.finish === "length") {
-      throw new Error(
-        `${model} used its whole token budget thinking and returned nothing ` +
-          `(${out.reasoning} reasoning tokens). Shorten the request, or set ` +
-          `OPENAI_CHAT_MODEL to a non-reasoning model such as gpt-4.1.`
-      );
-    }
-    throw new Error(
-      `OpenAI returned empty text (finish_reason: ${out.finish || "unknown"}) — check OPENAI_CHAT_MODEL`
-    );
+  if (json.status && json.status !== "completed") {
+    throw new OpenAIError(`${model} response status: ${json.status}`, { code: "incomplete_response" });
   }
-  return out.text;
+  const text = (legacy ? choice?.message?.content : content.filter((part) => part.type === "output_text").map((part) => part.text ?? "").join("\n"))?.trim();
+  if (!text) throw new OpenAIError(`${model} returned no text`, { code: "empty_response" });
+  return text;
 }
 
 export type ImageScore = { index: number; score: number; reason: string };
@@ -144,7 +158,7 @@ export async function openaiScoreImages(opts: {
     "entry per candidate (0-based index). Keep each reason under 12 words.",
   ].join(" ");
 
-  const content: unknown[] = [
+  const content: OpenAIContent[] = [
     {
       type: "text",
       text: `Prompt: ${opts.prompt}\nScore these ${n} candidates (index 0–${n - 1}):`,
@@ -155,38 +169,11 @@ export async function openaiScoreImages(opts: {
     content.push({ type: "image_url", image_url: { url } });
   });
 
-  const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: openaiModel(),
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content },
-      ],
-      max_completion_tokens: 600,
-      response_format: { type: "json_object" },
-    }),
+  const raw = await openaiChat({
+    messages: [{ role: "system", content: system }, { role: "user", content }],
+    maxTokens: 1200,
+    json: true,
   });
-
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? "";
-    } catch {
-      detail = await res.text().catch(() => "");
-    }
-    throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const raw = json.choices?.[0]?.message?.content?.trim() ?? "{}";
   const parsed = JSON.parse(raw) as { scores?: ImageScore[] };
   const scores = Array.isArray(parsed.scores) ? parsed.scores : [];
   // Clamp + coerce so a wonky model response can't break ranking.
@@ -230,48 +217,24 @@ export async function openaiBrandCheck(opts: {
     .filter(Boolean)
     .join("\n");
 
-  const res = await fetch(`${OPENAI_BASE}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: openaiModel(),
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: guidelines },
-            { type: "image_url", image_url: { url: opts.imageUrl } },
-          ],
-        },
-      ],
-      max_completion_tokens: 400,
-      response_format: { type: "json_object" },
-    }),
+  const raw = await openaiChat({
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: [
+        { type: "text", text: guidelines },
+        { type: "image_url", image_url: { url: opts.imageUrl } },
+      ] },
+    ],
+    maxTokens: 800,
+    json: true,
   });
-
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body.error?.message ?? "";
-    } catch {
-      detail = await res.text().catch(() => "");
-    }
-    throw new Error(`OpenAI ${res.status}: ${detail.slice(0, 300)}`);
-  }
-
-  const json = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const raw = json.choices?.[0]?.message?.content?.trim() ?? "{}";
   const parsed = JSON.parse(raw) as {
     compliant?: boolean;
     violations?: unknown;
   };
+  if (typeof parsed.compliant !== "boolean" || !Array.isArray(parsed.violations)) {
+    throw new OpenAIError("OpenAI returned an invalid brand review", { code: "invalid_review" });
+  }
   const violations = Array.isArray(parsed.violations)
     ? parsed.violations.filter((v): v is string => typeof v === "string")
     : [];
