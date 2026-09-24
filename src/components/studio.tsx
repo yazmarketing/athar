@@ -2792,7 +2792,12 @@ export function Studio() {
           );
           throw new Error(decision.error);
         }
-        const assetUrl = `asset://${decision.assetId}`;
+        if (decision.status !== "ready") {
+          finishPreview();
+          continue;
+        }
+        const assetId = decision.assetId;
+        const assetUrl = `asset://${assetId}`;
         setVideoSources((prev) =>
           prev.some((source) => source.url === assetUrl)
             ? prev
@@ -2804,14 +2809,14 @@ export function Studio() {
         setReferenceNames((prev) => ({ ...prev, [assetUrl]: displayName }));
         setLibraryAssets((prev) => [
           {
-            id: decision.assetId,
+            id: assetId,
             name: displayName,
             category: "character",
             status: "Active",
-            url: `/api/assets/${encodeURIComponent(decision.assetId)}/image`,
+            url: `/api/assets/${encodeURIComponent(assetId)}/image`,
           },
           ...(prev ?? []).filter(
-            (asset) => asset.id !== registrationId && asset.id !== decision.assetId
+            (asset) => asset.id !== registrationId && asset.id !== assetId
           ),
         ]);
         finishPreview();

@@ -31,12 +31,12 @@ describe("verified face readiness", () => {
   });
 
   it("surfaces a rejected photo and ignores a local id", () => {
-    expect(
-      interpretVerifiedFace({
-        status: "failed",
-        error: "This photo is too tall for BytePlus. Crop to a single portrait and try again.",
-      }).error
-    ).toMatch(/too tall/);
+    const rejected = interpretVerifiedFace({
+      status: "failed",
+      error: "This photo is too tall for BytePlus. Crop to a single portrait and try again.",
+    });
+    if (rejected.status !== "failed") throw new Error("expected a failed photo");
+    expect(rejected.error).toMatch(/too tall/);
     expect(
       interpretVerifiedFace({
         status: "completed",
