@@ -80,6 +80,17 @@ export async function queueAssetRegistration(input: {
   return rows[0];
 }
 
+export async function getAssetRegistration(
+  id: string
+): Promise<AssetRegistrationRecord | null> {
+  await ensureAssetRegistrationsTable();
+  const { rows } = await db().query<AssetRegistrationRecord>(
+    `select * from asset_registrations where id = $1`,
+    [id]
+  );
+  return rows[0] ?? null;
+}
+
 export async function listOpenAssetRegistrations(): Promise<
   AssetRegistrationRecord[]
 > {

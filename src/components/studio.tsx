@@ -62,6 +62,7 @@ import {
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { prepareVerifiedFaceImage, uploadImageFile } from "@/lib/upload-image";
+import { pollVerifiedFace } from "@/lib/verified-face";
 import { uploadAudioFile } from "@/lib/upload-audio";
 import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
@@ -495,6 +496,9 @@ export function Studio() {
     durationS?: number | null;
   } | null>(null);
   const [uploadingVideoSource, setUploadingVideoSource] = useState(false);
+  const [verifyingFaces, setVerifyingFaces] = useState<
+    { id: string; previewUrl: string; name: string }[]
+  >([]);
   const [requestedVideoWorkflow, setVideoWorkflow] = useState<VideoWorkflow>("create");
   const videoWorkflow = videoEditSource ? "edit" : requestedVideoWorkflow;
   const editVideoFileInput = useRef<HTMLInputElement>(null);
@@ -524,6 +528,18 @@ export function Studio() {
     name: string;
   } | null>(null);
   const videoFileInput = useRef<HTMLInputElement>(null);
+  const faceVerifyAbort = useRef<AbortController | null>(null);
+  const verifyingFacesRef = useRef(verifyingFaces);
+  verifyingFacesRef.current = verifyingFaces;
+  useEffect(
+    () => () => {
+      faceVerifyAbort.current?.abort();
+      for (const face of verifyingFacesRef.current) {
+        URL.revokeObjectURL(face.previewUrl);
+      }
+    },
+    []
+  );
   const audioFileInput = useRef<HTMLInputElement>(null);
   const [upscaleTargets, setUpscaleTargets] = useState<
     UpscaleSource[] | null
@@ -2714,22 +2730,106 @@ export function Studio() {
       return;
     }
     const batch = list.slice(0, remaining);
+    faceVerifyAbort.current?.abort();
+    const abort = new AbortController();
+    faceVerifyAbort.current = abort;
     setUploadingVideoSource(true);
+    let attached = 0;
     try {
-      const urls = await Promise.all(batch.map((f) => uploadReference(f)));
-      const added = urls.map((url) => ({ url, generationId: null }));
-      setVideoSources((prev) =>
-        [...prev, ...added].slice(0, MAX_VIDEO_IMAGES)
-      );
-      toast.success(
-        added.length === 1
-          ? "Image attached — now describe the motion"
-          : `${added.length} images attached`
-      );
+      for (const file of batch) {
+        if (abort.signal.aborted) break;
+        const displayName =
+          file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Asset";
+        const previewUrl = URL.createObjectURL(file);
+        const localId = crypto.randomUUID();
+        setVerifyingFaces((prev) => [
+          ...prev,
+          { id: localId, previewUrl, name: displayName },
+        ]);
+        const finishPreview = () => {
+          URL.revokeObjectURL(previewUrl);
+          setVerifyingFaces((prev) => prev.filter((face) => face.id !== localId));
+        };
+        let url: string;
+        try {
+          url = await uploadImageFile(await prepareVerifiedFaceImage(file));
+        } catch (err) {
+          finishPreview();
+          throw err;
+        }
+        const { res, json } = await postJson<{
+          error?: string;
+          asset?: LibraryAsset;
+        }>("/api/assets", {
+          imageUrl: url,
+          name: displayName,
+          category: "character",
+        });
+        if (!res.ok || !json.asset?.id) {
+          finishPreview();
+          throw new Error(json.error ?? "Could not register this photo");
+        }
+        const registrationId = json.asset.id;
+        setLibraryAssets((prev) => [
+          json.asset as LibraryAsset,
+          ...(prev ?? []).filter((asset) => asset.id !== registrationId),
+        ]);
+        const decision = await pollVerifiedFace(registrationId, {
+          signal: abort.signal,
+        });
+        if (decision.status === "cancelled") {
+          finishPreview();
+          break;
+        }
+        if (decision.status === "failed") {
+          finishPreview();
+          setLibraryAssets((prev) =>
+            (prev ?? []).map((asset) =>
+              asset.id === registrationId
+                ? { ...asset, status: "Failed", error: decision.error }
+                : asset
+            )
+          );
+          throw new Error(decision.error);
+        }
+        const assetUrl = `asset://${decision.assetId}`;
+        setVideoSources((prev) =>
+          prev.some((source) => source.url === assetUrl)
+            ? prev
+            : [...prev, { url: assetUrl, generationId: null }].slice(
+                0,
+                MAX_VIDEO_IMAGES
+              )
+        );
+        setReferenceNames((prev) => ({ ...prev, [assetUrl]: displayName }));
+        setLibraryAssets((prev) => [
+          {
+            id: decision.assetId,
+            name: displayName,
+            category: "character",
+            status: "Active",
+            url: `/api/assets/${encodeURIComponent(decision.assetId)}/image`,
+          },
+          ...(prev ?? []).filter(
+            (asset) => asset.id !== registrationId && asset.id !== decision.assetId
+          ),
+        ]);
+        finishPreview();
+        attached += 1;
+      }
+      if (abort.signal.aborted) return;
+      if (attached > 0) {
+        toast.success(
+          attached === 1
+            ? "Verified photo attached — refer to it as “Image 1”"
+            : `${attached} verified photos attached`
+        );
+      }
     } catch (err) {
+      if (abort.signal.aborted) return;
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
-      setUploadingVideoSource(false);
+      if (faceVerifyAbort.current === abort) setUploadingVideoSource(false);
       if (videoFileInput.current) videoFileInput.current.value = "";
     }
   };
@@ -5531,7 +5631,7 @@ export function Studio() {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {mode === "t2v"
-                        ? `JPEG/PNG/WebP · up to ${MAX_VIDEO_IMAGES}, 1 = first frame · or MP4/MOV · up to ${MAX_REFERENCE_VIDEOS} reference clips`
+                        ? `JPEG/PNG/WebP · BytePlus verifies the photo first · or MP4/MOV · up to ${MAX_REFERENCE_VIDEOS} reference clips`
                         : `JPEG, PNG, or WebP · up to ${maxRefs}`}
                     </p>
                   </div>
@@ -5620,9 +5720,27 @@ export function Studio() {
                 </div>
               )}
 
-              {!composerCollapsed && mode === "t2v" && videoSources.length > 0 && (
+              {!composerCollapsed && mode === "t2v" && (videoSources.length > 0 || verifyingFaces.length > 0) && (
                 <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-gold/25 bg-gold-soft/60 px-2.5 py-2">
                   <div className="flex max-w-[60%] flex-wrap items-center gap-1.5">
+                    {verifyingFaces.map((face) => (
+                      <div
+                        key={face.id}
+                        className="relative size-11 overflow-hidden rounded-lg ring-1 ring-gold/50"
+                        title={`Verifying ${face.name}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={face.previewUrl}
+                          alt={face.name}
+                          className="size-full object-cover"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/45">
+                          <Loader2 className="size-4 animate-spin text-white" />
+                        </span>
+                      </div>
+                    ))}
+                    {videoSources.length > 0 && (
                     <SortableThumbs
                       items={videoSources.map((s, i) => ({
                         id: s.url,
@@ -5640,17 +5758,24 @@ export function Studio() {
                         )
                       }
                     />
+                    )}
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium text-foreground">
-                      {videoSources.length === 1
+                      {verifyingFaces.length > 0
+                        ? verifyingFaces.length === 1
+                          ? "Verifying photo"
+                          : `Verifying ${verifyingFaces.length} photos`
+                        : videoSources.length === 1
                         ? videoSources[0].url.startsWith("asset://")
                           ? "Verified asset attached"
                           : "First frame attached"
                         : `${videoSources.length} references`}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      {videoSources.length === 1
+                      {verifyingFaces.length > 0
+                        ? "BytePlus is checking this photo. This usually takes about a minute."
+                        : videoSources.length === 1
                         ? videoSources[0].url.startsWith("asset://")
                           ? "Real-person asset — refer to it as “Image 1” in the prompt"
                           : "Image → video (Seedance animates this still)"
@@ -5659,8 +5784,15 @@ export function Studio() {
                   </div>
                   <button
                     type="button"
-                    aria-label="Remove all attached images"
-                    onClick={() => setVideoSources([])}
+                    aria-label={
+                      verifyingFaces.length > 0
+                        ? "Cancel photo verification"
+                        : "Remove all attached images"
+                    }
+                    onClick={() => {
+                      faceVerifyAbort.current?.abort();
+                      setVideoSources([]);
+                    }}
                     className="rounded-md p-1.5 text-muted-foreground transition hover:bg-white/10 hover:text-foreground"
                   >
                     <X className="size-4" />
