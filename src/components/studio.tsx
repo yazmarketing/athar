@@ -127,7 +127,7 @@ import {
 } from "@/config/models";
 import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
-import { ASPECT_RATIOS, isAspectRatio } from "@/config/aspects";
+import { ASPECT_RATIOS, isAspectRatio, cssAspectRatio } from "@/config/aspects";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import {
   APERTURE_PRESETS,
@@ -3466,18 +3466,22 @@ export function Studio() {
       >
         {g.output_url ? (
           isVideo(g) ? (
-            <VideoThumb src={g.output_url} />
+            <VideoThumb src={g.output_url} aspect={g.aspect} />
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={g.output_url}
               alt={g.final_prompt}
               loading="lazy"
-              className="aspect-video w-full object-cover transition duration-500 group-hover:scale-[1.02]"
+              className="w-full object-cover transition duration-500 group-hover:scale-[1.02]"
+              style={{ aspectRatio: cssAspectRatio(g.aspect) }}
             />
           )
         ) : (
-          <div className="flex aspect-video items-center justify-center bg-muted/40 text-xs text-muted-foreground">
+          <div
+            className="flex w-full items-center justify-center bg-muted/40 text-xs text-muted-foreground"
+            style={{ aspectRatio: cssAspectRatio(g.aspect) }}
+          >
             No preview
           </div>
         )}
@@ -4732,7 +4736,7 @@ export function Studio() {
                     }
                     return (
                       <>
-                      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 xl:grid-cols-4">
+                      <div className="grid grid-cols-2 items-start gap-1.5 sm:grid-cols-3 xl:grid-cols-4">
                         {jobTiles.map((job) => {
                           const kind = isImageJob(job)
                             ? "image"
@@ -5106,7 +5110,7 @@ export function Studio() {
                     </div>
                   ) : (
                     <>
-                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                      <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-2 xl:grid-cols-3">
                         {libraryEntries.map((entry, i) =>
                           entry.kind === "render"
                             ? renderCard(entry.data, i)

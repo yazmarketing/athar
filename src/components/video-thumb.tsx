@@ -3,10 +3,13 @@
 import { useState } from "react";
 import { Clapperboard, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { cssAspectRatio } from "@/config/aspects";
 
 type Props = {
   src: string;
   className?: string;
+  /** Output frame, e.g. "9:16". Defaults to 16:9. */
+  aspect?: string | null;
   /** Play muted while the pointer is over the tile. */
   previewOnHover?: boolean;
 };
@@ -19,17 +22,24 @@ type Props = {
  * the start gets a real frame on screen; the badge marks it as a clip; and a
  * clip that won't load says so instead of leaving an empty black box.
  */
-export function VideoThumb({ src, className, previewOnHover = true }: Props) {
+export function VideoThumb({
+  src,
+  className,
+  aspect,
+  previewOnHover = true,
+}: Props) {
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
+  const frame = { aspectRatio: cssAspectRatio(aspect) };
 
   if (failed) {
     return (
       <div
         className={cn(
-          "flex aspect-video w-full flex-col items-center justify-center gap-1.5 bg-muted/30 text-muted-foreground",
+          "flex w-full flex-col items-center justify-center gap-1.5 bg-muted/30 text-muted-foreground",
           className
         )}
+        style={frame}
       >
         <Clapperboard className="size-5 opacity-60" />
         <span className="text-[11px]">Clip unavailable</span>
@@ -38,12 +48,12 @@ export function VideoThumb({ src, className, previewOnHover = true }: Props) {
   }
 
   return (
-    <div className={cn("relative overflow-hidden", className)}>
+    <div className={cn("relative w-full overflow-hidden", className)} style={frame}>
       <video
         // #t=0.1 seeks just past the start so a real frame is painted —
         // without it Safari, and iOS especially, shows its own grey slab.
         src={`${src}#t=0.1`}
-        className="aspect-video w-full bg-black object-cover"
+        className="absolute inset-0 size-full bg-black object-cover"
         playsInline
         muted
         loop

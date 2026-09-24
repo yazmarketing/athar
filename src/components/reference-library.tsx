@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Select,
   SelectContent,
@@ -92,6 +93,9 @@ export function ReferenceLibrary({
   const [versioningId, setVersioningId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [pendingDelete, setPendingDelete] = useState<ReferenceAssetRecord | null>(
+    null
+  );
   const fileInput = useRef<HTMLInputElement>(null);
   const versionInput = useRef<HTMLInputElement>(null);
 
@@ -241,13 +245,16 @@ export function ReferenceLibrary({
     setSaving(false);
   }
 
-  async function archive(id: string) {
+  async function archive(row: ReferenceAssetRecord) {
     try {
-      const res = await fetch(`/api/reference-assets/${id}`, {
+      const res = await fetch(`/api/reference-assets/${row.id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error((await res.json()).error);
-      setRefs((prev) => prev?.filter((r) => r.id !== id) ?? null);
+      setRefs((prev) => prev?.filter((r) => r.id !== row.id) ?? null);
+      // If this still was attached in the picker, drop it from the dock too.
+      if (selectedUrls.includes(row.url)) onPick?.(row.url, row);
+      toast.success(`Removed “${row.name}”`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Remove failed");
     }
@@ -522,49 +529,47 @@ export function ReferenceLibrary({
                       </span>
                     </span>
                   )}
+                  <button
+                    type="button"
+                    aria-label={`Delete ${r.name}`}
+                    title="Delete from library"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPendingDelete(r);
+                    }}
+                    className="absolute top-1.5 right-1.5 z-10 flex size-7 items-center justify-center rounded-md bg-black/70 text-white transition hover:bg-red-600"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
                   {mode === "manage" && (
-                    <>
-                      <button
-                        type="button"
-                        aria-label="Remove reference"
-                        title="Remove"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void archive(r.id);
-                        }}
-                        className="absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-md bg-black/60 text-white opacity-0 transition hover:bg-black/80 group-hover:opacity-100"
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                      <div className="absolute inset-x-1.5 bottom-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
-                        {onUpscale && (
-                          <button
-                            type="button"
-                            title="Upscale"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onUpscale(r);
-                            }}
-                            className="flex flex-1 items-center justify-center gap-1 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition hover:bg-black/85"
-                          >
-                            <ArrowUpToLine className="size-3.5" />
-                            Upscale
-                          </button>
-                        )}
+                    <div className="absolute inset-x-1.5 bottom-1.5 flex gap-1 opacity-0 transition group-hover:opacity-100">
+                      {onUpscale && (
                         <button
                           type="button"
+                          title="Upscale"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setVersioningId(r.id);
-                            versionInput.current?.click();
+                            onUpscale(r);
                           }}
                           className="flex flex-1 items-center justify-center gap-1 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition hover:bg-black/85"
                         >
-                          <Upload className="size-3.5" />
-                          Replace
+                          <ArrowUpToLine className="size-3.5" />
+                          Upscale
                         </button>
-                      </div>
-                    </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setVersioningId(r.id);
+                          versionInput.current?.click();
+                        }}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-md bg-black/70 py-1.5 text-[11px] font-medium text-white backdrop-blur-sm transition hover:bg-black/85"
+                      >
+                        <Upload className="size-3.5" />
+                        Replace
+                      </button>
+                    </div>
                   )}
                 </div>
                 <div className="px-2.5 py-2">
@@ -611,6 +616,24 @@ export function ReferenceLibrary({
           })}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete != null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title="Remove from library?"
+        description={
+          pendingDelete
+            ? `“${pendingDelete.name}” will be removed from this client’s reference library. Existing generations that used it are unchanged.`
+            : ""
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={async () => {
+          if (pendingDelete) await archive(pendingDelete);
+        }}
+      />
     </div>
   );
 }

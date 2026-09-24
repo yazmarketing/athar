@@ -20,6 +20,10 @@ async function ensureProjectsTableUncached() {
   `);
   await db().query(`alter table public.projects add column if not exists spend_cap numeric(12, 2)`);
   await db().query(`
+    alter table public.projects add column if not exists parent_id uuid
+      references public.projects (id) on delete set null
+  `);
+  await db().query(`
     create index if not exists projects_created_at_idx
       on public.projects (created_at desc)
   `);
@@ -70,17 +74,21 @@ export async function createProject(
   name: string,
   client: string | null,
   createdBy: string | null,
-  clientId?: string | null
+  clientId?: string | null,
+  parentId?: string | null
 ): Promise<ProjectRecord> {
   await ensureProjectsTable();
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Project name is required");
+  if (parentId && !(await projectExists(parentId))) {
+    throw new Error("Parent project not found");
+  }
 
   const { rows } = await db().query<ProjectRecord>(
-    `insert into projects (name, client, created_by, client_id)
-     values ($1, $2, $3, $4)
+    `insert into projects (name, client, created_by, client_id, parent_id)
+     values ($1, $2, $3, $4, $5)
      returning *`,
-    [trimmed, client?.trim() || null, createdBy, clientId ?? null]
+    [trimmed, client?.trim() || null, createdBy, clientId ?? null, parentId ?? null]
   );
   if (!rows[0]) throw new Error("Could not create project");
   return { ...rows[0], generation_count: 0 };
@@ -127,7 +135,7 @@ export async function updateProject(
   return rows[0] ?? null;
 }
 
-/** Delete a project only when it holds no live generations. */
+/** Delete a project only when it holds no live generations or subfolders. */
 export async function deleteProjectIfEmpty(id: string): Promise<void> {
   await ensureProjectsTable();
   const { rows } = await db().query<{ n: string }>(
@@ -138,6 +146,15 @@ export async function deleteProjectIfEmpty(id: string): Promise<void> {
   const n = Number(rows[0]?.n ?? 0);
   if (n > 0) {
     throw new Error(`Project still has ${n} generation(s) — move or delete them first`);
+  }
+  const { rows: kids } = await db().query<{ n: string }>(
+    `select count(*) as n from projects
+     where parent_id = $1 and archived_at is null`,
+    [id]
+  );
+  const k = Number(kids[0]?.n ?? 0);
+  if (k > 0) {
+    throw new Error(`Project still has ${k} subfolder(s) — delete them first`);
   }
   const { rowCount } = await db().query(`delete from projects where id = $1`, [id]);
   if (!rowCount) throw new Error("Project not found");

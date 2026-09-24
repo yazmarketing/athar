@@ -4,6 +4,7 @@ import {
   ASPECT_TO_ARK_SIZE_1K,
   ASPECT_TO_ARK_SIZE_2K,
   ASPECT_TO_VIDEO_RATIO,
+  cssAspectRatio,
   isAspectRatio,
 } from "@/config/aspects";
 
@@ -69,5 +70,12 @@ describe("aspect ratios", () => {
     expect(isAspectRatio("9:21")).toBe(true);
     expect(isAspectRatio("7:3")).toBe(false);
     expect(isAspectRatio(null)).toBe(false);
+  });
+
+  it("turns a ratio into CSS aspect-ratio", () => {
+    expect(cssAspectRatio("16:9")).toBe("16 / 9");
+    expect(cssAspectRatio("9:16")).toBe("9 / 16");
+    expect(cssAspectRatio(null)).toBe("16 / 9");
+    expect(cssAspectRatio("7:3")).toBe("16 / 9");
   });
 });

@@ -27,6 +27,15 @@ export function isAspectRatio(
   return ASPECT_RATIOS.includes(value as AspectRatio);
 }
 
+/** "16:9" → "16 / 9" for CSS `aspect-ratio`. */
+export function cssAspectRatio(
+  value: string | null | undefined,
+  fallback: AspectRatio = "16:9"
+): string {
+  const ratio = isAspectRatio(value) ? value : fallback;
+  return ratio.replace(":", " / ");
+}
+
 /**
  * BytePlus ModelArk pixel sizes — multiples of 16.
  * 2K meets the Seedream 5.x floor (≥3,686,400 px).

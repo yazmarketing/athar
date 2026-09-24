@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
       name?: string;
       client?: string;
       clientId?: string | null;
+      parentId?: string | null;
     };
     const name = body.name?.trim();
     if (!name) {
@@ -41,7 +42,8 @@ export async function POST(req: NextRequest) {
       name,
       body.client?.trim() || null,
       sessionUser.id,
-      body.clientId ?? null
+      body.clientId ?? null,
+      body.parentId ?? null
     );
     return NextResponse.json({ project });
   } catch (err) {
