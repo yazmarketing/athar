@@ -172,7 +172,17 @@ export async function finalizeVideoJob(
     const latest = await getJob(job.id);
     if (!latest || latest.status === "cancelled") return;
 
-    const { outputUrl, originalUrl } = await persistVideoOutput(providerUrl, job.id);
+    let outputUrl = providerUrl;
+    let originalUrl: string | null = null;
+    try {
+      const saved = await persistVideoOutput(providerUrl, job.id);
+      outputUrl = saved.outputUrl;
+      originalUrl = saved.originalUrl;
+    } catch (err) {
+      const timedOut = err instanceof Error && /took too long to copy|aborted due to timeout/i.test(err.message);
+      if (!timedOut) throw err;
+      console.error("Could not copy finished video; keeping the provider URL", job.id, err);
+    }
 
     const model = resolveModel(job.kind, job.tier as Tier);
     const durationS = job.duration_s != null ? Number(job.duration_s) : null;

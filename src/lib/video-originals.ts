@@ -5,8 +5,22 @@ import { uploadPublicObject } from "@/lib/storage";
 import { ensureBrowserMp4 } from "@/lib/video-compat";
 import type { ArkVideoRequest } from "@/lib/byteplus-server";
 
+const DOWNLOAD_TIMEOUT_MS = 180_000;
+
+function timeoutError(err: unknown): boolean {
+  return err instanceof Error && (err.name === "TimeoutError" || /aborted due to timeout/i.test(err.message));
+}
+
 async function downloadOriginal(url: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  let response: Response;
+  try {
+    response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  } catch (err) {
+    if (timeoutError(err)) {
+      throw new Error("The finished video took too long to copy into Athar. Retry — the render itself may already be done.");
+    }
+    throw err;
+  }
   if (!response.ok) throw new Error(`Could not retrieve original video (${response.status})`);
   const bytes = await response.arrayBuffer();
   if (!bytes.byteLength) throw new Error("The original video is empty");

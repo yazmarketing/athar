@@ -76,7 +76,7 @@ export async function arkGenerateImage(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
+    if (err instanceof Error && (err.name === "TimeoutError" || /aborted due to timeout/i.test(err.message))) {
       throw new Error(
         `BytePlus ModelArk did not respond within ${Math.round(timeoutMs / 1000)}s — try again, or use a faster model (Seedream 4.0 / 1K)`
       );
@@ -225,7 +225,7 @@ async function arkRequest<T>(
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
+    if (err instanceof Error && (err.name === "TimeoutError" || /aborted due to timeout/i.test(err.message))) {
       throw new Error(
         `BytePlus ModelArk did not respond within ${Math.round(
           timeoutMs / 1000
@@ -381,7 +381,7 @@ export async function arkCancelVideoTask(taskId: string): Promise<void> {
       signal: AbortSignal.timeout(ARK_STATUS_TIMEOUT_MS),
     });
   } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
+    if (err instanceof Error && (err.name === "TimeoutError" || /aborted due to timeout/i.test(err.message))) {
       throw new Error("BytePlus ModelArk did not respond while cancelling");
     }
     throw err;
