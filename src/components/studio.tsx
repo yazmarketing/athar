@@ -128,7 +128,13 @@ import {
 } from "@/config/models";
 import { ImageModelSelect } from "@/components/image-model-select";
 import { VideoThumb } from "@/components/video-thumb";
-import { ASPECT_RATIOS, isAspectRatio, cssAspectRatio } from "@/config/aspects";
+import {
+  ASPECT_RATIOS,
+  ASPECT_TO_VIDEO_RATIO,
+  VIDEO_ASPECT_RATIOS,
+  isAspectRatio,
+  cssAspectRatio,
+} from "@/config/aspects";
 import { STYLE_PRESETS, DEFAULT_STYLE_ID } from "@/config/styles";
 import {
   APERTURE_PRESETS,
@@ -1044,7 +1050,12 @@ export function Studio() {
       )
     );
     setGenerateAudio(true);
-    if (next === "t2v" && aspect === "4:5") setAspect("9:16");
+    if (
+      next === "t2v" &&
+      !(VIDEO_ASPECT_RATIOS as readonly string[]).includes(aspect)
+    ) {
+      setAspect(ASPECT_TO_VIDEO_RATIO[aspect]);
+    }
     setComposerCollapsed(false);
     setView("create");
   };
@@ -1057,11 +1068,18 @@ export function Studio() {
     const inferred = inferOutputSettings(subject);
     if (inferred.aspect && inferred.aspect !== lastInferredAspect.current) {
       lastInferredAspect.current = inferred.aspect;
-      setAspect(inferred.aspect);
+      const videoSafe = (VIDEO_ASPECT_RATIOS as readonly string[]).includes(
+        inferred.aspect
+      );
+      setAspect(
+        mode === "t2v" && !videoSafe
+          ? ASPECT_TO_VIDEO_RATIO[inferred.aspect]
+          : inferred.aspect
+      );
     } else if (!inferred.aspect) {
       lastInferredAspect.current = undefined;
     }
-  }, [subject]);
+  }, [subject, mode]);
 
   useEffect(() => {
     const nextQuery = query.trim();

@@ -60,9 +60,16 @@ describe("aspect ratios", () => {
   });
 
   it("maps video to a Seedance-native ratio", () => {
+    const native = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"];
     for (const ratio of ASPECT_RATIOS) {
-      expect(["16:9", "9:16", "1:1"]).toContain(ASPECT_TO_VIDEO_RATIO[ratio]);
+      expect(native).toContain(ASPECT_TO_VIDEO_RATIO[ratio]);
     }
+    expect(ASPECT_TO_VIDEO_RATIO["4:3"]).toBe("4:3");
+    expect(ASPECT_TO_VIDEO_RATIO["3:4"]).toBe("3:4");
+    expect(ASPECT_TO_VIDEO_RATIO["21:9"]).toBe("21:9");
+    expect(ASPECT_TO_VIDEO_RATIO["3:2"]).toBe("4:3");
+    expect(ASPECT_TO_VIDEO_RATIO["4:5"]).toBe("3:4");
+    expect(ASPECT_TO_VIDEO_RATIO["9:21"]).toBe("9:16");
   });
 
   it("rejects unknown tokens", () => {

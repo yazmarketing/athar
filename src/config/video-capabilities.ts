@@ -1,3 +1,4 @@
+import { VIDEO_ASPECT_RATIOS } from "@/config/aspects";
 import type { Tier } from "@/config/models";
 
 /** Audited against ModelArk /1520757, 2026-09-13. These are Athar's supported operations. */
@@ -9,7 +10,7 @@ export function videoCapabilities(tier: Tier) {
     maxAudios: full ? 10 : 3,
     maxDuration: full ? 30 : 15,
     resolutions: full ? ["480p", "720p", "1080p"] as const : ["480p", "720p"] as const,
-    aspects: ["16:9", "9:16", "1:1", "21:9"] as const,
+    aspects: VIDEO_ASPECT_RATIOS,
     audioOnly: full,
     // Athar's edit adapter uses the 2.5 task-type contract exclusively.
     editing: full,

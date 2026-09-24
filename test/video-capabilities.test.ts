@@ -27,7 +27,11 @@ describe("video workflow and model contract", () => {
     expect(validateVideoSettings({ ...base, tier: "draft", duration: 15 })).toBeNull();
     expect(validateVideoSettings({ ...base, tier: "draft", duration: 16 })).toMatch(/15 seconds/);
     expect(validateVideoSettings({ ...base, tier: "draft", resolution: "1080p" })).toMatch(/resolution/);
+    expect(validateVideoSettings({ ...base, aspect: "4:3" })).toBeNull();
+    expect(validateVideoSettings({ ...base, aspect: "3:4" })).toBeNull();
+    expect(validateVideoSettings({ ...base, aspect: "21:9" })).toBeNull();
     expect(validateVideoSettings({ ...base, aspect: "4:5" })).toMatch(/aspect ratio/);
+    expect(validateVideoSettings({ ...base, aspect: "9:21" })).toMatch(/aspect ratio/);
     expect(validateVideoSettings({ ...base, images: ["https://cdn/i.png"], aspect: "4:5" })).toBeNull();
     expect(validateVideoSettings({ ...base, source: "https://cdn/s.mp4", intent: "extend", duration: 40 })).toMatch(/30 seconds/);
   });

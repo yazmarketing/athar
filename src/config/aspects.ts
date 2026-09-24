@@ -109,20 +109,34 @@ export function openaiSizeFor(
 }
 
 /**
- * Seedance only accepts 16:9 / 9:16 / 1:1. Other dock ratios map to the
- * closest of those so a still aspect still produces a clip.
+ * Fixed ratios Seedance 2.5 and 2.0 accept. First-frame and edit jobs use
+ * adaptive instead, so the clip follows the source.
  */
-export const ASPECT_TO_VIDEO_RATIO: Record<AspectRatio, "16:9" | "9:16" | "1:1"> =
-  {
-    "16:9": "16:9",
-    "9:16": "9:16",
-    "1:1": "1:1",
-    "4:3": "16:9",
-    "3:4": "9:16",
-    "3:2": "16:9",
-    "2:3": "9:16",
-    "4:5": "9:16",
-    "5:4": "16:9",
-    "21:9": "16:9",
-    "9:21": "9:16",
-  };
+export const VIDEO_ASPECT_RATIOS = [
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:3",
+  "3:4",
+  "21:9",
+] as const satisfies readonly AspectRatio[];
+
+export type VideoAspectRatio = (typeof VIDEO_ASPECT_RATIOS)[number];
+
+/**
+ * Ratios Seedance cannot render map to the closest one it can, so an image
+ * prompt reused for video still produces a clip.
+ */
+export const ASPECT_TO_VIDEO_RATIO: Record<AspectRatio, VideoAspectRatio> = {
+  "16:9": "16:9",
+  "9:16": "9:16",
+  "1:1": "1:1",
+  "4:3": "4:3",
+  "3:4": "3:4",
+  "3:2": "4:3",
+  "2:3": "3:4",
+  "4:5": "3:4",
+  "5:4": "4:3",
+  "21:9": "21:9",
+  "9:21": "9:16",
+};

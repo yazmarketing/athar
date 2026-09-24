@@ -51,13 +51,13 @@ describe("videoRequestForJob", () => {
     expect(req.duration).toBe(8);
   });
 
-  it("maps an unsupported aspect to the closest Seedance ratio", () => {
-    expect(videoRequestForJob(job({ aspect: "4:5" })).ratio).toBe("9:16");
-    expect(videoRequestForJob(job({ aspect: "3:4" })).ratio).toBe("9:16");
+  it("sends Seedance ratios as chosen and maps the rest", () => {
+    expect(videoRequestForJob(job({ aspect: "4:3" })).ratio).toBe("4:3");
+    expect(videoRequestForJob(job({ aspect: "3:4" })).ratio).toBe("3:4");
+    expect(videoRequestForJob(job({ aspect: "21:9" })).ratio).toBe("21:9");
+    expect(videoRequestForJob(job({ aspect: "4:5" })).ratio).toBe("3:4");
+    expect(videoRequestForJob(job({ aspect: "5:4" })).ratio).toBe("4:3");
     expect(videoRequestForJob(job({ aspect: "9:21" })).ratio).toBe("9:16");
-    expect(videoRequestForJob(job({ aspect: "21:9" })).ratio).toBe("16:9");
-    expect(videoRequestForJob(job({ aspect: "5:4" })).ratio).toBe("16:9");
-    expect(videoRequestForJob(job({ aspect: "4:3" })).ratio).toBe("16:9");
   });
 
   it("carries the negative prompt through for the payload builder to fold in", () => {
