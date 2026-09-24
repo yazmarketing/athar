@@ -2829,8 +2829,8 @@ export function Studio() {
       if (attached > 0) {
         toast.success(
           attached === 1
-            ? "Verified photo attached — refer to it as “Image 1”"
-            : `${attached} verified photos attached`
+            ? "Image attached — refer to it as “Image 1”"
+            : `${attached} images attached`
         );
       }
     } catch (err) {
@@ -2972,7 +2972,7 @@ export function Studio() {
       )
     );
     setAssetIdOpen(false);
-    toast.success("Verified asset attached");
+    toast.success("Image attached — refer to it as “Image 1”");
   };
 
   const loadAssets = useCallback(() => {
@@ -5755,7 +5755,7 @@ export function Studio() {
                         id: s.url,
                         previewUrl: attachedPreview(s.url),
                         alt: s.url.startsWith("asset://")
-                          ? `Verified face ${i + 1}`
+                          ? `Image ${i + 1}`
                           : `Reference ${i + 1}`,
                       }))}
                       onReorder={(from, to) =>
@@ -5777,7 +5777,7 @@ export function Studio() {
                           : `Verifying ${verifyingFaces.length} photos`
                         : videoSources.length === 1
                         ? videoSources[0].url.startsWith("asset://")
-                          ? "Verified asset attached"
+                          ? "Image attached"
                           : "First frame attached"
                         : `${videoSources.length} references`}
                     </p>
@@ -5786,7 +5786,7 @@ export function Studio() {
                         ? "BytePlus is checking this photo. This usually takes about a minute."
                         : videoSources.length === 1
                         ? videoSources[0].url.startsWith("asset://")
-                          ? "Real-person asset — refer to it as “Image 1” in the prompt"
+                          ? "Refer to it as “Image 1” in the prompt"
                           : "Image → video (Seedance animates this still)"
                         : "Drag to reorder · Seedance blends these subjects into the clip"}
                     </p>

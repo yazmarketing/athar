@@ -411,7 +411,7 @@ export function VideoDetail({
                             clickable
                               ? "Open source image"
                               : url.startsWith("asset://")
-                                ? "Verified asset"
+                                ? "Attached image"
                                 : undefined
                           }
                           onClick={() => {
