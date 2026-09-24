@@ -3,6 +3,8 @@ import {
   AbortMultipartUploadCommand,
   CompleteMultipartUploadCommand,
   CreateMultipartUploadCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
   PutObjectCommand,
   S3Client,
   UploadPartCommand,
@@ -59,6 +61,36 @@ export async function uploadPublicObject(
     cdn?.replace(/\/$/, "") ??
     `https://${bucket}.${env("DO_SPACES_REGION")}.digitaloceanspaces.com`;
   return `${base}/${path}`;
+}
+
+/** Private provider portraits must stay behind the authenticated image route. */
+export async function readPrivateObject(path: string): Promise<Response | null> {
+  try {
+    const out = await spaces().send(new GetObjectCommand({ Bucket: env("DO_SPACES_BUCKET"), Key: path }), { abortSignal: AbortSignal.timeout(3_000) });
+    if (!out.Body) return null;
+    return new Response(out.Body.transformToWebStream(), {
+      headers: {
+        "Content-Type": out.ContentType ?? "application/octet-stream",
+        ...(out.ContentLength != null ? { "Content-Length": String(out.ContentLength) } : {}),
+      },
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "NoSuchKey") return null;
+    throw err;
+  }
+}
+
+export async function uploadPrivateObject(path: string, body: ArrayBuffer, contentType: string): Promise<void> {
+  await spaces().send(new PutObjectCommand({
+    Bucket: env("DO_SPACES_BUCKET"), Key: path, Body: new Uint8Array(body),
+    ContentType: contentType, ACL: "private",
+  }), { abortSignal: AbortSignal.timeout(10_000) });
+}
+
+export async function deleteStoredObject(path: string): Promise<void> {
+  await spaces().send(new DeleteObjectCommand({ Bucket: env("DO_SPACES_BUCKET"), Key: path }), {
+    abortSignal: AbortSignal.timeout(5_000),
+  });
 }
 
 /** Public URL an object at `path` will have once uploaded. */

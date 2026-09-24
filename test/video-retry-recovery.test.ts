@@ -34,6 +34,23 @@ beforeEach(() => {
 });
 
 describe("retry recovery", () => {
+  const portraitError = "The request failed because the input video 'content[1]' may contain real person. Request id: 021790229346921c41b39946b92a3163d51611244fc4a0ddd7ddb";
+  it.each([null, "paid-task"])("rejects unchanged portrait input with provider task %s", async (providerTaskId) => {
+    mocks.job.mockResolvedValue({ ...source, error: portraitError, provider_task_id: providerTaskId });
+    const response = await retry(request, context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "VIDEO_REFERENCE_REQUIRES_CHANGE" });
+    expect(mocks.provider).not.toHaveBeenCalled();
+    expect(mocks.spend).not.toHaveBeenCalled();
+    expect(mocks.requeue).not.toHaveBeenCalled();
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
+  it("recognizes a portrait rejection discovered during provider recovery", async () => {
+    mocks.provider.mockResolvedValue({ status: "failed", error: { message: portraitError } });
+    expect((await retry(request, context)).status).toBe(409);
+    expect(mocks.requeue).not.toHaveBeenCalled();
+    expect(mocks.after).not.toHaveBeenCalled();
+  });
   it.each(["succeeded", "running", "queued"])("recovers a %s provider task without resubmission", async (status) => {
     mocks.provider.mockResolvedValue({ status });
     mocks.resume.mockResolvedValue({ ...source, status: "running" });

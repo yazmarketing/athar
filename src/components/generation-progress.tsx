@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Clapperboard, ImageIcon, Wand2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { videoFailure } from "@/lib/video-failure";
 
 /**
  * Progressive generation UX ("ChatGPT-style"). Providers send no real
@@ -159,6 +160,7 @@ export function JobPlaceholderCard({
   cancelling,
   onCancel,
   onRetry,
+  onEdit,
   onDismiss,
 }: {
   kind: GenerationKind;
@@ -170,17 +172,19 @@ export function JobPlaceholderCard({
   cancelling?: boolean;
   onCancel?: () => void;
   onRetry?: () => void;
+  onEdit?: () => void;
   onDismiss?: () => void;
 }) {
   const elapsedS = useElapsedS(startedAtMs);
   const failed = status === "failed";
+  const failure = kind !== "image" ? videoFailure(error) : null;
   const label = failed
-    ? (error?.trim() || "Failed")
+    ? (failure?.message ?? (error?.trim() || "Failed"))
     : stageLabel(kind, elapsedS);
 
   return (
     <div
-      className="relative w-full overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8"
+      className={cn("relative w-full overflow-hidden rounded-2xl bg-[#161616] ring-1 ring-white/8", failed && failure && "min-h-80")}
       style={{ aspectRatio: aspect.replace(":", " / ") }}
     >
       <div
@@ -189,19 +193,19 @@ export function JobPlaceholderCard({
           failed ? "bg-secondary/80" : "animate-pulse bg-secondary"
         )}
       />
-      <div className="absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-2.5">
+      <div className="absolute inset-x-0 top-0 z-10 flex flex-wrap items-start justify-between gap-2 p-2.5">
         <span className="rounded-full bg-black/55 px-2.5 py-1 text-[11px] font-medium text-white/80 backdrop-blur-sm">
-          {failed ? "Failed" : status === "queued" ? "Queued" : "Rendering"}
+          {failed ? failure ? "Change reference" : "Failed" : status === "queued" ? "Queued" : "Rendering"}
         </span>
         {failed ? (
           <div className="flex items-center gap-1">
-            {onRetry && (
+            {(failure ? onEdit : onRetry) && (
               <button
                 type="button"
-                onClick={onRetry}
+                onClick={failure ? onEdit : onRetry}
                 className="rounded-full bg-white/12 px-2.5 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm transition hover:bg-white/18"
               >
-                Retry
+                {failure ? "Edit inputs" : "Retry"}
               </button>
             )}
             {onDismiss && (
@@ -237,6 +241,12 @@ export function JobPlaceholderCard({
         <p className="text-[11px] text-white/45">
           {failed ? label : `${label} · ${elapsedS}s`}
         </p>
+        {failed && failure && error && (
+          <details className="text-[10px] text-white/60">
+            <summary className="cursor-pointer">Technical details</summary>
+            <p className="max-h-20 overflow-auto break-words">{error}</p>
+          </details>
+        )}
         {!failed && (
           <ProgressBar
             value={easedProgress(kind, elapsedS)}

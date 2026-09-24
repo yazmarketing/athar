@@ -7,6 +7,7 @@ import { arkGetVideoTask } from "@/lib/byteplus-server";
 import { checkSpendControls } from "@/lib/render-guardrails";
 import { isImageJob } from "@/lib/types";
 import { submitVideoJob } from "@/lib/video-jobs";
+import { videoFailure } from "@/lib/video-failure";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -37,10 +38,19 @@ export async function POST(_req: NextRequest, { params }: Params) {
       );
     }
 
+    const knownFailure = !isImageJob(job) ? videoFailure(job.error) : null;
+    if (knownFailure) {
+      return NextResponse.json({ error: knownFailure.message, code: "VIDEO_REFERENCE_REQUIRES_CHANGE" }, { status: 409 });
+    }
+
     // A local timeout or storage failure does not mean the paid render failed.
     // Resume polling the original task before considering another submission.
     if (!isImageJob(job) && job.provider_task_id) {
       const task = await arkGetVideoTask(job.provider_task_id);
+      const failure = task.status === "failed" ? videoFailure(task.error?.message ?? task.message) : null;
+      if (failure) {
+        return NextResponse.json({ error: failure.message, code: "VIDEO_REFERENCE_REQUIRES_CHANGE" }, { status: 409 });
+      }
       if (!["failed", "expired", "cancelled"].includes(task.status ?? "")) {
         const resumed = await resumeProviderJob(job.id, job.provider_task_id);
         return NextResponse.json({ job: resumed ?? await getJob(job.id) });

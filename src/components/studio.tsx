@@ -3,6 +3,7 @@
 import { MotionStudio } from "@/components/motion/motion-studio";
 import { imageEditPrompt } from "@/lib/image-instructions";
 import { suggestVideoDuration } from "@/lib/video-duration";
+import { videoFailure, VIDEO_REFERENCE_NOTICE } from "@/lib/video-failure";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import {
@@ -1475,14 +1476,15 @@ export function Studio() {
             );
             if (next.status === "failed") {
               const image = isImageJob(next);
+              const failure = !image ? videoFailure(next.error) : null;
               toast.error(
-                `${image ? "Image" : "Video"} render failed: ${next.error ?? "unknown error"}`
+                failure?.message ?? `${image ? "Image" : "Video"} render failed: ${next.error ?? "unknown error"}`
               );
               pushNotification({
                 kind: image ? "image" : "video",
                 status: "error",
-                title: image ? "Image render failed" : "Video render failed",
-                body: next.error ?? next.final_prompt,
+                title: failure?.title ?? (image ? "Image render failed" : "Video render failed"),
+                body: failure?.message ?? next.error ?? next.final_prompt,
               });
             }
           }
@@ -1517,7 +1519,7 @@ export function Studio() {
     }
   };
 
-  /** Put a cancelled job's prompt and attachments back in the dock. */
+  /** Put a failed or cancelled job's prompt and attachments back in the dock. */
   const restoreJobToDock = (job: GenerationJobRecord) => {
     const input = (job.input ?? {}) as {
       prompt?: PromptInputs;
@@ -1533,6 +1535,8 @@ export function Studio() {
       videoResolution?: string | null;
       resolution?: string | null;
       imageModel?: string | null;
+      generateAudio?: boolean;
+      videoIntent?: "edit" | "extend" | "vary";
     };
     const prompt = input.prompt ?? { subject: job.final_prompt };
     const video = !isImageJob(job);
@@ -1556,6 +1560,7 @@ export function Studio() {
 
     if (video) {
       setTier(job.tier);
+      setGenerateAudio(input.generateAudio ?? true);
       if (job.duration_s != null) { setDurationS(Number(job.duration_s)); setAutoDuration(false); }
       const vr = input.videoResolution;
       if (vr === "480p" || vr === "720p" || vr === "1080p") {
@@ -1583,7 +1588,7 @@ export function Studio() {
           ? {
               url: input.sourceVideoUrl,
               generationId: input.sourceVideoGenerationId ?? null,
-              intent: "edit",
+              intent: input.videoIntent ?? "edit",
               durationS: input.sourceDurationS ?? job.duration_s ?? null,
             }
           : null
@@ -4760,6 +4765,7 @@ export function Studio() {
                                   ? () => void retryJob(job)
                                   : undefined
                               }
+                              onEdit={status === "failed" ? () => restoreJobToDock(job) : undefined}
                               onDismiss={
                                 status === "failed"
                                   ? () => dismissJob(job)
@@ -5727,6 +5733,12 @@ export function Studio() {
                     Reference clips — describe each clip&apos;s role in the prompt
                   </p>
                 </div>
+              )}
+
+              {!composerCollapsed && mode === "t2v" && (videoEditSource || videoRefSources.length > 0) && (
+                <p className="mb-2 px-1 text-xs leading-relaxed text-muted-foreground">
+                  {VIDEO_REFERENCE_NOTICE}
+                </p>
               )}
 
               {mode === "t2i" && referenceUrls.length > 0 && (

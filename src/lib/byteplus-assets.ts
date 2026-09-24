@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createHash, createHmac } from "crypto";
+import { deleteStoredObject } from "@/lib/storage";
 
 /**
  * BytePlus ModelArk Assets API client (private virtual portrait library).
@@ -241,20 +242,20 @@ export async function createAsset(opts: {
   return asset;
 }
 
-export async function getAsset(id: string): Promise<AssetRecord> {
+export async function getAsset(id: string, opts?: { timeoutMs?: number }): Promise<AssetRecord> {
   const asset = await assetsCall<AssetRecord>(
     "GetAsset",
     { Id: id },
-    { timeoutMs: 12_000 }
+    { timeoutMs: opts?.timeoutMs ?? 12_000 }
   );
   rememberAssetImageUrl(asset);
   return asset;
 }
 
-const imageUrlById = new Map<string, string>();
+const imageUrlById = new Map<string, { url: string; expiresAt: number }>();
 
 function rememberAssetImageUrl(asset: Pick<AssetRecord, "Id" | "URL">) {
-  if (asset.Id && asset.URL) imageUrlById.set(asset.Id, asset.URL);
+  if (asset.Id && asset.URL) imageUrlById.set(asset.Id, { url: asset.URL, expiresAt: Date.now() + 5 * 60_000 });
 }
 
 /** BytePlus copies the photo onto TOS; only those hosts are fetched for thumbs. */
@@ -275,11 +276,12 @@ export function isBytePlusMediaUrl(raw: string): boolean {
 }
 
 export async function resolveAssetImageUrl(
-  id: string
+  id: string,
+  opts?: { refresh?: boolean; timeoutMs?: number }
 ): Promise<string | null> {
   const cached = imageUrlById.get(id);
-  if (cached) return cached;
-  const asset = await getAsset(id);
+  if (!opts?.refresh && cached && cached.expiresAt > Date.now()) return cached.url;
+  const asset = await getAsset(id, opts);
   return asset.URL ?? null;
 }
 
@@ -303,6 +305,9 @@ export async function listAssets(
 
 export async function deleteAsset(id: string): Promise<void> {
   await assetsCall<Record<string, never>>("DeleteAsset", { Id: id });
+  await deleteStoredObject(`asset-previews/${id}`).catch((err) => {
+    console.error("Could not remove cached asset preview", id, err);
+  });
   imageUrlById.delete(id);
   if (assetCache.atharBytePlusAssets) {
     assetCache.atharBytePlusAssets = assetCache.atharBytePlusAssets.filter(

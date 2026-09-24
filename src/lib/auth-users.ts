@@ -200,6 +200,7 @@ export async function upsertUser(
  * the mapping for the life of this process.
  */
 const resolvedIds = new Map<string, string>();
+const resolvingIds = new Map<string, Promise<string | null>>();
 
 export async function resolveDbUserId(sessionUser: {
   id?: string | null;
@@ -210,11 +211,17 @@ export async function resolveDbUserId(sessionUser: {
   if (!email) return null;
   const cached = resolvedIds.get(email);
   if (cached) return cached;
-  try {
-    const user = await upsertUser(email, sessionUser.name);
-    resolvedIds.set(email, user.id);
-    return user.id;
-  } catch {
-    return null;
-  }
+  const pending = resolvingIds.get(email);
+  if (pending) return pending;
+  // A library loads many authenticated thumbnails at once. On a cold worker,
+  // share the user lookup rather than queueing repeated schema/upsert work.
+  const resolving = upsertUser(email, sessionUser.name)
+    .then((user) => {
+      resolvedIds.set(email, user.id);
+      return user.id;
+    })
+    .catch(() => null)
+    .finally(() => resolvingIds.delete(email));
+  resolvingIds.set(email, resolving);
+  return resolving;
 }

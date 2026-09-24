@@ -2,6 +2,7 @@
 
 import { Clapperboard, ImagePlus, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VIDEO_REFERENCE_NOTICE } from "@/lib/video-failure";
 
 export type VideoWorkflow = "create" | "edit";
 
@@ -40,6 +41,7 @@ export function VideoWorkspaceControls({ workflow, onChange, busy, hasSource, im
           <p className="text-xs leading-relaxed text-muted-foreground">
             Describe what to change in @video1. The edit preserves the source aspect ratio and approximate duration. Reference images guide replacements.
           </p>
+          {!hasSource && <p className="text-xs leading-relaxed text-muted-foreground">{VIDEO_REFERENCE_NOTICE}</p>}
         </div>
       )}
     </div>

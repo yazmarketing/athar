@@ -11,8 +11,8 @@ import { ASPECT_TO_VIDEO_RATIO, isAspectRatio } from "@/config/aspects";
 import {
   ensureGenerationModes,
   insertGeneration,
-  persistOutputToSpaces,
 } from "@/lib/generations-store";
+import { persistVideoOutput, resolveOriginalVideoReferences } from "@/lib/video-originals";
 import {
   attachProviderTask,
   claimJobForSubmit,
@@ -138,7 +138,7 @@ export async function submitVideoJob(jobId: string): Promise<void> {
   const job = await claimJobForSubmit(jobId);
   if (!job) return; // already submitted, or someone else is submitting it
   try {
-    const req = await fitVideoRequestFirstFrame(videoRequestForJob(job));
+    const req = await fitVideoRequestFirstFrame(await resolveOriginalVideoReferences(videoRequestForJob(job)));
     const { taskId } = await arkCreateVideoTask(req);
     await attachProviderTask(job.id, taskId);
     // Cancelled while we were talking to Seedance — drop the paid task.
@@ -156,8 +156,8 @@ export async function submitVideoJob(jobId: string): Promise<void> {
 /**
  * Copy a finished render into our own storage and write its library row.
  *
- * HEVC clips are converted to H.264 (same resolution, CRF 14) inside
- * `persistOutputToSpaces` so Chrome can paint the picture.
+ * Keep the untouched provider original for subsequent references and a
+ * separate browser-compatible copy for playback.
  *
  * Call only with a job claimed through `claimJobForFinalize` — this is the
  * step that inserts a generation, and running it twice is how one clip ends
@@ -172,12 +172,7 @@ export async function finalizeVideoJob(
     const latest = await getJob(job.id);
     if (!latest || latest.status === "cancelled") return;
 
-    const outputUrl = await persistOutputToSpaces(
-      providerUrl,
-      "video",
-      job.kind,
-      null
-    );
+    const { outputUrl, originalUrl } = await persistVideoOutput(providerUrl, job.id);
 
     const model = resolveModel(job.kind, job.tier as Tier);
     const durationS = job.duration_s != null ? Number(job.duration_s) : null;
@@ -219,6 +214,7 @@ export async function finalizeVideoJob(
         duration_s: durationS,
         job_id: job.id,
         provider_task_id: job.provider_task_id,
+        original_video_url: originalUrl,
         // Lineage back to the image(s) that seeded this clip (i2v)
         source_generation_id: input.sourceGenerationId ?? undefined,
         source_image_url: sourceImages[0] ?? undefined,
