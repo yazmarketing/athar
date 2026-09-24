@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ASSET_LIBRARY_LIMIT,
   oldestVerifiedAsset,
+  verifiedAssetDecision,
   type AssetRecord,
 } from "@/lib/byteplus-assets";
 
@@ -24,6 +25,12 @@ describe("verified asset rotation", () => {
       { Id: "asset-new", Status: "Active" },
       { Id: "asset-old", Status: "Active" },
     ])?.Id).toBe("asset-old");
+  });
+
+  it("accepts only an active asset id for a video edit", () => {
+    expect(verifiedAssetDecision({ Id: "asset-clip", Status: "Processing" })).toBe("wait");
+    expect(verifiedAssetDecision({ Id: "asset-clip", Status: "Failed" })).toBe("fail");
+    expect(verifiedAssetDecision({ Id: "asset-clip", Status: "Active" })).toBe("asset-clip");
   });
 
   it("refuses to rotate an unverified asset", () => {

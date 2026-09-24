@@ -62,7 +62,9 @@ export async function GET() {
       items = cachedAssets();
       warning = err instanceof Error ? err.message : "BytePlus is temporarily unavailable";
     }
-    const assets = items.map((a) => {
+    const assets = items
+      .filter((a) => (a.AssetType ?? "Image").toLowerCase() !== "video")
+      .map((a) => {
       const rawName = a.Name ?? "";
       const tag = CATEGORY_TAG_RE.exec(rawName);
       return {

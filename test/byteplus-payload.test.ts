@@ -190,7 +190,19 @@ describe("buildArkVideoPayload", () => {
     expect(p.ratio).toBe("adaptive");
     const video = content(p).find((c) => c.type === "video_url");
     expect(video?.role).toBe("reference_video");
+    expect(video?.video_url?.url).toBe("https://x/clip.mp4");
     const img = content(p).find((c) => c.type === "image_url");
     expect(img?.role).toBe("reference_image");
+  });
+
+  it("sends a verified video asset id instead of a file URL", () => {
+    const p = buildArkVideoPayload({
+      ...base,
+      videoUrls: ["asset://asset-clip"],
+      taskType: "edit",
+    });
+    const video = content(p).find((c) => c.type === "video_url");
+    expect(video?.video_url?.url).toBe("asset://asset-clip");
+    expect(video?.role).toBe("reference_video");
   });
 });

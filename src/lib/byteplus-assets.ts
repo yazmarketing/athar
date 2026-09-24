@@ -180,6 +180,18 @@ export const ASSET_LIBRARY_LIMIT = 50;
  * valid creation time; if old records have no timestamp, rotate the final
  * verified item in the returned list. Processing assets are never removed.
  */
+/** Active BytePlus asset id, or a wait/fail signal while verification is open. */
+export function verifiedAssetDecision(asset: {
+  Id?: string | null;
+  Status?: string | null;
+}): "wait" | "fail" | string {
+  const status = asset.Status?.toLowerCase() ?? "";
+  const id = asset.Id?.trim() ?? "";
+  if (status === "failed") return "fail";
+  if (status === "active" && id.startsWith("asset-")) return id;
+  return "wait";
+}
+
 export function oldestVerifiedAsset(
   items: AssetRecord[]
 ): AssetRecord | null {
@@ -227,13 +239,14 @@ export async function createAsset(opts: {
   groupId: string;
   url: string;
   name?: string;
+  assetType?: "Image" | "Video";
 }): Promise<AssetRecord> {
   const asset = await assetsCall<AssetRecord>(
     "CreateAsset",
     {
       GroupId: opts.groupId,
       URL: opts.url,
-      AssetType: "Image",
+      AssetType: opts.assetType ?? "Image",
       Name: opts.name,
     },
     { timeoutMs: 120_000 }

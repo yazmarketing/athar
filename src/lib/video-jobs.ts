@@ -12,6 +12,7 @@ import {
   ensureGenerationModes,
   insertGeneration,
 } from "@/lib/generations-store";
+import { registerVerifiedVideoUrl } from "@/lib/asset-registrations";
 import { persistVideoOutput, resolveOriginalVideoReferences } from "@/lib/video-originals";
 import {
   attachProviderTask,
@@ -127,6 +128,16 @@ export function videoRequestForJob(job: GenerationJobRecord): ArkVideoRequest {
   };
 }
 
+/** Register each clip and keep only the BytePlus asset id for Seedance. */
+async function verifyVideoUrls(urls: string[] | undefined, label: string) {
+  if (!urls?.length) return urls;
+  const verified: string[] = [];
+  for (const [index, url] of urls.entries()) {
+    verified.push(await registerVerifiedVideoUrl(url, `${label} ${index + 1}`));
+  }
+  return verified;
+}
+
 /**
  * Open the Seedance task for a queued job.
  *
@@ -138,7 +149,17 @@ export async function submitVideoJob(jobId: string): Promise<void> {
   const job = await claimJobForSubmit(jobId);
   if (!job) return; // already submitted, or someone else is submitting it
   try {
-    const req = await fitVideoRequestFirstFrame(await resolveOriginalVideoReferences(videoRequestForJob(job)));
+    const prepared = await fitVideoRequestFirstFrame(
+      await resolveOriginalVideoReferences(videoRequestForJob(job))
+    );
+    const req = {
+      ...prepared,
+      videoUrls: await verifyVideoUrls(prepared.videoUrls, "Edit source"),
+      referenceVideoUrls: await verifyVideoUrls(
+        prepared.referenceVideoUrls,
+        "Reference video"
+      ),
+    };
     const { taskId } = await arkCreateVideoTask(req);
     await attachProviderTask(job.id, taskId);
     // Cancelled while we were talking to Seedance — drop the paid task.

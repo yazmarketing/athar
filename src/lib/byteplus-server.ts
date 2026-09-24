@@ -257,8 +257,8 @@ export function buildArkVideoPayload(
   const refVideos = req.referenceVideoUrls ?? []; // subject/motion/style refs — doesn't lock
   const allVideos = [...videos, ...refVideos];
   const audios = req.audioUrls ?? [];
-  // Verified asset-library refs (asset://…) are only valid as reference
-  // images, so a single plain image is the only true first-frame case.
+  // A single plain image is the only true first-frame case. asset:// refs
+  // are verified portrait assets and stay reference media.
   // A reference video or audio also forces images into reference mode —
   // frame anchors and reference media are mutually exclusive at the API.
   const firstFrameMode =

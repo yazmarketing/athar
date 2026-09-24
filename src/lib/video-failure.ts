@@ -7,4 +7,4 @@ export function videoFailure(error?: string | null) {
   };
 }
 
-export const VIDEO_REFERENCE_NOTICE = "Seedance restricts uploaded clips containing real people. These need BytePlus’s authorized portrait workflow; uploading a clip alone does not authorize it.";
+export const VIDEO_REFERENCE_NOTICE = "When you generate, this clip is registered with BytePlus. The edit uses that asset id, not the raw file.";

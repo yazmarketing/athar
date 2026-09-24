@@ -5,8 +5,11 @@ import {
   ASSET_LIBRARY_LIMIT,
   createAsset,
   deleteAsset,
+  ensureDefaultAssetGroup,
+  getAsset,
   listAssets,
   oldestVerifiedAsset,
+  verifiedAssetDecision,
 } from "@/lib/byteplus-assets";
 import { publishFittedAssetImage } from "@/lib/fit-byteplus-asset-image";
 
@@ -163,6 +166,76 @@ const registrationQueue = globalThis as typeof globalThis & {
   atharAssetRegistrationQueue?: Promise<void>;
 };
 
+const VIDEO_ASSET_WAIT_MS = 180_000;
+
+async function freeAssetSlot(
+  groupId: string,
+  audit: { userId?: string | null; userEmail?: string | null; replacementId: string }
+) {
+  const existing = await listAssets(groupId, { timeoutMs: 12_000 });
+  if (existing.length < ASSET_LIBRARY_LIMIT) return;
+  const rotating = oldestVerifiedAsset(existing);
+  if (!rotating) {
+    throw new Error(
+      "The BytePlus asset library is full, but no verified asset is available to rotate yet. Wait for verification and retry."
+    );
+  }
+  await deleteAsset(rotating.Id);
+  await logAudit({
+    userId: audit.userId,
+    userEmail: audit.userEmail ?? null,
+    action: "asset_auto_rotate",
+    subjectType: "asset",
+    subjectId: rotating.Id,
+    meta: {
+      reason: "provider_limit",
+      limit: ASSET_LIBRARY_LIMIT,
+      removed_name: rotating.Name ?? null,
+      replacement_registration_id: audit.replacementId,
+    },
+  });
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Register a clip in the virtual portrait library and return asset://id.
+ * Seedance rejects a raw video of a real or generated person. The edit must
+ * send this id only.
+ */
+export async function registerVerifiedVideoUrl(
+  url: string,
+  name: string
+): Promise<string> {
+  if (url.startsWith("asset://")) return url;
+  const groupId = await ensureDefaultAssetGroup();
+  await freeAssetSlot(groupId, { replacementId: url });
+  const created = await createAsset({
+    groupId,
+    url,
+    name,
+    assetType: "Video",
+  });
+  const started = Date.now();
+  let asset = created;
+  for (;;) {
+    const decision = verifiedAssetDecision(asset);
+    if (decision === "fail") {
+      throw new Error("BytePlus could not verify this video.");
+    }
+    if (decision !== "wait") return `asset://${decision}`;
+    if (Date.now() - started >= VIDEO_ASSET_WAIT_MS) {
+      throw new Error(
+        "BytePlus is still verifying this video. Try the edit again in a minute."
+      );
+    }
+    await sleep(4_000);
+    asset = await getAsset(created.Id, { timeoutMs: 12_000 });
+  }
+}
+
 async function processAssetRegistrationSerial(
   row: AssetRegistrationRecord,
   audit?: { userId: string; userEmail: string | null }
@@ -179,29 +252,11 @@ async function processAssetRegistrationSerial(
     } catch (err) {
       console.error("Could not resize asset photo before BytePlus:", err);
     }
-    const existing = await listAssets(groupId, { timeoutMs: 12_000 });
-    if (existing.length >= ASSET_LIBRARY_LIMIT) {
-      const rotating = oldestVerifiedAsset(existing);
-      if (!rotating) {
-        throw new Error(
-          "The BytePlus asset library is full, but no verified asset is available to rotate yet. Wait for verification and retry."
-        );
-      }
-      await deleteAsset(rotating.Id);
-      await logAudit({
-        userId: audit?.userId ?? row.created_by,
-        userEmail: audit?.userEmail ?? null,
-        action: "asset_auto_rotate",
-        subjectType: "asset",
-        subjectId: rotating.Id,
-        meta: {
-          reason: "provider_limit",
-          limit: ASSET_LIBRARY_LIMIT,
-          removed_name: rotating.Name ?? null,
-          replacement_registration_id: row.id,
-        },
-      });
-    }
+    await freeAssetSlot(groupId, {
+      userId: audit?.userId ?? row.created_by,
+      userEmail: audit?.userEmail ?? null,
+      replacementId: row.id,
+    });
     const asset = await createAsset({
       groupId,
       url,
