@@ -1457,10 +1457,13 @@ export function Studio() {
             if (image && submittedImageJobsRef.current.has(next.id)) {
               // submit() owns this batch's one finishing continuation. Polling
               // still restores progress, but must not reopen every candidate.
+              // The progress tile has to leave, or a finished 1-image run
+              // looks like a second image is still rendering.
               if (json.generation) {
                 const generation = json.generation as GenerationRecord;
                 setLastRun((previous) => previous.some((item) => item.id === generation.id) ? previous : [...previous, generation]);
               }
+              setVideoJobs((prev) => prev.filter((j) => j.id !== next.id));
               void loadGallery();
               continue;
             }
@@ -4806,6 +4809,7 @@ export function Studio() {
                     );
                     const pendingPlaceholders =
                       generating &&
+                      lastRun.length === 0 &&
                       !jobTiles.some(
                         (j) => j.status === "queued" || j.status === "running"
                       )
