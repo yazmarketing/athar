@@ -41,6 +41,23 @@ describe("asset previews", () => {
     await expect(loadAssetPreview("asset-five")).rejects.toThrow("not an image");
     expect(mocks.upload).not.toHaveBeenCalled();
   });
+  it("fetches only a few uncached previews from BytePlus at once", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    mocks.resolve.mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight -= 1;
+      return "https://media.byteplusapi.com/photo";
+    });
+    mocks.fetch.mockImplementation(() => Promise.resolve(photo()));
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) => loadAssetPreview(`asset-batch-${index}`))
+    );
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
   it("releases failed requests so the next visit can recover", async () => {
     mocks.read.mockRejectedValueOnce(new Error("storage timeout"));
     mocks.resolve.mockRejectedValueOnce(new Error("provider timeout"));

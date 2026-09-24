@@ -5,7 +5,28 @@ import { readPrivateObject, uploadPrivateObject } from "@/lib/storage";
 type Preview = { bytes: ArrayBuffer; contentType: string; needsPersist: boolean };
 const pending = new Map<string, Promise<Preview>>();
 const MAX_BYTES = 30 * 1024 * 1024;
+const LOOKUP_TIMEOUT_MS = 12_000;
+const DOWNLOAD_TIMEOUT_MS = 20_000;
 const pathFor = (id: string) => `asset-previews/${id}`;
+
+/** Opening the library requests every face at once. A few at a time actually finish. */
+function limiter(limit: number) {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  return async function run<T>(task: () => Promise<T>): Promise<T> {
+    if (active >= limit) await new Promise<void>((resolve) => waiters.push(resolve));
+    active += 1;
+    try {
+      return await task();
+    } finally {
+      active -= 1;
+      waiters.shift()?.();
+    }
+  };
+}
+
+const fetchFromProvider = limiter(3);
+const savePreview = limiter(2);
 
 async function readImage(response: Response): Promise<Omit<Preview, "needsPersist">> {
   const contentType = response.headers.get("content-type")?.split(";")[0] ?? "";
@@ -19,7 +40,7 @@ async function readImage(response: Response): Promise<Omit<Preview, "needsPersis
   const timer = setTimeout(() => {
     timedOut = true;
     void reader.cancel().catch(() => {});
-  }, 5_000);
+  }, DOWNLOAD_TIMEOUT_MS);
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -49,16 +70,18 @@ async function load(id: string): Promise<Preview> {
   } catch { /* Storage unavailable or not configured: try the provider. */ }
 
   // Both metadata and image requests are bounded; refresh an expired signed URL once.
-  for (const refresh of [false, true]) {
-    const url = await resolveAssetImageUrl(id, { refresh, timeoutMs: 5_000 });
-    if (!url || !isBytePlusMediaUrl(url)) throw new Error("Asset preview is unavailable");
-    const response = await fetch(url, { signal: AbortSignal.timeout(5_000), redirect: "error" });
-    if (response.ok) return { ...await readImage(response), needsPersist: true };
-    await response.body?.cancel();
-    if (!refresh && [401, 403].includes(response.status)) continue;
-    throw new Error(`Could not load asset image (${response.status})`);
-  }
-  throw new Error("Asset preview is unavailable");
+  return fetchFromProvider(async () => {
+    for (const refresh of [false, true]) {
+      const url = await resolveAssetImageUrl(id, { refresh, timeoutMs: LOOKUP_TIMEOUT_MS });
+      if (!url || !isBytePlusMediaUrl(url)) throw new Error("Asset preview is unavailable");
+      const response = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS), redirect: "error" });
+      if (response.ok) return { ...await readImage(response), needsPersist: true };
+      await response.body?.cancel();
+      if (!refresh && [401, 403].includes(response.status)) continue;
+      throw new Error(`Could not load asset image (${response.status})`);
+    }
+    throw new Error("Asset preview is unavailable");
+  });
 }
 
 /** Collapse repeated requests for a thumbnail into one provider lookup per worker. */
@@ -71,5 +94,7 @@ export async function loadAssetPreview(id: string): Promise<Preview> {
 }
 
 export async function persistAssetPreview(id: string, preview: Preview) {
-  if (preview.needsPersist) await uploadPrivateObject(pathFor(id), preview.bytes, preview.contentType);
+  if (preview.needsPersist) {
+    await savePreview(() => uploadPrivateObject(pathFor(id), preview.bytes, preview.contentType));
+  }
 }

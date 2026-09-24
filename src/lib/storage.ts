@@ -66,7 +66,7 @@ export async function uploadPublicObject(
 /** Private provider portraits must stay behind the authenticated image route. */
 export async function readPrivateObject(path: string): Promise<Response | null> {
   try {
-    const out = await spaces().send(new GetObjectCommand({ Bucket: env("DO_SPACES_BUCKET"), Key: path }), { abortSignal: AbortSignal.timeout(3_000) });
+    const out = await spaces().send(new GetObjectCommand({ Bucket: env("DO_SPACES_BUCKET"), Key: path }), { abortSignal: AbortSignal.timeout(10_000) });
     if (!out.Body) return null;
     return new Response(out.Body.transformToWebStream(), {
       headers: {
@@ -84,7 +84,7 @@ export async function uploadPrivateObject(path: string, body: ArrayBuffer, conte
   await spaces().send(new PutObjectCommand({
     Bucket: env("DO_SPACES_BUCKET"), Key: path, Body: new Uint8Array(body),
     ContentType: contentType, ACL: "private",
-  }), { abortSignal: AbortSignal.timeout(10_000) });
+  }), { abortSignal: AbortSignal.timeout(30_000) });
 }
 
 export async function deleteStoredObject(path: string): Promise<void> {

@@ -26,7 +26,8 @@ export async function GET(_req: Request, { params }: Params) {
         "X-Content-Type-Options": "nosniff",
       },
     });
-  } catch {
+  } catch (err) {
+    console.error("Could not load asset preview", id, err);
     // A short-lived fallback keeps the library usable during provider outages.
     // It is deliberately not cached, so a later visit can recover the real photo.
     return new NextResponse('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160"><rect width="160" height="160" fill="#242424"/><circle cx="80" cy="56" r="22" fill="#737373"/><path d="M35 130a45 45 0 0 1 90 0" fill="#737373"/><title>Preview temporarily unavailable</title></svg>', {
