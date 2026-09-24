@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Clapperboard, Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { cssAspectRatio } from "@/config/aspects";
@@ -30,7 +30,16 @@ export function VideoThumb({
 }: Props) {
   const [failed, setFailed] = useState(false);
   const [ready, setReady] = useState(false);
+  // #t=0.1 paints a real frame, but some saved clips error on that seek
+  // even though the file plays from the start. Retry the plain URL once.
+  const [skipFrameSeek, setSkipFrameSeek] = useState(false);
   const frame = { aspectRatio: cssAspectRatio(aspect) };
+
+  useEffect(() => {
+    setFailed(false);
+    setReady(false);
+    setSkipFrameSeek(false);
+  }, [src]);
 
   if (failed) {
     return (
@@ -50,16 +59,24 @@ export function VideoThumb({
   return (
     <div className={cn("relative w-full overflow-hidden", className)} style={frame}>
       <video
+        key={skipFrameSeek ? "plain" : "frame"}
         // #t=0.1 seeks just past the start so a real frame is painted —
         // without it Safari, and iOS especially, shows its own grey slab.
-        src={`${src}#t=0.1`}
+        src={skipFrameSeek ? src : `${src}#t=0.1`}
         className="absolute inset-0 size-full bg-black object-cover"
         playsInline
         muted
         loop
         preload="metadata"
         onLoadedData={() => setReady(true)}
-        onError={() => setFailed(true)}
+        onError={() => {
+          if (!skipFrameSeek) {
+            setSkipFrameSeek(true);
+            setReady(false);
+            return;
+          }
+          setFailed(true);
+        }}
         onMouseEnter={(e) => {
           if (!previewOnHover) return;
           e.currentTarget.play().catch(() => {
