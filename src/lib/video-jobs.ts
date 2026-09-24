@@ -20,6 +20,7 @@ import {
   getJob,
   markJobCompleted,
   markJobFailed,
+  touchUnsubmittedJob,
 } from "@/lib/jobs";
 import type { GenerationJobRecord, PromptInputs } from "@/lib/types";
 
@@ -148,6 +149,9 @@ async function verifyVideoUrls(urls: string[] | undefined, label: string) {
 export async function submitVideoJob(jobId: string): Promise<void> {
   const job = await claimJobForSubmit(jobId);
   if (!job) return; // already submitted, or someone else is submitting it
+  const beat = setInterval(() => {
+    void touchUnsubmittedJob(job.id);
+  }, 30_000);
   try {
     const prepared = await fitVideoRequestFirstFrame(
       await resolveOriginalVideoReferences(videoRequestForJob(job))
@@ -171,6 +175,8 @@ export async function submitVideoJob(jobId: string): Promise<void> {
     const message =
       err instanceof Error ? err.message : "Video submit failed";
     await markJobFailed(job.id, message);
+  } finally {
+    clearInterval(beat);
   }
 }
 

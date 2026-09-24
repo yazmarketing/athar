@@ -241,6 +241,16 @@ export async function claimJobForSubmit(
   return rows[0] ?? null;
 }
 
+/** Keep a long submit from looking dead while BytePlus is still verifying the clip. */
+export async function touchUnsubmittedJob(id: string): Promise<void> {
+  await db().query(
+    `update generation_jobs
+     set updated_at = now()
+     where id = $1 and status = 'running' and provider_task_id is null`,
+    [id]
+  );
+}
+
 /** Attach the provider task a claimed job was submitted as. */
 export async function attachProviderTask(
   id: string,

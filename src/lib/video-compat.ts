@@ -63,8 +63,8 @@ async function probeStderr(inputPath: string): Promise<string> {
  * Return an H.264/yuv420p MP4 at the same resolution as the source.
  *
  * Already-safe clips are returned unchanged (no extra generation loss).
- * Anything else is re-encoded at CRF 14 — visually lossless for short
- * Seedance clips — with no scale filter. If ffmpeg is missing or fails,
+ * Anything else is re-encoded at CRF 14 with a fast preset — still visually
+ * lossless for short Seedance clips — with no scale filter. If ffmpeg is missing or fails,
  * the original bytes are kept so the render still lands in the Library.
  */
 export async function ensureBrowserMp4(
@@ -98,7 +98,7 @@ export async function ensureBrowserMp4(
         "-c:v",
         "libx264",
         "-preset",
-        "slow",
+        "fast",
         "-crf",
         "14",
         "-pix_fmt",
