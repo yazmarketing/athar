@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   centerCropForAspect,
   centerCropToAspectRange,
+  fitWithinPixelLimit,
   needsAspectCrop,
   parseAspect,
   readRasterSize,
+  SEEDANCE_MAX_IMAGE_PIXELS,
 } from "@/lib/crop-to-aspect";
 
 describe("crop-to-aspect", () => {
@@ -34,6 +36,21 @@ describe("crop-to-aspect", () => {
     expect(crop!.width).toBe(1440);
     expect(crop!.height).toBeLessThan(2560);
     expect(crop!.width / crop!.height).toBeCloseTo(16 / 9, 2);
+  });
+
+  it("leaves an image under Seedance's pixel cap unchanged", () => {
+    expect(fitWithinPixelLimit(4000, 3000)).toBeNull();
+  });
+
+  it("shrinks an oversized still to 36 megapixels or fewer", () => {
+    const fitted = fitWithinPixelLimit(8000, 6000);
+    expect(fitted).not.toBeNull();
+    expect(fitted!.width * fitted!.height).toBeLessThanOrEqual(
+      SEEDANCE_MAX_IMAGE_PIXELS
+    );
+    expect(fitted!.width / fitted!.height).toBeCloseTo(8000 / 6000, 2);
+    expect(fitted!.width % 2).toBe(0);
+    expect(fitted!.height % 2).toBe(0);
   });
 
   it("clamps a 3.30 panoramic still into Seedance's 0.4–2.5 window", () => {

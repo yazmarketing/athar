@@ -82,6 +82,35 @@ export function centerCropToAspectRange(
   return evenSize(srcW, srcH, srcW, Math.round(srcW / minAR));
 }
 
+/** Seedance reference-to-video rejects an image above this pixel count. */
+export const SEEDANCE_MAX_IMAGE_PIXELS = 36_000_000;
+
+/**
+ * Shrink a still so width × height stays within Seedance's cap.
+ * Returns null when the image is already small enough.
+ */
+export function fitWithinPixelLimit(
+  width: number,
+  height: number,
+  maxPixels = SEEDANCE_MAX_IMAGE_PIXELS
+): { width: number; height: number } | null {
+  if (width < 2 || height < 2 || width * height <= maxPixels) return null;
+  const scale = Math.sqrt(maxPixels / (width * height));
+  let nextW = Math.max(2, Math.floor(width * scale));
+  let nextH = Math.max(2, Math.floor(height * scale));
+  nextW -= nextW % 2;
+  nextH -= nextH % 2;
+  if (nextW < 2) nextW = 2;
+  if (nextH < 2) nextH = 2;
+  while (nextW * nextH > maxPixels) {
+    if (nextW >= nextH && nextW > 2) nextW -= 2;
+    else if (nextH > 2) nextH -= 2;
+    else break;
+  }
+  if (nextW >= width && nextH >= height) return null;
+  return { width: nextW, height: nextH };
+}
+
 /** JPEG / PNG pixel size from the file header — no ffmpeg needed. */
 export function readRasterSize(
   bytes: ArrayBuffer | Uint8Array

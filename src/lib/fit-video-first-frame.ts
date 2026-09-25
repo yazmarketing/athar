@@ -12,6 +12,7 @@ import { ASSET_MAX_AR, ASSET_MIN_AR } from "@/lib/byteplus-asset-size";
 import {
   centerCropForAspect,
   centerCropToAspectRange,
+  fitWithinPixelLimit,
   parseAspect,
   readRasterSize,
 } from "@/lib/crop-to-aspect";
@@ -113,12 +114,23 @@ export async function publishFittedFrameImage(
       );
     }
     const crop = cropForImage(probed.width, probed.height, aspect, firstFrame);
-    if (!crop) return sourceUrl;
+    const frameW = crop?.width ?? probed.width;
+    const frameH = crop?.height ?? probed.height;
+    const scaled = fitWithinPixelLimit(frameW, frameH);
+    if (!crop && !scaled) return sourceUrl;
     if (!bin) {
       throw new Error(
-        `Attached still is ${probed.width}×${probed.height} (aspect ${(probed.width / probed.height).toFixed(2)}). Seedance only accepts 0.39–2.50.`
+        scaled
+          ? `Attached still is ${probed.width}×${probed.height}. Seedance allows at most 36,000,000 pixels.`
+          : `Attached still is ${probed.width}×${probed.height} (aspect ${(probed.width / probed.height).toFixed(2)}). Seedance only accepts 0.39–2.50.`
       );
     }
+    const filters = [
+      crop
+        ? `crop=${crop.width}:${crop.height}:(in_w-${crop.width})/2:(in_h-${crop.height})/2`
+        : null,
+      scaled ? `scale=${scaled.width}:${scaled.height}` : null,
+    ].filter(Boolean);
 
     await execFileAsync(
       bin,
@@ -130,7 +142,7 @@ export async function publishFittedFrameImage(
         "-i",
         srcPath,
         "-vf",
-        `crop=${crop.width}:${crop.height}:(in_w-${crop.width})/2:(in_h-${crop.height})/2`,
+        filters.join(","),
         "-q:v",
         "3",
         outPath,
@@ -156,6 +168,7 @@ export async function publishFittedFrameImage(
  * One image (first frame) is cropped to the dock ratio, because output
  * follows that still. Several images are references: keep their frame, but
  * clamp anything outside 0.39–2.50 so ModelArk does not reject the download.
+ * Any still over 36,000,000 pixels is scaled down before Seedance sees it.
  */
 export async function fitVideoRequestFirstFrame(
   req: ArkVideoRequest
