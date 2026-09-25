@@ -8,7 +8,12 @@ describe("video reference rejection", () => {
     expect(failure?.message).not.toContain("content[1]");
     expect(failure?.message).not.toContain("abc");
   });
-  it.each([null, "Network timeout", "The input image may contain real person", "The input video has invalid duration"])("does not misclassify %s", (error) => {
+  it("explains a real person in a photo only when Seedance flags that photo", () => {
+    const failure = videoFailure("The input image may contain real person");
+    expect(failure?.message).toContain("Verified faces");
+    expect(failure?.message).not.toContain("Replace the clip");
+  });
+  it.each([null, "Network timeout", "The input video has invalid duration"])("does not misclassify %s", (error) => {
     expect(videoFailure(error)).toBeNull();
   });
 });

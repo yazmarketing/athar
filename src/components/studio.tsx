@@ -62,7 +62,6 @@ import {
 } from "@/components/ui/select";
 import { cn, readJson, postJson, postFetch } from "@/lib/utils";
 import { prepareVerifiedFaceImage, uploadImageFile } from "@/lib/upload-image";
-import { pollVerifiedFace } from "@/lib/verified-face";
 import { uploadAudioFile } from "@/lib/upload-audio";
 import { isVideoFile, uploadVideoFile } from "@/lib/upload-video";
 import {
@@ -2751,111 +2750,21 @@ export function Studio() {
       return;
     }
     const batch = list.slice(0, remaining);
-    faceVerifyAbort.current?.abort();
-    const abort = new AbortController();
-    faceVerifyAbort.current = abort;
     setUploadingVideoSource(true);
-    let attached = 0;
     try {
+      const added: { url: string; generationId: null }[] = [];
       for (const file of batch) {
-        if (abort.signal.aborted) break;
-        const displayName =
-          file.name.replace(/\.[^.]+$/, "").slice(0, 60) || "Asset";
-        const previewUrl = URL.createObjectURL(file);
-        const localId = crypto.randomUUID();
-        setVerifyingFaces((prev) => [
-          ...prev,
-          { id: localId, previewUrl, name: displayName },
-        ]);
-        const finishPreview = () => {
-          URL.revokeObjectURL(previewUrl);
-          setVerifyingFaces((prev) => prev.filter((face) => face.id !== localId));
-        };
-        let url: string;
-        try {
-          url = await uploadImageFile(await prepareVerifiedFaceImage(file));
-        } catch (err) {
-          finishPreview();
-          throw err;
-        }
-        const { res, json } = await postJson<{
-          error?: string;
-          asset?: LibraryAsset;
-        }>("/api/assets", {
-          imageUrl: url,
-          name: displayName,
-          category: "character",
-        });
-        if (!res.ok || !json.asset?.id) {
-          finishPreview();
-          throw new Error(json.error ?? "Could not register this photo");
-        }
-        const registrationId = json.asset.id;
-        setLibraryAssets((prev) => [
-          json.asset as LibraryAsset,
-          ...(prev ?? []).filter((asset) => asset.id !== registrationId),
-        ]);
-        const decision = await pollVerifiedFace(registrationId, {
-          signal: abort.signal,
-        });
-        if (decision.status === "cancelled") {
-          finishPreview();
-          break;
-        }
-        if (decision.status === "failed") {
-          finishPreview();
-          setLibraryAssets((prev) =>
-            (prev ?? []).map((asset) =>
-              asset.id === registrationId
-                ? { ...asset, status: "Failed", error: decision.error }
-                : asset
-            )
-          );
-          throw new Error(decision.error);
-        }
-        if (decision.status !== "ready") {
-          finishPreview();
-          continue;
-        }
-        const assetId = decision.assetId;
-        const assetUrl = `asset://${assetId}`;
-        setVideoSources((prev) =>
-          prev.some((source) => source.url === assetUrl)
-            ? prev
-            : [...prev, { url: assetUrl, generationId: null }].slice(
-                0,
-                MAX_VIDEO_IMAGES
-              )
-        );
-        setReferenceNames((prev) => ({ ...prev, [assetUrl]: displayName }));
-        setLibraryAssets((prev) => [
-          {
-            id: assetId,
-            name: displayName,
-            category: "character",
-            status: "Active",
-            url: `/api/assets/${encodeURIComponent(assetId)}/image`,
-          },
-          ...(prev ?? []).filter(
-            (asset) => asset.id !== registrationId && asset.id !== assetId
-          ),
-        ]);
-        finishPreview();
-        attached += 1;
+        const url = await uploadImageFile(file);
+        added.push({ url, generationId: null });
       }
-      if (abort.signal.aborted) return;
-      if (attached > 0) {
-        toast.success(
-          attached === 1
-            ? "Image attached — refer to it as “Image 1”"
-            : `${attached} images attached`
-        );
-      }
+      setVideoSources((prev) => [...prev, ...added].slice(0, MAX_VIDEO_IMAGES));
+      toast.success(
+        added.length === 1 ? "Image attached" : `${added.length} images attached`
+      );
     } catch (err) {
-      if (abort.signal.aborted) return;
       toast.error(err instanceof Error ? err.message : "Upload failed");
     } finally {
-      if (faceVerifyAbort.current === abort) setUploadingVideoSource(false);
+      setUploadingVideoSource(false);
       if (videoFileInput.current) videoFileInput.current.value = "";
     }
   };
@@ -5658,7 +5567,7 @@ export function Studio() {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {mode === "t2v"
-                        ? `JPEG/PNG/WebP · BytePlus verifies the photo first · or MP4/MOV · up to ${MAX_REFERENCE_VIDEOS} reference clips`
+                        ? `JPEG/PNG/WebP · or MP4/MOV · up to ${MAX_REFERENCE_VIDEOS} reference clips`
                         : `JPEG, PNG, or WebP · up to ${maxRefs}`}
                     </p>
                   </div>
